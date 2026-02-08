@@ -17,9 +17,13 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // readJSON decodes a JSON request body into v.
+// Limits body size to 1MB to prevent memory exhaustion.
 func readJSON(r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20) // 1 MB
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(v)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }
 
 // writeError writes a JSON error response.

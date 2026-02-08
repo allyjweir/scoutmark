@@ -110,12 +110,11 @@ func extractToken(r *http.Request) string {
 		return strings.TrimPrefix(authHeader, "Bearer ")
 	}
 
-	// Fall back to cookie
+	// Fall back to cookie (also used for WebSocket upgrade requests)
 	cookie, err := r.Cookie("session_token")
 	if err == nil {
 		return cookie.Value
 	}
 
-	// Check query parameter (for WebSocket upgrade requests)
-	return r.URL.Query().Get("token")
+	return ""
 }

@@ -35,8 +35,9 @@ export class ScoutmarkSocket {
 
     this._shouldReconnect = true;
 
+    // Auth via HttpOnly cookie — no token in URL to avoid leaking in logs/history
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${token}`;
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
 
     this.ws = new WebSocket(wsUrl);
 

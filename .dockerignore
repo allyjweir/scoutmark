@@ -1,0 +1,24 @@
+.git
+.gitignore
+.vscode
+.idea
+.env
+.env.*
+*.md
+docs/
+bin/
+*.log
+
+# Frontend build artifacts (rebuilt in Docker)
+frontend/node_modules/
+frontend/dist/
+
+# Dev-only files
+docker-compose.yml
+scripts/
+proto/
+buf.yaml
+buf.gen.yaml
+
+# Generated proto (we copy gen/ for Go, frontend proto rebuilt)
+frontend/src/proto/

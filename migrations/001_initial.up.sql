@@ -107,5 +107,3 @@ CREATE TABLE submission_scores (
     value INT NOT NULL,
     UNIQUE (submission_id, criterion_id)
 );
-
--- Admin user is created via seed data (002_seed_dev.sql)

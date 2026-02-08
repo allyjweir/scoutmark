@@ -112,3 +112,25 @@ func (d *DB) DeleteUserSession(ctx context.Context, token string) error {
 	_, err := d.ExecContext(ctx, "DELETE FROM user_sessions WHERE token = $1", token)
 	return err
 }
+
+// DeleteExpiredSessions removes all expired session tokens.
+func (d *DB) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	result, err := d.ExecContext(ctx, "DELETE FROM user_sessions WHERE expires_at < NOW()")
+	if err != nil {
+		return 0, fmt.Errorf("deleting expired sessions: %w", err)
+	}
+	return result.RowsAffected()
+}
+
+// UserOwnsPatrol checks whether a user is assigned to the given patrol.
+func (d *DB) UserOwnsPatrol(ctx context.Context, userID, patrolID string) (bool, error) {
+	row := d.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM user_patrols WHERE user_id = $1 AND patrol_id = $2",
+		userID, patrolID,
+	)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, fmt.Errorf("checking patrol ownership: %w", err)
+	}
+	return count > 0, nil
+}

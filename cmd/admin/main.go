@@ -17,8 +17,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 )
@@ -29,9 +29,14 @@ Usage:
   admin <command>
 
 Commands:
-  create-user       Create a new user interactively
+  create-user       Create a new user (interactive or with flags)
   change-password   Change a user's password
   list-users        List all users
+  create-event      Create an event
+  create-template   Create a criteria template
+  add-criterion     Add a criterion to a template
+  create-patrol     Create a patrol
+  assign-patrol     Assign a patrol to a user
   create-session    Create a scoring session
   list-sessions     List all sessions with status
 
@@ -53,6 +58,16 @@ func main() {
 		err = changePassword()
 	case "list-users":
 		err = listUsers()
+	case "create-event":
+		err = createEvent()
+	case "create-template":
+		err = createTemplate()
+	case "add-criterion":
+		err = addCriterion()
+	case "create-patrol":
+		err = createPatrol()
+	case "assign-patrol":
+		err = assignPatrol()
 	case "create-session":
 		err = createSession()
 	case "list-sessions":
@@ -93,36 +108,67 @@ func connectDB() (*sql.DB, error) {
 // ─── Commands ───────────────────────────────────────────────────────
 
 func createUser() error {
-	reader := bufio.NewReader(os.Stdin)
+	fs := flag.NewFlagSet("create-user", flag.ExitOnError)
 
-	username, err := prompt(reader, "Username")
-	if err != nil {
+	flagUsername := fs.String("username", "", "Username (non-interactive mode)")
+	flagPassword := fs.String("password", "", "Password (non-interactive mode)")
+	flagDisplay := fs.String("display-name", "", "Display name (non-interactive mode)")
+	flagAdmin := fs.Bool("admin", false, "Make admin user (non-interactive mode)")
+	flagID := fs.String("id", "", "User ID (default: auto-generated UUID)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 
-	password, err := promptPassword("Password")
-	if err != nil {
-		return err
-	}
+	var username, password, displayName string
+	var isAdmin bool
 
-	confirm, err := promptPassword("Confirm password")
-	if err != nil {
-		return err
-	}
-	if password != confirm {
-		return fmt.Errorf("passwords do not match")
-	}
+	if *flagUsername != "" {
+		// Non-interactive (flag-driven) mode for scripting
+		username = *flagUsername
+		password = *flagPassword
+		displayName = *flagDisplay
+		isAdmin = *flagAdmin
+		if password == "" {
+			return fmt.Errorf("-password is required in non-interactive mode")
+		}
+		if displayName == "" {
+			displayName = username
+		}
+	} else {
+		// Interactive mode
+		reader := bufio.NewReader(os.Stdin)
 
-	displayName, err := prompt(reader, "Display name")
-	if err != nil {
-		return err
-	}
+		var err error
+		username, err = prompt(reader, "Username")
+		if err != nil {
+			return err
+		}
 
-	adminInput, err := promptDefault(reader, "Admin user?", "N")
-	if err != nil {
-		return err
+		password, err = promptPassword("Password")
+		if err != nil {
+			return err
+		}
+
+		confirm, err := promptPassword("Confirm password")
+		if err != nil {
+			return err
+		}
+		if password != confirm {
+			return fmt.Errorf("passwords do not match")
+		}
+
+		displayName, err = prompt(reader, "Display name")
+		if err != nil {
+			return err
+		}
+
+		adminInput, err := promptDefault(reader, "Admin user?", "N")
+		if err != nil {
+			return err
+		}
+		isAdmin = strings.HasPrefix(strings.ToLower(adminInput), "y")
 	}
-	isAdmin := strings.HasPrefix(strings.ToLower(adminInput), "y")
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -143,7 +189,10 @@ func createUser() error {
 		return fmt.Errorf("user %q already exists", username)
 	}
 
-	userID := uuid.New().String()
+	userID := *flagID
+	if userID == "" {
+		userID = uuid.New().String()
+	}
 	_, err = db.Exec(
 		"INSERT INTO users (id, username, password_hash, display_name, is_admin) VALUES ($1, $2, $3, $4, $5)",
 		userID, username, string(hash), displayName, isAdmin,
@@ -403,6 +452,294 @@ func listSessions() error {
 
 	w.Flush()
 	fmt.Printf("\n%d session(s)\n", count)
+	return nil
+}
+
+// ─── Event, Template, Criterion, Patrol Commands ────────────────────
+
+func createEvent() error {
+	fs := flag.NewFlagSet("create-event", flag.ExitOnError)
+
+	id := fs.String("id", "", "Event ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Event name (required)")
+	desc := fs.String("description", "", "Event description")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Create an event
+
+Usage:
+  admin create-event -name "Blair Atholl 2026" [-id evt-ba-2026] [-description "..."]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *name == "" {
+		fs.Usage()
+		return fmt.Errorf("required flag: -name")
+	}
+
+	eventID := *id
+	if eventID == "" {
+		eventID = uuid.New().String()
+	}
+	if *desc == "" {
+		*desc = *name
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(
+		"INSERT INTO events (id, name, description) VALUES ($1, $2, $3)",
+		eventID, *name, *desc,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting event: %w", err)
+	}
+
+	fmt.Println("✓ Event created")
+	fmt.Printf("  ID:   %s\n", eventID)
+	fmt.Printf("  Name: %s\n", *name)
+	return nil
+}
+
+func createTemplate() error {
+	fs := flag.NewFlagSet("create-template", flag.ExitOnError)
+
+	id := fs.String("id", "", "Template ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Template name (required)")
+	desc := fs.String("description", "", "Template description")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Create a criteria template
+
+Usage:
+  admin create-template -name "Camp Inspection" [-id tpl-camp] [-description "..."]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *name == "" {
+		fs.Usage()
+		return fmt.Errorf("required flag: -name")
+	}
+
+	templateID := *id
+	if templateID == "" {
+		templateID = uuid.New().String()
+	}
+	if *desc == "" {
+		*desc = *name
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(
+		"INSERT INTO criteria_templates (id, name, description) VALUES ($1, $2, $3)",
+		templateID, *name, *desc,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting template: %w", err)
+	}
+
+	fmt.Println("✓ Template created")
+	fmt.Printf("  ID:   %s\n", templateID)
+	fmt.Printf("  Name: %s\n", *name)
+	return nil
+}
+
+func addCriterion() error {
+	fs := flag.NewFlagSet("add-criterion", flag.ExitOnError)
+
+	id := fs.String("id", "", "Criterion ID (default: auto-generated UUID)")
+	templateID := fs.String("template", "", "Template ID (required)")
+	title := fs.String("title", "", "Criterion title (required)")
+	desc := fs.String("description", "", "Criterion description")
+	minVal := fs.Int("min", 0, "Minimum score value")
+	maxVal := fs.Int("max", 10, "Maximum score value")
+	sortOrder := fs.Int("order", 0, "Sort order (default: auto-increment)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Add a criterion to a template
+
+Usage:
+  admin add-criterion -template tpl-camp -title "Tent & Bedding" [-min 0] [-max 10] [-order 1]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *templateID == "" || *title == "" {
+		fs.Usage()
+		return fmt.Errorf("required flags: -template, -title")
+	}
+
+	criterionID := *id
+	if criterionID == "" {
+		criterionID = uuid.New().String()
+	}
+	if *desc == "" {
+		*desc = *title
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Auto-increment sort order if not specified
+	if *sortOrder == 0 {
+		var maxOrder int
+		err := db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM criteria WHERE template_id = $1", *templateID).Scan(&maxOrder)
+		if err != nil {
+			return fmt.Errorf("querying max sort order: %w", err)
+		}
+		*sortOrder = maxOrder + 1
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO criteria (id, template_id, title, description, min_value, max_value, sort_order) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		criterionID, *templateID, *title, *desc, *minVal, *maxVal, *sortOrder,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting criterion: %w", err)
+	}
+
+	fmt.Println("✓ Criterion added")
+	fmt.Printf("  ID:       %s\n", criterionID)
+	fmt.Printf("  Template: %s\n", *templateID)
+	fmt.Printf("  Title:    %s\n", *title)
+	fmt.Printf("  Range:    %d–%d\n", *minVal, *maxVal)
+	fmt.Printf("  Order:    %d\n", *sortOrder)
+	return nil
+}
+
+func createPatrol() error {
+	fs := flag.NewFlagSet("create-patrol", flag.ExitOnError)
+
+	id := fs.String("id", "", "Patrol ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Patrol name (required)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Create a patrol
+
+Usage:
+  admin create-patrol -name "France" [-id pat-mor-1]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *name == "" {
+		fs.Usage()
+		return fmt.Errorf("required flag: -name")
+	}
+
+	patrolID := *id
+	if patrolID == "" {
+		patrolID = uuid.New().String()
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(
+		"INSERT INTO patrols (id, name) VALUES ($1, $2)",
+		patrolID, *name,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting patrol: %w", err)
+	}
+
+	fmt.Println("✓ Patrol created")
+	fmt.Printf("  ID:   %s\n", patrolID)
+	fmt.Printf("  Name: %s\n", *name)
+	return nil
+}
+
+func assignPatrol() error {
+	fs := flag.NewFlagSet("assign-patrol", flag.ExitOnError)
+
+	userID := fs.String("user", "", "User ID (required)")
+	patrolID := fs.String("patrol", "", "Patrol ID (required)")
+	sortOrder := fs.Int("order", 0, "Sort order (default: auto-increment)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Assign a patrol to a user
+
+Usage:
+  admin assign-patrol -user usr-morrison -patrol pat-mor-1 [-order 1]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *userID == "" || *patrolID == "" {
+		fs.Usage()
+		return fmt.Errorf("required flags: -user, -patrol")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Auto-increment sort order if not specified
+	if *sortOrder == 0 {
+		var maxOrder int
+		err := db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM user_patrols WHERE user_id = $1", *userID).Scan(&maxOrder)
+		if err != nil {
+			return fmt.Errorf("querying max sort order: %w", err)
+		}
+		*sortOrder = maxOrder + 1
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO user_patrols (user_id, patrol_id, sort_order) VALUES ($1, $2, $3)",
+		*userID, *patrolID, *sortOrder,
+	)
+	if err != nil {
+		return fmt.Errorf("assigning patrol: %w", err)
+	}
+
+	fmt.Println("✓ Patrol assigned")
+	fmt.Printf("  User:   %s\n", *userID)
+	fmt.Printf("  Patrol: %s\n", *patrolID)
+	fmt.Printf("  Order:  %d\n", *sortOrder)
 	return nil
 }
 

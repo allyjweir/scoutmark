@@ -19,9 +19,14 @@ type DB struct {
 }
 
 // Connect opens a PostgreSQL connection pool using DATABASE_URL from the environment.
+// In production (ENVIRONMENT != "" and != "development"), DATABASE_URL is required.
 func Connect(ctx context.Context) (*DB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
+		env := os.Getenv("ENVIRONMENT")
+		if env != "" && env != "development" {
+			return nil, fmt.Errorf("DATABASE_URL must be set in production")
+		}
 		dsn = "postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable"
 	}
 

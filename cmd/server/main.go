@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -53,6 +55,9 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 
+	// ─── Session Cleanup (expired auth tokens) ─────────────────
+	cleanupExpiredSessions(ctx, db)
+
 	// ─── WebSocket Hub ──────────────────────────────────────────
 	hub := websocket.NewHub(db)
 	go hub.Run()
@@ -65,8 +70,20 @@ func run(ctx context.Context) error {
 	// ─── Routes ─────────────────────────────────────────────────
 	mux := http.NewServeMux()
 
+	// ─── Rate limiter (5 login attempts per IP per minute) ────
+	loginLimiter := newRateLimiter(5, 1*time.Minute)
+
 	// Auth routes (unauthenticated)
-	mux.HandleFunc("POST /api/auth/login", authHandler.Login)
+	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
+		if !loginLimiter.allow(clientIP(r)) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":"too many login attempts, try again later"}`))
+			return
+		}
+		authHandler.Login(w, r)
+	})
 
 	// Auth routes (authenticated)
 	mux.Handle("POST /api/auth/logout", authMiddleware(http.HandlerFunc(authHandler.Logout)))
@@ -89,11 +106,22 @@ func run(ctx context.Context) error {
 	// WebSocket
 	mux.Handle("GET /api/ws", authMiddleware(http.HandlerFunc(hub.HandleWebSocket)))
 
+	// Health check (unauthenticated)
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.PingContext(r.Context()); err != nil {
+			http.Error(w, `{"status":"error"}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+
 	// Serve frontend static files (in production, built React app)
 	mux.Handle("/", http.FileServer(http.Dir("frontend/dist")))
 
-	// ─── CORS middleware for development ────────────────────────
-	handler := corsMiddleware(tracing.HTTPMiddleware(mux))
+	// ─── Security middleware stack ─────────────────────────────
+	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	handler := securityHeaders(corsMiddleware(tracing.HTTPMiddleware(mux), allowedOrigin))
 
 	// ─── Server ─────────────────────────────────────────────────
 	addr := envOrDefault("SERVER_ADDR", ":8080")
@@ -121,12 +149,26 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func corsMiddleware(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+
+		if allowedOrigin != "" {
+			// Production: only allow the configured origin
+			if origin == allowedOrigin {
+				w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+		} else {
+			// Development: allow localhost origins
+			if strings.HasPrefix(origin, "http://localhost:") {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+		}
+
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -135,6 +177,103 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-XSS-Protection", "0")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		// HSTS: instruct browsers to always use HTTPS (1 year)
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ─── Rate Limiter ───────────────────────────────────────────────
+
+type rateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+	max      int
+	window   time.Duration
+}
+
+func newRateLimiter(max int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
+		attempts: make(map[string][]time.Time),
+		max:      max,
+		window:   window,
+	}
+}
+
+// allow checks if the given key (e.g. IP) is within the rate limit.
+func (rl *rateLimiter) allow(key string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	// Prune old entries
+	valid := make([]time.Time, 0, len(rl.attempts[key]))
+	for _, t := range rl.attempts[key] {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= rl.max {
+		rl.attempts[key] = valid
+		return false
+	}
+
+	rl.attempts[key] = append(valid, now)
+	return true
+}
+
+// clientIP extracts the client IP, respecting X-Forwarded-For from Fly.io's proxy.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First IP in the chain is the real client
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	// Strip port from RemoteAddr
+	host, _, found := strings.Cut(r.RemoteAddr, ":")
+	if found {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func cleanupExpiredSessions(ctx context.Context, db *database.DB) {
+	// Clean up once at startup
+	if n, err := db.DeleteExpiredSessions(ctx); err == nil && n > 0 {
+		fmt.Fprintf(os.Stderr, "cleaned up %d expired sessions\n", n)
+	}
+
+	// Then periodically every hour
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := db.DeleteExpiredSessions(context.Background()); err == nil && n > 0 {
+					fmt.Fprintf(os.Stderr, "cleaned up %d expired sessions\n", n)
+				}
+			}
+		}
+	}()
 }
 
 func envOrDefault(key, fallback string) string {

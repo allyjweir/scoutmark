@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +23,15 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins in dev; restrict in production
+		allowed := os.Getenv("ALLOWED_ORIGIN")
+		origin := r.Header.Get("Origin")
+
+		if allowed != "" {
+			// Production: only accept the configured origin
+			return origin == allowed
+		}
+		// Development: allow localhost origins
+		return strings.HasPrefix(origin, "http://localhost:") || origin == ""
 	},
 }
 
@@ -336,9 +346,32 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 
 	tracing.AddSessionAttrs(ctx, payload.SessionID, payload.PatrolID)
 
+	// Verify the session is active
+	session, err := c.hub.db.GetSession(ctx, payload.SessionID)
+	if err != nil {
+		c.sendError(msg.RequestID, "SESSION_NOT_FOUND", "session not found")
+		return
+	}
+	if session.ComputeStatus() != "ACTIVE" {
+		c.sendError(msg.RequestID, "SESSION_NOT_ACTIVE", "session is not active")
+		return
+	}
+
+	// Verify the user owns this patrol
+	owns, err := c.hub.db.UserOwnsPatrol(ctx, c.user.ID, payload.PatrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		c.sendError(msg.RequestID, "INTERNAL_ERROR", "could not verify patrol ownership")
+		return
+	}
+	if !owns {
+		c.sendError(msg.RequestID, "FORBIDDEN", "you are not assigned to this patrol")
+		return
+	}
+
 	span := tracing.Tracer()
 	_, saveSpan := span.Start(ctx, "ws.save_draft.db")
-	_, err := c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores)
+	_, err = c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores)
 	saveSpan.End()
 
 	if err != nil {

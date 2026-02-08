@@ -25,9 +25,9 @@ proto:
 migrate:
 	go run ./cmd/server  # Migrations run on startup
 
-# Seed development data
+# Seed development data (uses admin CLI)
 seed:
-	PGPASSWORD=scoutmark psql -U scoutmark -d scoutmark -h localhost < migrations/002_seed_dev.sql
+	./scripts/seed-dev.sh
 
 # Create a new user interactively
 create-user:

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/samber/lo"
@@ -233,6 +234,18 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 
 	user := auth.UserFromContext(ctx)
 
+	// IDOR check: verify user owns this patrol
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
 	draft, err := h.db.GetDraft(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
@@ -290,12 +303,48 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// IDOR check: verify user owns this patrol
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
 	var req struct {
 		Scores map[string]int `json:"scores"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid request body")
 		return
+	}
+
+	// Validate score values against criteria bounds
+	criteria, err := h.db.GetTemplateCriteria(ctx, session.TemplateID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch criteria")
+		return
+	}
+	criteriaByID := make(map[string]database.CriterionRow, len(criteria))
+	for _, c := range criteria {
+		criteriaByID[c.ID] = c
+	}
+	for criterionID, value := range req.Scores {
+		c, ok := criteriaByID[criterionID]
+		if !ok {
+			writeError(w, r, http.StatusBadRequest, "invalid criterion ID: "+criterionID)
+			return
+		}
+		if value < c.MinValue || value > c.MaxValue {
+			writeError(w, r, http.StatusBadRequest,
+				fmt.Sprintf("score for %q must be between %d and %d", c.Title, c.MinValue, c.MaxValue))
+			return
+		}
 	}
 
 	span.SetAttributes(attribute.Int("scores.count", len(req.Scores)))
@@ -491,6 +540,18 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 	)
 
 	user := auth.UserFromContext(ctx)
+
+	// IDOR check: verify user owns this patrol
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
 
 	scores, err := h.db.GetSubmissionScoresByPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {

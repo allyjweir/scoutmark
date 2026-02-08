@@ -77,11 +77,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Set cookie for browser-based auth
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_token",
 		Value:    session.Token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(auth.SessionDuration),
 	})

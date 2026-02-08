@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package scoutmark.v1;
+
+option go_package = "github.com/allyjweir/scoutmark/gen/go/scoutmark/v1;scoutmarkv1";
+
+import "scoutmark/v1/types.proto";
+import "google/protobuf/timestamp.proto";
+
+// ─── WebSocket Messages ────────────────────────────────────────────
+// All websocket communication uses these envelope types.
+// Messages are serialized as protobuf binary over the wire.
+
+// Client → Server
+message ClientMessage {
+  string request_id = 1;
+  oneof payload {
+    SaveDraftRequest save_draft = 2;
+    SubscribeSessionRequest subscribe_session = 3;
+  }
+}
+
+// Server → Client
+message ServerMessage {
+  string request_id = 1;
+  oneof payload {
+    DraftSaved draft_saved = 2;
+    PatrolSubmitted patrol_submitted = 3;
+    Error error = 4;
+  }
+}
+
+// ─── Client Messages ──────────────────────────────────────────────
+
+message SaveDraftRequest {
+  string session_id = 1;
+  string patrol_id = 2;
+  repeated DraftScore scores = 3;
+}
+
+message SubscribeSessionRequest {
+  string session_id = 1;
+}
+
+// ─── Server Messages ──────────────────────────────────────────────
+
+message DraftSaved {
+  string session_id = 1;
+  string patrol_id = 2;
+  google.protobuf.Timestamp saved_at = 3;
+}
+
+// Broadcast to other users when a patrol is submitted
+message PatrolSubmitted {
+  string session_id = 1;
+  string patrol_id = 2;
+  string user_display_name = 3;
+  google.protobuf.Timestamp submitted_at = 4;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}

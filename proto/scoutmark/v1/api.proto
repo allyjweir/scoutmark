@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package scoutmark.v1;
+
+option go_package = "github.com/allyjweir/scoutmark/gen/go/scoutmark/v1;scoutmarkv1";
+
+import "scoutmark/v1/types.proto";
+
+// ─── Session Operations ────────────────────────────────────────────
+
+message ListSessionsRequest {
+  // Filter by status. Empty means all.
+  repeated SessionStatus statuses = 1;
+}
+
+message ListSessionsResponse {
+  repeated Session sessions = 1;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message GetSessionResponse {
+  Session session = 1;
+  // Patrol list for current user, ordered
+  repeated UserPatrol patrols = 2;
+  // Existing submissions for this session by this user
+  repeated Submission submissions = 3;
+}
+
+// ─── Patrol Operations ─────────────────────────────────────────────
+
+message ListUserPatrolsRequest {}
+
+message ListUserPatrolsResponse {
+  repeated UserPatrol patrols = 1;
+}
+
+// ─── Draft Operations ──────────────────────────────────────────────
+
+message GetDraftRequest {
+  string session_id = 1;
+  string patrol_id = 2;
+}
+
+message GetDraftResponse {
+  // May be empty if no draft exists yet
+  Draft draft = 1;
+}
+
+// ─── Submission Operations ─────────────────────────────────────────
+
+message SubmitScoresRequest {
+  string session_id = 1;
+  string patrol_id = 2;
+  repeated DraftScore scores = 3;
+}
+
+message SubmitScoresResponse {
+  Submission submission = 1;
+}
+
+message UnlockSubmissionRequest {
+  string submission_id = 1;
+}
+
+message UnlockSubmissionResponse {
+  Submission submission = 1;
+}
+
+message ListSubmissionsRequest {
+  string session_id = 1;
+}
+
+message ListSubmissionsResponse {
+  repeated Submission submissions = 1;
+}

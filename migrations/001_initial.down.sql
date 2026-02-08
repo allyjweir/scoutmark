@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS submission_scores;
+DROP TABLE IF EXISTS submissions;
+DROP TABLE IF EXISTS draft_scores;
+DROP TABLE IF EXISTS drafts;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS criteria;
+DROP TABLE IF EXISTS criteria_templates;
+DROP TABLE IF EXISTS user_patrols;
+DROP TABLE IF EXISTS patrols;
+DROP TABLE IF EXISTS user_sessions;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS events;

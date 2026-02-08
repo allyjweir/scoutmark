@@ -5,6 +5,7 @@ interface SessionCardProps {
   session: Session;
   onClick?: () => void;
   disabled?: boolean;
+  recentlyFinalised?: boolean;
 }
 
 const STATUS_LABELS: Record<string, { variant: 'default' | 'primary' | 'secondary' | 'accent' | 'success' | 'attention' | 'severe' | 'danger' | 'done' | 'sponsors'; text: string }> = {
@@ -24,7 +25,7 @@ const formatTime = (iso: string): string => {
   });
 };
 
-export const SessionCard = ({ session, onClick, disabled }: SessionCardProps) => {
+export const SessionCard = ({ session, onClick, disabled, recentlyFinalised }: SessionCardProps) => {
   const statusConfig = STATUS_LABELS[session.status] ?? STATUS_LABELS.CLOSED;
 
   return (
@@ -38,12 +39,12 @@ export const SessionCard = ({ session, onClick, disabled }: SessionCardProps) =>
       mb={2}
       borderWidth={1}
       borderStyle="solid"
-      borderColor="border.default"
+      borderColor={recentlyFinalised ? 'success.emphasis' : 'border.default'}
       borderRadius={2}
-      bg="canvas.default"
+      bg={recentlyFinalised ? 'success.subtle' : 'canvas.default'}
       sx={{
         cursor: disabled ? 'default' : 'pointer',
-        opacity: disabled ? 0.6 : 1,
+        opacity: disabled && !recentlyFinalised ? 0.6 : 1,
         textAlign: 'left',
         ':hover': disabled ? {} : {
           borderColor: 'accent.emphasis',
@@ -54,7 +55,12 @@ export const SessionCard = ({ session, onClick, disabled }: SessionCardProps) =>
     >
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
         <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>{session.name}</Text>
-        <Label variant={statusConfig.variant}>{statusConfig.text}</Label>
+        <Box display="flex" sx={{ gap: 1 }}>
+          {recentlyFinalised && (
+            <Label variant="success">Scored ✓</Label>
+          )}
+          <Label variant={statusConfig.variant}>{statusConfig.text}</Label>
+        </Box>
       </Box>
 
       <Text sx={{ color: 'fg.muted', fontSize: 1, mb: 1 }}>

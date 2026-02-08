@@ -2,13 +2,15 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Heading, Text, Spinner, Flash, Button, ProgressBar,
-  Label, CounterLabel, Dialog,
+  Label, CounterLabel,
 } from '@primer/react';
-import { keyBy, mapValues, some, every } from 'lodash';
-import type { Session, Patrol, Criterion, Submission } from '../lib/types';
+import { keyBy, mapValues, every } from 'lodash';
+import type { Session, Patrol, Submission } from '../lib/types';
 import * as api from '../lib/api';
 import { useDraftSync, useSessionSubscription } from '../hooks/useWebSocket';
 import { ScoreSlider } from '../components/ScoreSlider';
+
+type View = 'scoring' | 'summary' | 'viewing';
 
 export const ScoringPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -18,11 +20,20 @@ export const ScoringPage = () => {
   const [patrols, setPatrols] = useState<Patrol[]>([]);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [currentPatrolIndex, setCurrentPatrolIndex] = useState(0);
-  const [scores, setScores] = useState<Record<string, number>>({});
+  const [scores, setScores] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [view, setView] = useState<View>('scoring');
+  const [jumpedFromSummary, setJumpedFromSummary] = useState(false);
+  const [viewingScores, setViewingScores] = useState<Record<string, number>>({});
+  const [revising, setRevising] = useState(false);
+
+  // Track total score per patrol (patrol_id → total)
+  const [patrolTotals, setPatrolTotals] = useState<Record<string, number | null>>({});
+
+  // Track which patrols have had all criteria touched (keyed by patrol_id)
+  const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
 
   const currentPatrol = patrols[currentPatrolIndex];
   const criteria = session?.criteria ?? [];
@@ -46,13 +57,26 @@ export const ScoringPage = () => {
         setPatrols(patrols);
         setSubmissions(submissions);
 
-        // Find first unsubmitted patrol
-        const submittedPatrolIds = new Set(submissions.map((s) => s.patrol_id));
-        const firstUnsubmitted = patrols.findIndex(
-          (p) => !submittedPatrolIds.has(p.patrol_id),
-        );
-        if (firstUnsubmitted >= 0) {
-          setCurrentPatrolIndex(firstUnsubmitted);
+        // If all patrols already submitted, go to summary
+        const submittedIds = new Set(submissions.map((s) => s.patrol_id));
+        const allDone = patrols.length > 0 && every(patrols, (p) => submittedIds.has(p.patrol_id));
+        if (allDone) {
+          setView('summary');
+          // Load totals for submitted patrols
+          for (const patrol of patrols) {
+            api.getSubmissionScores(sessionId, patrol.patrol_id).then(({ scores }) => {
+              const total = scores.reduce((sum, s) => sum + s.value, 0);
+              setPatrolTotals((prev) => ({ ...prev, [patrol.patrol_id]: total }));
+            }).catch(() => { /* ignore */ });
+          }
+        } else {
+          // Start at first unsubmitted patrol
+          const firstUnsubmitted = patrols.findIndex(
+            (p) => !submittedIds.has(p.patrol_id),
+          );
+          if (firstUnsubmitted >= 0) {
+            setCurrentPatrolIndex(firstUnsubmitted);
+          }
         }
       })
       .catch((err) => setError(err.message))
@@ -61,36 +85,84 @@ export const ScoringPage = () => {
 
   // Load draft when patrol changes
   useEffect(() => {
-    if (!sessionId || !currentPatrol) return;
+    if (!sessionId || !currentPatrol || view !== 'scoring') return;
 
     api.getDraft(sessionId, currentPatrol.patrol_id).then(({ draft }) => {
       if (draft?.scores?.length) {
-        const restored = mapValues(
+        const restored: Record<string, number | null> = mapValues(
           keyBy(draft.scores, 'criterion_id'),
           'value',
         );
         setScores(restored);
+
+        // Mark all restored criteria as touched
+        setTouchedMap((prev) => ({
+          ...prev,
+          [currentPatrol.patrol_id]: new Set(draft.scores.map((s) => s.criterion_id)),
+        }));
+
+        // Update patrol total
+        const total = draft.scores.reduce((sum, s) => sum + s.value, 0);
+        setPatrolTotals((prev) => ({ ...prev, [currentPatrol.patrol_id]: total }));
       } else {
-        // Initialize with midpoint values
-        const initial = mapValues(
-          keyBy(criteria, 'id'),
-          (c: Criterion) => Math.floor((c.min_value + c.max_value) / 2),
-        );
+        // Initialize with null — slider shows at 0 but dimmed/unset
+        const initial: Record<string, number | null> = {};
+        for (const c of criteria) {
+          initial[c.id] = null;
+        }
         setScores(initial);
       }
     });
-  }, [sessionId, currentPatrol?.patrol_id, criteria]);
+  }, [sessionId, currentPatrol?.patrol_id, criteria, view]);
 
-  // Auto-save scores when they change
+  // Auto-save scores when they change (only save non-null values)
   const handleScoreChange = useCallback(
     (criterionId: string, value: number) => {
       setScores((prev) => {
         const next = { ...prev, [criterionId]: value };
-        saveDraft(next);
+
+        // Build only non-null scores for WebSocket save
+        const saveable: Record<string, number> = {};
+        let total = 0;
+        for (const [k, v] of Object.entries(next)) {
+          if (v !== null) {
+            saveable[k] = v;
+            total += v;
+          }
+        }
+        if (Object.keys(saveable).length > 0) {
+          saveDraft(saveable);
+        }
+
+        // Update patrol total
+        if (currentPatrol) {
+          setPatrolTotals((prev) => ({ ...prev, [currentPatrol.patrol_id]: total }));
+        }
+
         return next;
       });
+
+      // Track this criterion as touched for the current patrol
+      if (currentPatrol) {
+        setTouchedMap((prev) => {
+          const existing = prev[currentPatrol.patrol_id] ?? new Set();
+          const updated = new Set(existing);
+          updated.add(criterionId);
+          return { ...prev, [currentPatrol.patrol_id]: updated };
+        });
+      }
     },
-    [saveDraft],
+    [saveDraft, currentPatrol],
+  );
+
+  // Check if all criteria for a patrol are touched
+  const isPatrolComplete = useCallback(
+    (patrolId: string) => {
+      const touched = touchedMap[patrolId];
+      if (!touched || criteria.length === 0) return false;
+      return criteria.every((c) => touched.has(c.id));
+    },
+    [touchedMap, criteria],
   );
 
   // Navigate between patrols
@@ -98,6 +170,25 @@ export const ScoringPage = () => {
     (index: number) => {
       flushDraft();
       setCurrentPatrolIndex(index);
+      setView('scoring');
+      setJumpedFromSummary(false);
+    },
+    [flushDraft],
+  );
+
+  const goToSummary = useCallback(() => {
+    flushDraft();
+    setView('summary');
+    setJumpedFromSummary(false);
+  }, [flushDraft]);
+
+  // Jump from summary to a specific patrol, with "Back to Summary" nav
+  const jumpToPatrolFromSummary = useCallback(
+    (index: number) => {
+      flushDraft();
+      setCurrentPatrolIndex(index);
+      setView('scoring');
+      setJumpedFromSummary(true);
     },
     [flushDraft],
   );
@@ -105,8 +196,11 @@ export const ScoringPage = () => {
   const goNext = useCallback(() => {
     if (currentPatrolIndex < patrols.length - 1) {
       goToPatrol(currentPatrolIndex + 1);
+    } else {
+      // Last patrol — go to summary
+      goToSummary();
     }
-  }, [currentPatrolIndex, patrols.length, goToPatrol]);
+  }, [currentPatrolIndex, patrols.length, goToPatrol, goToSummary]);
 
   const goPrev = useCallback(() => {
     if (currentPatrolIndex > 0) {
@@ -114,39 +208,81 @@ export const ScoringPage = () => {
     }
   }, [currentPatrolIndex, goToPatrol]);
 
-  // Submit scores
-  const handleSubmit = useCallback(async () => {
-    if (!sessionId || !currentPatrol) return;
+  // Finalise — submit all patrols at once
+  const handleFinalise = useCallback(async () => {
+    if (!sessionId) return;
     setSubmitting(true);
     setError('');
 
     try {
-      flushDraft();
-      const submission = await api.submitScores(
-        sessionId,
-        currentPatrol.patrol_id,
-        scores,
-      );
-      setSubmissions((prev) => [...prev, submission]);
-      setShowConfirm(false);
+      await flushDraft();
+      const result = await api.finaliseSession(sessionId);
+      setSubmissions(result.submissions);
 
-      // Auto-advance to next unsubmitted patrol
-      const allSubmittedIds = new Set([
-        ...submissions.map((s) => s.patrol_id),
-        currentPatrol.patrol_id,
-      ]);
-      const nextUnsubmitted = patrols.findIndex(
-        (p, i) => i > currentPatrolIndex && !allSubmittedIds.has(p.patrol_id),
+      // Totals are already tracked from scoring — no need to reload
+
+      // Store the finalise time so the dashboard can highlight it
+      const finalisedSessions = JSON.parse(
+        localStorage.getItem('finalised_sessions') ?? '{}',
       );
-      if (nextUnsubmitted >= 0) {
-        goToPatrol(nextUnsubmitted);
-      }
+      finalisedSessions[sessionId] = new Date().toISOString();
+      localStorage.setItem('finalised_sessions', JSON.stringify(finalisedSessions));
+
+      // Navigate to dashboard with success feedback
+      navigate('/', { state: { finalised: session?.name ?? 'Session' } });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Submission failed');
-    } finally {
+      console.error('[finalise] Error:', err);
+      setError(err instanceof Error ? err.message : 'Finalise failed');
       setSubmitting(false);
     }
-  }, [sessionId, currentPatrol, scores, flushDraft, submissions, patrols, currentPatrolIndex, goToPatrol]);
+  }, [sessionId, session, flushDraft, navigate]);
+
+  // View submitted scores for a patrol (read-only)
+  const viewPatrolScores = useCallback(
+    async (patrolIndex: number) => {
+      if (!sessionId) return;
+      const patrol = patrols[patrolIndex];
+      if (!patrol) return;
+
+      try {
+        const { scores: submissionScores } = await api.getSubmissionScores(
+          sessionId,
+          patrol.patrol_id,
+        );
+        const scoreMap: Record<string, number> = {};
+        for (const s of submissionScores) {
+          scoreMap[s.criterion_id] = s.value;
+        }
+        setViewingScores(scoreMap);
+        setCurrentPatrolIndex(patrolIndex);
+        setView('viewing');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not load scores');
+      }
+    },
+    [sessionId, patrols],
+  );
+
+  // Revise — convert submissions back to drafts for editing
+  const handleRevise = useCallback(async () => {
+    if (!sessionId) return;
+    setRevising(true);
+    setError('');
+
+    try {
+      await api.reviseSession(sessionId);
+      // Clear submissions and put user back in scoring mode
+      setSubmissions([]);
+      setTouchedMap({});
+      setPatrolTotals({});
+      setCurrentPatrolIndex(0);
+      setView('scoring');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not revise scores');
+    } finally {
+      setRevising(false);
+    }
+  }, [sessionId]);
 
   // Progress tracking
   const submittedPatrolIds = useMemo(
@@ -158,11 +294,10 @@ export const ScoringPage = () => {
     ? submittedPatrolIds.has(currentPatrol.patrol_id)
     : false;
 
-  const allComplete = patrols.length > 0 &&
+  const allSubmitted = patrols.length > 0 &&
     every(patrols, (p) => submittedPatrolIds.has(p.patrol_id));
 
-  const hasAllScores = criteria.length > 0 &&
-    every(criteria, (c) => scores[c.id] !== undefined);
+  const isLastPatrol = currentPatrolIndex === patrols.length - 1;
 
   if (loading) {
     return (
@@ -200,16 +335,23 @@ export const ScoringPage = () => {
         </Box>
         <Heading sx={{ fontSize: 2, mb: 1 }}>{session.name}</Heading>
 
-        {/* Progress bar */}
-        <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
-          <ProgressBar
-            progress={(submittedPatrolIds.size / patrols.length) * 100}
-            sx={{ flex: 1 }}
-          />
-          <CounterLabel>
-            {submittedPatrolIds.size}/{patrols.length}
-          </CounterLabel>
-        </Box>
+        {/* Progress bar — tracks patrols that are scored or submitted */}
+        {(() => {
+          const readyCount = patrols.filter(
+            (p) => submittedPatrolIds.has(p.patrol_id) || isPatrolComplete(p.patrol_id),
+          ).length;
+          return (
+            <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+              <ProgressBar
+                progress={(readyCount / patrols.length) * 100}
+                sx={{ flex: 1 }}
+              />
+              <CounterLabel>
+                {readyCount}/{patrols.length}
+              </CounterLabel>
+            </Box>
+          );
+        })()}
       </Box>
 
       {error && (
@@ -218,148 +360,285 @@ export const ScoringPage = () => {
         </Flash>
       )}
 
-      {/* Patrol selector strip */}
-      <Box
-        display="flex"
-        overflowX="auto"
-        p={2}
-        sx={{ gap: 1 }}
-        borderBottomWidth={1}
-        borderBottomStyle="solid"
-        borderBottomColor="border.default"
-      >
-        {patrols.map((patrol, index) => {
-          const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
-          const isCurrent = index === currentPatrolIndex;
+      {/* ─── Summary view ─── */}
+      {view === 'summary' && (
+        <>
+          <Box flex={1} p={3} overflow="auto">
+            <Heading sx={{ fontSize: 3, mb: 3 }}>Review Scores</Heading>
 
-          return (
-            <Button
-              key={patrol.patrol_id}
-              variant={isCurrent ? 'primary' : 'invisible'}
-              size="small"
-              onClick={() => goToPatrol(index)}
-              sx={{
-                flexShrink: 0,
-                position: 'relative',
-              }}
-            >
-              {patrol.name}
-              {isSubmitted && (
-                <Label variant="success" sx={{ ml: 1 }}>✓</Label>
-              )}
-            </Button>
-          );
-        })}
-      </Box>
+            <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+              {patrols.map((patrol, index) => {
+                const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
+                const isComplete = isPatrolComplete(patrol.patrol_id);
 
-      {/* Scoring area */}
-      {currentPatrol && (
-        <Box flex={1} p={3} overflow="auto">
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-            <Heading sx={{ fontSize: 3 }}>{currentPatrol.name}</Heading>
-            {isCurrentSubmitted && (
-              <Label variant="success" size="large">Submitted ✓</Label>
+                return (
+                  <Box
+                    key={patrol.patrol_id}
+                    as="button"
+                    onClick={
+                      isSubmitted
+                        ? () => viewPatrolScores(index)
+                        : () => jumpToPatrolFromSummary(index)
+                    }
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      p: 3,
+                      borderWidth: 1,
+                      borderStyle: 'solid',
+                      borderColor: 'border.default',
+                      borderRadius: 2,
+                      bg: 'canvas.default',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      width: '100%',
+                      ':hover': { bg: 'canvas.subtle' },
+                    }}
+                  >
+                    <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                      <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
+                        {patrol.name}
+                      </Text>
+                      {isSubmitted && (
+                        <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Tap to view</Text>
+                      )}
+                    </Box>
+                    <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                      {patrolTotals[patrol.patrol_id] != null && (
+                        <Text sx={{ fontSize: 1, color: 'fg.muted', whiteSpace: 'nowrap' }}>
+                          Total: {patrolTotals[patrol.patrol_id]}/{criteria.reduce((sum, c) => sum + c.max_value, 0)}
+                        </Text>
+                      )}
+                      {isSubmitted ? (
+                        <Label variant="success">Submitted ✓</Label>
+                      ) : isComplete ? (
+                        <Label variant="accent">Scores set ✓</Label>
+                      ) : (
+                        <Label variant="attention">Incomplete</Label>
+                      )}
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+
+          {/* Finalise bar */}
+          <Box
+            p={3}
+            borderTopWidth={1}
+            borderTopStyle="solid"
+            borderTopColor="border.default"
+            bg="canvas.subtle"
+            display="flex"
+            sx={{ gap: 2 }}
+          >
+            {allSubmitted ? (
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <Box textAlign="center" p={2}>
+                  <Text sx={{ color: 'success.fg', fontWeight: 'bold', fontSize: 2 }}>
+                    🎉 All patrols scored! Great work.
+                  </Text>
+                </Box>
+                {session.status === 'ACTIVE' && (
+                  <Button
+                    onClick={handleRevise}
+                    disabled={revising}
+                    sx={{ width: '100%' }}
+                    size="large"
+                  >
+                    {revising ? 'Reopening…' : '✏️ Revise Scores'}
+                  </Button>
+                )}
+              </Box>
+            ) : session.status === 'ACTIVE' ? (
+              <>
+                <Button
+                  onClick={() => {
+                    setView('scoring');
+                    setCurrentPatrolIndex(patrols.length - 1);
+                  }}
+                  sx={{ flex: 1 }}
+                  size="large"
+                >
+                  ← Prev
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={handleFinalise}
+                  sx={{ flex: 2 }}
+                  size="large"
+                  disabled={submitting}
+                >
+                  {submitting ? 'Submitting…' : 'Finalise Scores'}
+                </Button>
+              </>
+            ) : (
+              <Box textAlign="center" p={2} sx={{ flex: 1 }}>
+                <Text sx={{ color: 'fg.muted', fontSize: 1 }}>
+                  This session is closed.
+                </Text>
+              </Box>
             )}
           </Box>
+        </>
+      )}
 
-          {/* Criteria sliders */}
-          <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-            {criteria.map((criterion) => (
-              <ScoreSlider
-                key={criterion.id}
-                criterion={criterion}
-                value={scores[criterion.id] ?? criterion.min_value}
-                onChange={(value) => handleScoreChange(criterion.id, value)}
-                disabled={isCurrentSubmitted}
-              />
-            ))}
+      {/* ─── Scoring view ─── */}
+      {view === 'scoring' && (
+        <>
+          {/* Patrol selector strip */}
+          <Box
+            display="flex"
+            overflowX="auto"
+            p={2}
+            sx={{ gap: 1 }}
+            borderBottomWidth={1}
+            borderBottomStyle="solid"
+            borderBottomColor="border.default"
+          >
+            {patrols.map((patrol, index) => {
+              const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
+              const isComplete = isPatrolComplete(patrol.patrol_id);
+              const isCurrent = index === currentPatrolIndex;
+
+              return (
+                <Button
+                  key={patrol.patrol_id}
+                  variant={isCurrent ? 'primary' : 'invisible'}
+                  size="small"
+                  onClick={() => goToPatrol(index)}
+                  sx={{
+                    flexShrink: 0,
+                    position: 'relative',
+                  }}
+                >
+                  {patrol.name}
+                  {(isSubmitted || isComplete) && (
+                    <Label
+                      variant={isSubmitted ? 'success' : 'accent'}
+                      sx={{ ml: 1 }}
+                    >
+                      ✓
+                    </Label>
+                  )}
+                </Button>
+              );
+            })}
           </Box>
-        </Box>
-      )}
 
-      {/* Bottom navigation bar */}
-      <Box
-        p={3}
-        borderTopWidth={1}
-        borderTopStyle="solid"
-        borderTopColor="border.default"
-        bg="canvas.subtle"
-        display="flex"
-        sx={{ gap: 2 }}
-      >
-        <Button
-          onClick={goPrev}
-          disabled={currentPatrolIndex === 0}
-          sx={{ flex: 1 }}
-          size="large"
-        >
-          ← Prev
-        </Button>
+          {/* Scoring area */}
+          {currentPatrol && (
+            <Box flex={1} p={3} overflow="auto">
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+                <Heading sx={{ fontSize: 3 }}>{currentPatrol.name}</Heading>
+                {isCurrentSubmitted && (
+                  <Label variant="success" size="large">Submitted ✓</Label>
+                )}
+              </Box>
 
-        {!isCurrentSubmitted ? (
-          <Button
-            variant="primary"
-            onClick={() => setShowConfirm(true)}
-            disabled={!hasAllScores}
-            sx={{ flex: 2 }}
-            size="large"
+              {/* Criteria sliders */}
+              <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
+                {criteria.map((criterion) => (
+                  <ScoreSlider
+                    key={criterion.id}
+                    criterion={criterion}
+                    value={scores[criterion.id] ?? null}
+                    onChange={(value) => handleScoreChange(criterion.id, value)}
+                    disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
+                  />
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {/* Bottom navigation bar */}
+          <Box
+            p={3}
+            borderTopWidth={1}
+            borderTopStyle="solid"
+            borderTopColor="border.default"
+            bg="canvas.subtle"
+            display="flex"
+            sx={{ gap: 2 }}
           >
-            Submit Scores
-          </Button>
-        ) : (
-          <Button
-            variant="default"
-            disabled
-            sx={{ flex: 2 }}
-            size="large"
+            {jumpedFromSummary ? (
+              /* Jumped from summary — single "Back to Summary" button */
+              <Button
+                variant="primary"
+                onClick={goToSummary}
+                sx={{ flex: 1 }}
+                size="large"
+              >
+                ← Back to Summary
+              </Button>
+            ) : (
+              /* Normal Prev / Next flow */
+              <>
+                <Button
+                  onClick={goPrev}
+                  disabled={currentPatrolIndex === 0}
+                  sx={{ flex: 1 }}
+                  size="large"
+                >
+                  ← Prev
+                </Button>
+
+                <Button
+                  onClick={goNext}
+                  sx={{ flex: 1 }}
+                  size="large"
+                >
+                  {isLastPatrol ? 'Review →' : 'Next →'}
+                </Button>
+              </>
+            )}
+          </Box>
+        </>
+      )}
+
+      {/* ─── Viewing submitted scores (read-only) ─── */}
+      {view === 'viewing' && currentPatrol && (
+        <>
+          <Box flex={1} p={3} overflow="auto">
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+              <Heading sx={{ fontSize: 3 }}>{currentPatrol.name}</Heading>
+              <Label variant="success" size="large">Submitted ✓</Label>
+            </Box>
+
+            <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
+              {criteria.map((criterion) => (
+                <ScoreSlider
+                  key={criterion.id}
+                  criterion={criterion}
+                  value={viewingScores[criterion.id] ?? null}
+                  onChange={() => {}}
+                  disabled
+                />
+              ))}
+            </Box>
+          </Box>
+
+          <Box
+            p={3}
+            borderTopWidth={1}
+            borderTopStyle="solid"
+            borderTopColor="border.default"
+            bg="canvas.subtle"
           >
-            Submitted ✓
-          </Button>
-        )}
-
-        <Button
-          onClick={goNext}
-          disabled={currentPatrolIndex === patrols.length - 1}
-          sx={{ flex: 1 }}
-          size="large"
-        >
-          Next →
-        </Button>
-      </Box>
-
-      {/* All complete banner */}
-      {allComplete && (
-        <Box p={3} bg="success.subtle" textAlign="center">
-          <Text sx={{ color: 'success.fg', fontWeight: 'bold' }}>
-            🎉 All patrols scored! Great work.
-          </Text>
-        </Box>
+            <Button
+              variant="primary"
+              onClick={() => setView('summary')}
+              sx={{ width: '100%' }}
+              size="large"
+            >
+              ← Back to Summary
+            </Button>
+          </Box>
+        </>
       )}
 
-      {/* Confirmation dialog */}
-      {showConfirm && (
-        <Dialog
-          title="Submit scores?"
-          onClose={() => setShowConfirm(false)}
-          footerButtons={[
-            {
-              content: 'Cancel',
-              onClick: () => setShowConfirm(false),
-            },
-            {
-              content: submitting ? 'Submitting…' : 'Submit',
-              buttonType: 'primary',
-              onClick: handleSubmit,
-              disabled: submitting,
-            },
-          ]}
-        >
-          <Text>
-            Submit scores for <strong>{currentPatrol?.name}</strong>?
-            Once submitted, scores will be locked.
-          </Text>
-        </Dialog>
-      )}
     </Box>
   );
 };

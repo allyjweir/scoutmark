@@ -331,3 +331,258 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 	}
 	return subs, rows.Err()
 }
+
+// FinaliseSession converts all drafts for a user+session into submissions in one transaction.
+// Returns the list of newly created submissions.
+func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]SubmissionRow, error) {
+	var submissions []SubmissionRow
+
+	err := d.InTx(ctx, func(tx *sql.Tx) error {
+		// Fetch all drafts for this user+session
+		draftRows, err := tx.QueryContext(ctx,
+			"SELECT id, patrol_id FROM drafts WHERE user_id = ? AND session_id = ?",
+			userID, sessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("querying drafts: %w", err)
+		}
+
+		type draftInfo struct {
+			ID       string
+			PatrolID string
+		}
+		var drafts []draftInfo
+		for draftRows.Next() {
+			var d draftInfo
+			if err := draftRows.Scan(&d.ID, &d.PatrolID); err != nil {
+				draftRows.Close()
+				return fmt.Errorf("scanning draft: %w", err)
+			}
+			drafts = append(drafts, d)
+		}
+		draftRows.Close()
+		if err := draftRows.Err(); err != nil {
+			return err
+		}
+
+		if len(drafts) == 0 {
+			return fmt.Errorf("no drafts to finalise")
+		}
+
+		for _, draft := range drafts {
+			// Skip patrols that already have a submission
+			var existingCount int
+			if err := tx.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM submissions WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+				userID, sessionID, draft.PatrolID,
+			).Scan(&existingCount); err != nil {
+				return fmt.Errorf("checking existing submission: %w", err)
+			}
+			if existingCount > 0 {
+				continue
+			}
+
+			// Load draft scores
+			scoreRows, err := tx.QueryContext(ctx,
+				"SELECT criterion_id, value FROM draft_scores WHERE draft_id = ?",
+				draft.ID,
+			)
+			if err != nil {
+				return fmt.Errorf("querying draft scores: %w", err)
+			}
+
+			scores := make(map[string]int)
+			for scoreRows.Next() {
+				var criterionID string
+				var value int
+				if err := scoreRows.Scan(&criterionID, &value); err != nil {
+					scoreRows.Close()
+					return fmt.Errorf("scanning draft score: %w", err)
+				}
+				scores[criterionID] = value
+			}
+			scoreRows.Close()
+
+			if len(scores) == 0 {
+				continue // skip drafts with no scores
+			}
+
+			// Create the submission
+			submissionID := uuid.New().String()
+			_, err = tx.ExecContext(ctx,
+				"INSERT INTO submissions (id, user_id, session_id, patrol_id, locked) VALUES (?, ?, ?, ?, TRUE)",
+				submissionID, userID, sessionID, draft.PatrolID,
+			)
+			if err != nil {
+				return fmt.Errorf("inserting submission for patrol %s: %w", draft.PatrolID, err)
+			}
+
+			// Insert submission scores
+			for criterionID, value := range scores {
+				_, err := tx.ExecContext(ctx,
+					"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES (?, ?, ?, ?)",
+					uuid.New().String(), submissionID, criterionID, value,
+				)
+				if err != nil {
+					return fmt.Errorf("inserting submission score: %w", err)
+				}
+			}
+
+			// Delete the draft
+			_, err = tx.ExecContext(ctx,
+				"DELETE FROM drafts WHERE id = ?", draft.ID,
+			)
+			if err != nil {
+				return fmt.Errorf("deleting draft: %w", err)
+			}
+
+			// Get patrol name for the response
+			var patrolName string
+			if err := tx.QueryRowContext(ctx, "SELECT name FROM patrols WHERE id = ?", draft.PatrolID).Scan(&patrolName); err != nil {
+				patrolName = draft.PatrolID
+			}
+
+			submissions = append(submissions, SubmissionRow{
+				ID:          submissionID,
+				UserID:      userID,
+				SessionID:   sessionID,
+				PatrolID:    draft.PatrolID,
+				PatrolName:  patrolName,
+				Locked:      true,
+				SubmittedAt: time.Now(),
+			})
+		}
+
+		return nil
+	})
+
+	return submissions, err
+}
+
+// ReviseSession converts all submissions for a user+session back into drafts so they can be edited.
+// Deletes the submissions after creating drafts from them.
+func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error {
+	return d.InTx(ctx, func(tx *sql.Tx) error {
+		// Fetch all submissions for this user+session
+		subRows, err := tx.QueryContext(ctx,
+			"SELECT id, patrol_id FROM submissions WHERE user_id = ? AND session_id = ?",
+			userID, sessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("querying submissions: %w", err)
+		}
+
+		type subInfo struct {
+			ID       string
+			PatrolID string
+		}
+		var subs []subInfo
+		for subRows.Next() {
+			var s subInfo
+			if err := subRows.Scan(&s.ID, &s.PatrolID); err != nil {
+				subRows.Close()
+				return fmt.Errorf("scanning submission: %w", err)
+			}
+			subs = append(subs, s)
+		}
+		subRows.Close()
+		if err := subRows.Err(); err != nil {
+			return err
+		}
+
+		if len(subs) == 0 {
+			return fmt.Errorf("no submissions to revise")
+		}
+
+		for _, sub := range subs {
+			// Load submission scores
+			scoreRows, err := tx.QueryContext(ctx,
+				"SELECT criterion_id, value FROM submission_scores WHERE submission_id = ?",
+				sub.ID,
+			)
+			if err != nil {
+				return fmt.Errorf("querying submission scores: %w", err)
+			}
+
+			scores := make(map[string]int)
+			for scoreRows.Next() {
+				var criterionID string
+				var value int
+				if err := scoreRows.Scan(&criterionID, &value); err != nil {
+					scoreRows.Close()
+					return fmt.Errorf("scanning submission score: %w", err)
+				}
+				scores[criterionID] = value
+			}
+			scoreRows.Close()
+
+			// Create a draft from the submission scores (or update if one exists)
+			var draftID string
+			row := tx.QueryRowContext(ctx,
+				"SELECT id FROM drafts WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+				userID, sessionID, sub.PatrolID,
+			)
+			err = row.Scan(&draftID)
+			if err == sql.ErrNoRows {
+				draftID = uuid.New().String()
+				_, err = tx.ExecContext(ctx,
+					"INSERT INTO drafts (id, user_id, session_id, patrol_id) VALUES (?, ?, ?, ?)",
+					draftID, userID, sessionID, sub.PatrolID,
+				)
+				if err != nil {
+					return fmt.Errorf("inserting draft for patrol %s: %w", sub.PatrolID, err)
+				}
+			} else if err != nil {
+				return fmt.Errorf("checking existing draft: %w", err)
+			}
+
+			// Upsert draft scores from submission scores
+			for criterionID, value := range scores {
+				scoreID := uuid.New().String()
+				_, err := tx.ExecContext(ctx,
+					`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES (?, ?, ?, ?)
+					 ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+					scoreID, draftID, criterionID, value,
+				)
+				if err != nil {
+					return fmt.Errorf("upserting draft score: %w", err)
+				}
+			}
+
+			// Delete the submission (cascade deletes submission_scores)
+			_, err = tx.ExecContext(ctx,
+				"DELETE FROM submissions WHERE id = ?", sub.ID,
+			)
+			if err != nil {
+				return fmt.Errorf("deleting submission: %w", err)
+			}
+		}
+
+		return nil
+	})
+}
+
+// GetSubmissionScoresByPatrol returns the scores for a user's submission on a specific patrol.
+func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, userID, sessionID, patrolID string) ([]SubmissionScoreRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value
+		 FROM submission_scores ss
+		 JOIN submissions s ON s.id = ss.submission_id
+		 WHERE s.user_id = ? AND s.session_id = ? AND s.patrol_id = ?`,
+		userID, sessionID, patrolID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying submission scores by patrol: %w", err)
+	}
+	defer rows.Close()
+
+	var scores []SubmissionScoreRow
+	for rows.Next() {
+		var s SubmissionScoreRow
+		if err := rows.Scan(&s.ID, &s.SubmissionID, &s.CriterionID, &s.Value); err != nil {
+			return nil, fmt.Errorf("scanning submission score: %w", err)
+		}
+		scores = append(scores, s)
+	}
+	return scores, rows.Err()
+}

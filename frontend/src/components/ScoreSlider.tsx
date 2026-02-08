@@ -4,14 +4,16 @@ import type { Criterion } from '../lib/types';
 
 interface ScoreSliderProps {
   criterion: Criterion;
-  value: number;
+  value: number | null;
   onChange: (value: number) => void;
   disabled?: boolean;
 }
 
 export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSliderProps) => {
+  const isSet = value !== null;
+  const displayValue = value ?? criterion.min_value;
   const range = criterion.max_value - criterion.min_value;
-  const percentage = range > 0 ? ((value - criterion.min_value) / range) * 100 : 0;
+  const percentage = range > 0 ? ((displayValue - criterion.min_value) / range) * 100 : 0;
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -30,10 +32,10 @@ export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSlide
             fontSize: 3,
             fontWeight: 'bold',
             fontVariantNumeric: 'tabular-nums',
-            color: disabled ? 'fg.muted' : 'fg.default',
+            color: !isSet ? 'fg.subtle' : disabled ? 'fg.muted' : 'fg.default',
           }}
         >
-          {value}
+          {isSet ? displayValue : '–'}
         </Text>
       </Box>
 
@@ -50,15 +52,17 @@ export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSlide
           min={criterion.min_value}
           max={criterion.max_value}
           step={1}
-          value={value}
+          value={displayValue}
           onChange={handleChange}
           disabled={disabled}
           style={{
             width: '100%',
             height: '48px',
             cursor: disabled ? 'not-allowed' : 'pointer',
-            accentColor: 'var(--fgColor-accent, #0969da)',
-            opacity: disabled ? 0.5 : 1,
+            accentColor: isSet
+              ? 'var(--fgColor-accent, #0969da)'
+              : 'var(--fgColor-muted, #656d76)',
+            opacity: disabled ? 0.5 : isSet ? 1 : 0.4,
           }}
         />
         {/* Track fill indicator */}
@@ -86,7 +90,7 @@ export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSlide
         <Box
           height="100%"
           borderRadius={2}
-          bg={disabled ? 'neutral.emphasis' : 'accent.emphasis'}
+          bg={!isSet ? 'neutral.muted' : disabled ? 'neutral.emphasis' : 'accent.emphasis'}
           sx={{
             width: `${percentage}%`,
             transition: 'width 0.1s ease-out',

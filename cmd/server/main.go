@@ -77,7 +77,10 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /api/sessions/{id}", authMiddleware(http.HandlerFunc(sessionHandler.GetSession)))
 	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/draft", authMiddleware(http.HandlerFunc(sessionHandler.GetDraft)))
 	mux.Handle("POST /api/sessions/{session_id}/patrols/{patrol_id}/submit", authMiddleware(http.HandlerFunc(sessionHandler.SubmitScores)))
+	mux.Handle("POST /api/sessions/{session_id}/finalise", authMiddleware(http.HandlerFunc(sessionHandler.FinaliseSession)))
+	mux.Handle("POST /api/sessions/{session_id}/revise", authMiddleware(http.HandlerFunc(sessionHandler.ReviseSession)))
 	mux.Handle("GET /api/sessions/{session_id}/submissions", authMiddleware(http.HandlerFunc(sessionHandler.ListSubmissions)))
+	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/scores", authMiddleware(http.HandlerFunc(sessionHandler.GetSubmissionScores)))
 
 	// Admin routes
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))

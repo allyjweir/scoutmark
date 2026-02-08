@@ -41,6 +41,10 @@ change-password:
 list-users:
 	go run ./cmd/admin list-users
 
+# List all sessions with status
+list-sessions:
+	go run ./cmd/admin list-sessions
+
 # Clean generated files
 clean:
 	rm -rf gen/

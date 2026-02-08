@@ -10,10 +10,12 @@ package main
 import (
 	"bufio"
 	"database/sql"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -30,6 +32,8 @@ Commands:
   create-user       Create a new user interactively
   change-password   Change a user's password
   list-users        List all users
+  create-session    Create a scoring session
+  list-sessions     List all sessions with status
 
 Environment:
   DATABASE_URL      MySQL connection string (default: root:scoutmark@tcp(localhost:3306)/scoutmark?parseTime=true)
@@ -49,6 +53,10 @@ func main() {
 		err = changePassword()
 	case "list-users":
 		err = listUsers()
+	case "create-session":
+		err = createSession()
+	case "list-sessions":
+		err = listSessions()
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -241,6 +249,182 @@ func listUsers() error {
 	w.Flush()
 	fmt.Printf("\n%d user(s)\n", count)
 	return nil
+}
+
+func createSession() error {
+	fs := flag.NewFlagSet("create-session", flag.ExitOnError)
+
+	eventID := fs.String("event", "", "Event ID (required)")
+	templateID := fs.String("template", "", "Criteria template ID (required)")
+	name := fs.String("name", "", "Session name (required)")
+	startStr := fs.String("start", "", `Start time in RFC3339 or "now" (default: now)`)
+	durationStr := fs.String("duration", "3h", "Duration from start (e.g. 2h, 6h, 30m)")
+	sessionID := fs.String("id", "", "Session ID (default: auto-generated UUID)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Create a scoring session
+
+Usage:
+  admin create-session [flags]
+
+Examples:
+  admin create-session -event evt-weekly-2026 -template tpl-weekly -name "Week 8 Meeting"
+  admin create-session -event evt-weekly-2026 -template tpl-weekly -name "Week 8" -duration 6h
+  admin create-session -event evt-camp-2026 -template tpl-camp -name "Day 4 Inspection" -start now -duration 2h
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+
+	if *eventID == "" || *templateID == "" || *name == "" {
+		fs.Usage()
+		return fmt.Errorf("required flags: -event, -template, -name")
+	}
+
+	duration, err := time.ParseDuration(*durationStr)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", *durationStr, err)
+	}
+
+	var startsAt time.Time
+	switch {
+	case *startStr == "" || *startStr == "now":
+		startsAt = time.Now()
+	default:
+		startsAt, err = time.Parse(time.RFC3339, *startStr)
+		if err != nil {
+			return fmt.Errorf("invalid start time %q (use RFC3339 or \"now\"): %w", *startStr, err)
+		}
+	}
+
+	endsAt := startsAt.Add(duration)
+
+	id := *sessionID
+	if id == "" {
+		id = uuid.New().String()
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Verify event exists
+	var eventName string
+	if err := db.QueryRow("SELECT name FROM events WHERE id = ?", *eventID).Scan(&eventName); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("event %q not found\n\nAvailable events:\n%s", *eventID, listAvailable(db, "SELECT id, name FROM events ORDER BY name"))
+		}
+		return fmt.Errorf("checking event: %w", err)
+	}
+
+	// Verify template exists
+	var templateName string
+	if err := db.QueryRow("SELECT name FROM criteria_templates WHERE id = ?", *templateID).Scan(&templateName); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("template %q not found\n\nAvailable templates:\n%s", *templateID, listAvailable(db, "SELECT id, name FROM criteria_templates ORDER BY name"))
+		}
+		return fmt.Errorf("checking template: %w", err)
+	}
+
+	_, err = db.Exec(
+		"INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at) VALUES (?, ?, ?, ?, ?, ?)",
+		id, *eventID, *templateID, *name, startsAt, endsAt,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting session: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println("✓ Session created")
+	fmt.Printf("  ID:       %s\n", id)
+	fmt.Printf("  Name:     %s\n", *name)
+	fmt.Printf("  Event:    %s (%s)\n", eventName, *eventID)
+	fmt.Printf("  Template: %s (%s)\n", templateName, *templateID)
+	fmt.Printf("  Starts:   %s\n", startsAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Ends:     %s\n", endsAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Duration: %s\n", duration)
+	return nil
+}
+
+func listSessions() error {
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(`
+		SELECT s.id, s.name, e.name, ct.name, s.starts_at, s.ends_at
+		FROM sessions s
+		JOIN events e ON e.id = s.event_id
+		JOIN criteria_templates ct ON ct.id = s.template_id
+		ORDER BY s.starts_at DESC`)
+	if err != nil {
+		return fmt.Errorf("querying sessions: %w", err)
+	}
+	defer rows.Close()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tNAME\tEVENT\tTEMPLATE\tSTATUS\tSTART\tEND")
+	fmt.Fprintln(w, "──\t────\t─────\t────────\t──────\t─────\t───")
+
+	now := time.Now()
+	count := 0
+	for rows.Next() {
+		var id, name, eventName, templateName string
+		var startsAt, endsAt time.Time
+		if err := rows.Scan(&id, &name, &eventName, &templateName, &startsAt, &endsAt); err != nil {
+			return fmt.Errorf("scanning session: %w", err)
+		}
+
+		status := "upcoming"
+		if now.After(endsAt) {
+			status = "closed"
+		} else if now.After(startsAt) {
+			status = "● active"
+		}
+
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, name, eventName, templateName, status,
+			startsAt.Format("Jan 02 15:04"),
+			endsAt.Format("Jan 02 15:04"))
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	w.Flush()
+	fmt.Printf("\n%d session(s)\n", count)
+	return nil
+}
+
+func listAvailable(db *sql.DB, query string) string {
+	rows, err := db.Query(query)
+	if err != nil {
+		return "  (could not list)"
+	}
+	defer rows.Close()
+
+	var sb strings.Builder
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		fmt.Fprintf(&sb, "  %s  %s\n", id, name)
+	}
+	if sb.Len() == 0 {
+		return "  (none)"
+	}
+	return sb.String()
 }
 
 // ─── Input Helpers ──────────────────────────────────────────────────

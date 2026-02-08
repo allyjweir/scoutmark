@@ -1,4 +1,4 @@
-import type { User, Session, Patrol, Draft, Submission } from './types';
+import type { User, Session, Patrol, Draft, Submission, SubmissionScore } from './types';
 
 const BASE_URL = '/api';
 
@@ -85,8 +85,28 @@ export const submitScores = async (
     body: JSON.stringify({ scores }),
   });
 
+export const finaliseSession = async (
+  sessionId: string,
+): Promise<{ submissions: Submission[]; finalised_count: number }> =>
+  request(`/sessions/${sessionId}/finalise`, {
+    method: 'POST',
+  });
+
 export const listSubmissions = async (sessionId: string): Promise<{ submissions: Submission[] }> =>
   request(`/sessions/${sessionId}/submissions`);
+
+export const reviseSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean }> =>
+  request(`/sessions/${sessionId}/revise`, {
+    method: 'POST',
+  });
+
+export const getSubmissionScores = async (
+  sessionId: string,
+  patrolId: string,
+): Promise<{ scores: SubmissionScore[] }> =>
+  request(`/sessions/${sessionId}/patrols/${patrolId}/scores`);
 
 export const unlockSubmission = async (submissionId: string): Promise<Submission> =>
   request(`/submissions/${submissionId}/unlock`, { method: 'POST' });

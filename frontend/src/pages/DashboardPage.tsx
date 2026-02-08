@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Box, Heading, Text, Spinner, Flash, Button } from '@primer/react';
 import { groupBy, sortBy } from 'lodash';
 import type { Session } from '../lib/types';
@@ -10,9 +10,47 @@ import { SessionCard } from '../components/SessionCard';
 export const DashboardPage = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Success flash from finalise navigation
+  const finalisedName = (location.state as { finalised?: string } | null)?.finalised;
+  const [showSuccess, setShowSuccess] = useState(!!finalisedName);
+
+  // Clear the navigation state so it doesn't persist on refresh
+  useEffect(() => {
+    if (finalisedName) {
+      window.history.replaceState({}, '');
+      const timer = setTimeout(() => setShowSuccess(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [finalisedName]);
+
+  // Sessions that were finalised in the last 30 minutes
+  const recentlyFinalised = useMemo(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('finalised_sessions') ?? '{}');
+      const now = Date.now();
+      const thirtyMin = 30 * 60 * 1000;
+      const recent = new Set<string>();
+
+      // Clean up old entries while we're at it
+      const cleaned: Record<string, string> = {};
+      for (const [id, iso] of Object.entries(stored)) {
+        const elapsed = now - new Date(iso as string).getTime();
+        if (elapsed < thirtyMin) {
+          recent.add(id);
+          cleaned[id] = iso as string;
+        }
+      }
+      localStorage.setItem('finalised_sessions', JSON.stringify(cleaned));
+      return recent;
+    } catch {
+      return new Set<string>();
+    }
+  }, [sessions]);
 
   useEffect(() => {
     api.listSessions()
@@ -27,7 +65,7 @@ export const DashboardPage = () => {
   const closedSessions = sortBy(grouped['CLOSED'] ?? [], 'ends_at').reverse();
 
   const handleSessionClick = (session: Session) => {
-    if (session.status === 'ACTIVE') {
+    if (session.status === 'ACTIVE' || session.status === 'CLOSED') {
       navigate(`/sessions/${session.id}`);
     }
   };
@@ -59,6 +97,12 @@ export const DashboardPage = () => {
         </Flash>
       )}
 
+      {showSuccess && finalisedName && (
+        <Flash variant="success" sx={{ mb: 3 }}>
+          🎉 Scores for <strong>{finalisedName}</strong> submitted successfully!
+        </Flash>
+      )}
+
       {/* Active Sessions */}
       {activeSessions.length > 0 && (
         <Box mb={4}>
@@ -70,6 +114,7 @@ export const DashboardPage = () => {
               key={session.id}
               session={session}
               onClick={() => handleSessionClick(session)}
+              recentlyFinalised={recentlyFinalised.has(session.id)}
             />
           ))}
         </Box>
@@ -94,7 +139,12 @@ export const DashboardPage = () => {
             Closed
           </Heading>
           {closedSessions.slice(0, 5).map((session) => (
-            <SessionCard key={session.id} session={session} disabled />
+            <SessionCard
+              key={session.id}
+              session={session}
+              onClick={() => handleSessionClick(session)}
+              recentlyFinalised={recentlyFinalised.has(session.id)}
+            />
           ))}
         </Box>
       )}

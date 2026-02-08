@@ -71,7 +71,7 @@ export const useDraftSync = (sessionId: string, patrolId: string) => {
         patrol_id: patrolId,
         scores,
       };
-      socket.saveDraft(payload).then((response) => {
+      return socket.saveDraft(payload).then((response) => {
         if (response.type === 'draft_saved') {
           lastSavedRef.current = new Date().toISOString();
         }
@@ -92,9 +92,16 @@ export const useDraftSync = (sessionId: string, patrolId: string) => {
     };
   }, [debouncedSave]);
 
+  const flushDraft = useCallback(async () => {
+    // Flush fires the debounced save immediately and returns its result
+    await debouncedSave.flush();
+    // Small delay to ensure the WebSocket round-trip completes
+    await new Promise((r) => setTimeout(r, 200));
+  }, [debouncedSave]);
+
   return {
     saveDraft: debouncedSave,
-    flushDraft: () => debouncedSave.flush(),
+    flushDraft,
     lastSaved: lastSavedRef,
     connected: socket.connected,
   };

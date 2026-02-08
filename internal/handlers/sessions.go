@@ -22,15 +22,15 @@ func NewSessionHandler(db *database.DB) *SessionHandler {
 }
 
 type sessionJSON struct {
-	ID         string         `json:"id"`
-	EventID    string         `json:"event_id"`
-	EventName  string         `json:"event_name"`
-	TemplateID string         `json:"template_id"`
-	Name       string         `json:"name"`
-	StartsAt   string         `json:"starts_at"`
-	EndsAt     string         `json:"ends_at"`
-	Status     string         `json:"status"`
-	CreatedAt  string         `json:"created_at"`
+	ID         string          `json:"id"`
+	EventID    string          `json:"event_id"`
+	EventName  string          `json:"event_name"`
+	TemplateID string          `json:"template_id"`
+	Name       string          `json:"name"`
+	StartsAt   string          `json:"starts_at"`
+	EndsAt     string          `json:"ends_at"`
+	Status     string          `json:"status"`
+	CreatedAt  string          `json:"created_at"`
 	Criteria   []criterionJSON `json:"criteria,omitempty"`
 }
 
@@ -50,11 +50,11 @@ type patrolJSON struct {
 }
 
 type submissionJSON struct {
-	ID          string              `json:"id"`
-	PatrolID    string              `json:"patrol_id"`
-	PatrolName  string              `json:"patrol_name"`
-	Locked      bool                `json:"locked"`
-	SubmittedAt string              `json:"submitted_at"`
+	ID          string                `json:"id"`
+	PatrolID    string                `json:"patrol_id"`
+	PatrolName  string                `json:"patrol_name"`
+	Locked      bool                  `json:"locked"`
+	SubmittedAt string                `json:"submitted_at"`
 	Scores      []submissionScoreJSON `json:"scores,omitempty"`
 }
 
@@ -64,10 +64,10 @@ type submissionScoreJSON struct {
 }
 
 type draftJSON struct {
-	ID        string          `json:"id"`
-	PatrolID  string          `json:"patrol_id"`
+	ID        string           `json:"id"`
+	PatrolID  string           `json:"patrol_id"`
 	Scores    []draftScoreJSON `json:"scores"`
-	UpdatedAt string          `json:"updated_at"`
+	UpdatedAt string           `json:"updated_at"`
 }
 
 type draftScoreJSON struct {
@@ -236,8 +236,8 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(attribute.Int("draft.scores_count", len(scores)))
 
 	result := draftJSON{
-		ID:       draft.ID,
-		PatrolID: draft.PatrolID,
+		ID:        draft.ID,
+		PatrolID:  draft.PatrolID,
 		UpdatedAt: draft.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		Scores: lo.Map(scores, func(s database.DraftScoreRow, _ int) draftScoreJSON {
 			return draftScoreJSON{CriterionID: s.CriterionID, Value: s.Value}
@@ -353,4 +353,131 @@ func (h *SessionHandler) ListSubmissions(w http.ResponseWriter, r *http.Request)
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"submissions": result})
+}
+
+// FinaliseSession handles POST /api/sessions/{session_id}/finalise
+func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.finalise_session")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	user := auth.UserFromContext(ctx)
+
+	// Verify session is active
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.ComputeStatus() != "ACTIVE" {
+		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
+		writeError(w, r, http.StatusBadRequest, "session is not active")
+		return
+	}
+
+	newSubmissions, err := h.db.FinaliseSession(ctx, user.ID, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not finalise session")
+		return
+	}
+
+	// Return all submissions for this session (including previously submitted)
+	allSubmissions, err := h.db.GetSubmissionsForSession(ctx, user.ID, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch submissions")
+		return
+	}
+
+	span.SetAttributes(
+		attribute.Int("finalised.count", len(newSubmissions)),
+		attribute.Int("total.submissions", len(allSubmissions)),
+	)
+
+	result := lo.Map(allSubmissions, func(s database.SubmissionRow, _ int) submissionJSON {
+		return submissionJSON{
+			ID:          s.ID,
+			PatrolID:    s.PatrolID,
+			PatrolName:  s.PatrolName,
+			Locked:      s.Locked,
+			SubmittedAt: s.SubmittedAt.Format("2006-01-02T15:04:05Z"),
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"submissions":     result,
+		"finalised_count": len(newSubmissions),
+	})
+}
+
+// ReviseSession handles POST /api/sessions/{session_id}/revise
+// Converts all submissions back to drafts so the user can edit them.
+func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.revise_session")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	user := auth.UserFromContext(ctx)
+
+	// Verify session is active — can only revise active sessions
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.ComputeStatus() != "ACTIVE" {
+		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
+		writeError(w, r, http.StatusBadRequest, "session is not active")
+		return
+	}
+
+	if err := h.db.ReviseSession(ctx, user.ID, sessionID); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not revise session")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// GetSubmissionScores handles GET /api/sessions/{session_id}/patrols/{patrol_id}/scores
+// Returns the submitted scores for a patrol (read-only view).
+func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	patrolID := r.PathValue("patrol_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_submission_scores")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("session.id", sessionID),
+		attribute.String("patrol.id", patrolID),
+	)
+
+	user := auth.UserFromContext(ctx)
+
+	scores, err := h.db.GetSubmissionScoresByPatrol(ctx, user.ID, sessionID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch scores")
+		return
+	}
+
+	span.SetAttributes(attribute.Int("scores.count", len(scores)))
+
+	result := lo.Map(scores, func(s database.SubmissionScoreRow, _ int) submissionScoreJSON {
+		return submissionScoreJSON{
+			CriterionID: s.CriterionID,
+			Value:       s.Value,
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"scores": result})
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/samber/lo"
@@ -11,14 +12,20 @@ import (
 	"github.com/allyjweir/scoutmark/internal/tracing"
 )
 
+// SessionBroadcaster is the interface for broadcasting session progress updates.
+type SessionBroadcaster interface {
+	BroadcastSessionProgress(ctx context.Context, sessionID string)
+}
+
 // SessionHandler handles session-related endpoints.
 type SessionHandler struct {
-	db *database.DB
+	db          *database.DB
+	broadcaster SessionBroadcaster
 }
 
 // NewSessionHandler creates a new SessionHandler.
-func NewSessionHandler(db *database.DB) *SessionHandler {
-	return &SessionHandler{db: db}
+func NewSessionHandler(db *database.DB, broadcaster SessionBroadcaster) *SessionHandler {
+	return &SessionHandler{db: db, broadcaster: broadcaster}
 }
 
 type sessionJSON struct {
@@ -311,6 +318,11 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 		Locked:      submission.Locked,
 		SubmittedAt: submission.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 	})
+
+	// Broadcast updated progress to WebSocket subscribers
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+	}
 }
 
 // UnlockSubmission handles POST /api/submissions/{id}/unlock (admin only)
@@ -424,6 +436,11 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		"submissions":     result,
 		"finalised_count": len(newSubmissions),
 	})
+
+	// Broadcast updated progress to WebSocket subscribers
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+	}
 }
 
 // ReviseSession handles POST /api/sessions/{session_id}/revise

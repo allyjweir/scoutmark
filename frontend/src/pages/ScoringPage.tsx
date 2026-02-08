@@ -167,8 +167,8 @@ export const ScoringPage = () => {
 
   // Navigate between patrols
   const goToPatrol = useCallback(
-    (index: number) => {
-      flushDraft();
+    async (index: number) => {
+      await flushDraft();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(false);
@@ -176,16 +176,16 @@ export const ScoringPage = () => {
     [flushDraft],
   );
 
-  const goToSummary = useCallback(() => {
-    flushDraft();
+  const goToSummary = useCallback(async () => {
+    await flushDraft();
     setView('summary');
     setJumpedFromSummary(false);
   }, [flushDraft]);
 
   // Jump from summary to a specific patrol, with "Back to Summary" nav
   const jumpToPatrolFromSummary = useCallback(
-    (index: number) => {
-      flushDraft();
+    async (index: number) => {
+      await flushDraft();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(true);

@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/allyjweir/scoutmark/internal/tracing"
@@ -18,14 +18,14 @@ type DB struct {
 	*sql.DB
 }
 
-// Connect opens a MySQL connection pool using DATABASE_URL from the environment.
+// Connect opens a PostgreSQL connection pool using DATABASE_URL from the environment.
 func Connect(ctx context.Context) (*DB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "root:scoutmark@tcp(localhost:3306)/scoutmark?parseTime=true"
+		dsn = "postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable"
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}

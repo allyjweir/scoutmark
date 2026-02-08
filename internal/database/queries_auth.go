@@ -30,7 +30,7 @@ type SessionRow struct {
 // GetUserByUsername fetches a user by their username.
 func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE username = $1",
 		username,
 	)
 
@@ -48,7 +48,7 @@ func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, 
 // GetUserByID fetches a user by their ID.
 func (d *DB) GetUserByID(ctx context.Context, id string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE id = ?",
+		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE id = $1",
 		id,
 	)
 
@@ -74,7 +74,7 @@ func (d *DB) CreateUserSession(ctx context.Context, userID string, duration time
 	expiresAt := time.Now().Add(duration)
 
 	_, err := d.ExecContext(ctx,
-		"INSERT INTO user_sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+		"INSERT INTO user_sessions (token, user_id, expires_at) VALUES ($1, $2, $3)",
 		token, userID, expiresAt,
 	)
 	if err != nil {
@@ -92,7 +92,7 @@ func (d *DB) CreateUserSession(ctx context.Context, userID string, duration time
 // GetUserSession fetches a valid (non-expired) session by token.
 func (d *DB) GetUserSession(ctx context.Context, token string) (*SessionRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT token, user_id, expires_at, created_at FROM user_sessions WHERE token = ? AND expires_at > NOW()",
+		"SELECT token, user_id, expires_at, created_at FROM user_sessions WHERE token = $1 AND expires_at > NOW()",
 		token,
 	)
 
@@ -109,6 +109,6 @@ func (d *DB) GetUserSession(ctx context.Context, token string) (*SessionRow, err
 
 // DeleteUserSession removes a session token (logout).
 func (d *DB) DeleteUserSession(ctx context.Context, token string) error {
-	_, err := d.ExecContext(ctx, "DELETE FROM user_sessions WHERE token = ?", token)
+	_, err := d.ExecContext(ctx, "DELETE FROM user_sessions WHERE token = $1", token)
 	return err
 }

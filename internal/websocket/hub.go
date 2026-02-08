@@ -69,6 +69,23 @@ type SubscribeSessionPayload struct {
 	SessionID string `json:"session_id"`
 }
 
+type PatrolProgressPayload struct {
+	PatrolID   string `json:"patrol_id"`
+	PatrolName string `json:"patrol_name"`
+	Status     string `json:"status"`
+}
+
+type UserProgressPayload struct {
+	UserID      string                  `json:"user_id"`
+	DisplayName string                  `json:"display_name"`
+	Patrols     []PatrolProgressPayload `json:"patrols"`
+}
+
+type ProgressUpdatedPayload struct {
+	SessionID string                `json:"session_id"`
+	Users     []UserProgressPayload `json:"users"`
+}
+
 // ─── Client ─────────────────────────────────────────────────────────
 
 // Client represents a single WebSocket connection.
@@ -157,6 +174,49 @@ func (h *Hub) BroadcastToSession(sessionID string, msg ServerMessage, exclude *C
 			h.clientsMu.RLock()
 		}
 	})
+}
+
+// BroadcastSessionProgress fetches the current scoring progress for a session
+// and broadcasts it to all subscribed clients.
+func (h *Hub) BroadcastSessionProgress(ctx context.Context, sessionID string) {
+	progress, err := h.db.GetSessionProgress(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		return
+	}
+
+	// Group progress rows by user
+	userMap := make(map[string]*UserProgressPayload)
+	var userOrder []string
+	for _, row := range progress {
+		up, exists := userMap[row.UserID]
+		if !exists {
+			up = &UserProgressPayload{
+				UserID:      row.UserID,
+				DisplayName: row.DisplayName,
+			}
+			userMap[row.UserID] = up
+			userOrder = append(userOrder, row.UserID)
+		}
+		up.Patrols = append(up.Patrols, PatrolProgressPayload{
+			PatrolID:   row.PatrolID,
+			PatrolName: row.PatrolName,
+			Status:     row.Status,
+		})
+	}
+
+	users := make([]UserProgressPayload, 0, len(userOrder))
+	for _, id := range userOrder {
+		users = append(users, *userMap[id])
+	}
+
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type: "progress_updated",
+		Payload: ProgressUpdatedPayload{
+			SessionID: sessionID,
+			Users:     users,
+		},
+	}, nil)
 }
 
 // HandleWebSocket handles the WebSocket upgrade and message loop.
@@ -296,6 +356,9 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 			SavedAt:   time.Now(),
 		},
 	}
+
+	// Broadcast updated progress to all session subscribers (admin dashboard etc.)
+	c.hub.BroadcastSessionProgress(ctx, payload.SessionID)
 }
 
 func (c *Client) handleSubscribeSession(ctx context.Context, msg ClientMessage) {

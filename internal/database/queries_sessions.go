@@ -23,7 +23,7 @@ func (d *DB) GetUserPatrols(ctx context.Context, userID string) ([]UserPatrolRow
 		`SELECT p.id, p.name, up.sort_order
 		 FROM user_patrols up
 		 JOIN patrols p ON p.id = up.patrol_id
-		 WHERE up.user_id = ?
+		 WHERE up.user_id = $1
 		 ORDER BY up.sort_order ASC`,
 		userID,
 	)
@@ -112,7 +112,7 @@ func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRo
 		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
-		 WHERE s.id = ?`,
+		 WHERE s.id = $1`,
 		sessionID,
 	)
 
@@ -141,7 +141,7 @@ func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]Crit
 	rows, err := d.QueryContext(ctx,
 		`SELECT id, template_id, title, description, min_value, max_value, sort_order
 		 FROM criteria
-		 WHERE template_id = ?
+		 WHERE template_id = $1
 		 ORDER BY sort_order ASC`,
 		templateID,
 	)
@@ -176,9 +176,9 @@ func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map
 		   ON sub.user_id = up.user_id
 		  AND sub.session_id = s.id
 		  AND sub.patrol_id = up.patrol_id
-		 WHERE up.user_id = ?
+		 WHERE up.user_id = $1
 		 GROUP BY up.user_id, s.id
-		 HAVING total_patrols > 0 AND total_patrols = submitted_patrols`,
+		 HAVING COUNT(up.patrol_id) > 0 AND COUNT(up.patrol_id) = COUNT(sub.id)`,
 		userID,
 	)
 	if err != nil {
@@ -223,8 +223,8 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 		 FROM users u
 		 JOIN user_patrols up ON up.user_id = u.id
 		 JOIN patrols p ON p.id = up.patrol_id
-		 LEFT JOIN submissions s ON s.user_id = u.id AND s.session_id = ? AND s.patrol_id = up.patrol_id
-		 LEFT JOIN drafts dr ON dr.user_id = u.id AND dr.session_id = ? AND dr.patrol_id = up.patrol_id
+		 LEFT JOIN submissions s ON s.user_id = u.id AND s.session_id = $1 AND s.patrol_id = up.patrol_id
+		 LEFT JOIN drafts dr ON dr.user_id = u.id AND dr.session_id = $2 AND dr.patrol_id = up.patrol_id
 		 ORDER BY u.display_name, up.sort_order`,
 		sessionID, sessionID,
 	)

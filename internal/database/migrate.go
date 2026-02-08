@@ -79,7 +79,7 @@ func (d *DB) Migrate(ctx context.Context, migrationsDir string) error {
 			}
 		}
 
-		if _, err := d.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+		if _, err := d.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
 			return fmt.Errorf("recording migration %s: %w", version, err)
 		}
 

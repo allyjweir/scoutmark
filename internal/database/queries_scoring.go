@@ -35,7 +35,7 @@ func (d *DB) GetDraft(ctx context.Context, userID, sessionID, patrolID string) (
 	row := d.QueryRowContext(ctx,
 		`SELECT id, user_id, session_id, patrol_id, created_at, updated_at
 		 FROM drafts
-		 WHERE user_id = ? AND session_id = ? AND patrol_id = ?`,
+		 WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3`,
 		userID, sessionID, patrolID,
 	)
 
@@ -53,7 +53,7 @@ func (d *DB) GetDraft(ctx context.Context, userID, sessionID, patrolID string) (
 // GetDraftScores returns all scores for a draft.
 func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRow, error) {
 	rows, err := d.QueryContext(ctx,
-		"SELECT id, draft_id, criterion_id, value FROM draft_scores WHERE draft_id = ?",
+		"SELECT id, draft_id, criterion_id, value FROM draft_scores WHERE draft_id = $1",
 		draftID,
 	)
 	if err != nil {
@@ -81,14 +81,14 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 		// Upsert the draft record
 		var draftID string
 		row := tx.QueryRowContext(ctx,
-			"SELECT id FROM drafts WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+			"SELECT id FROM drafts WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 			userID, sessionID, patrolID,
 		)
 		err := row.Scan(&draftID)
 		if err == sql.ErrNoRows {
 			draftID = uuid.New().String()
 			_, err = tx.ExecContext(ctx,
-				"INSERT INTO drafts (id, user_id, session_id, patrol_id) VALUES (?, ?, ?, ?)",
+				"INSERT INTO drafts (id, user_id, session_id, patrol_id) VALUES ($1, $2, $3, $4)",
 				draftID, userID, sessionID, patrolID,
 			)
 			if err != nil {
@@ -98,7 +98,7 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 			return fmt.Errorf("checking existing draft: %w", err)
 		} else {
 			_, err = tx.ExecContext(ctx,
-				"UPDATE drafts SET updated_at = NOW() WHERE id = ?", draftID,
+				"UPDATE drafts SET updated_at = NOW() WHERE id = $1", draftID,
 			)
 			if err != nil {
 				return fmt.Errorf("updating draft timestamp: %w", err)
@@ -109,8 +109,8 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 		for criterionID, value := range scores {
 			scoreID := uuid.New().String()
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES (?, ?, ?, ?)
-				 ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+				`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value`,
 				scoreID, draftID, criterionID, value,
 			)
 			if err != nil {
@@ -134,7 +134,7 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 // DeleteDraft removes a draft and its scores (cascade).
 func (d *DB) DeleteDraft(ctx context.Context, userID, sessionID, patrolID string) error {
 	_, err := d.ExecContext(ctx,
-		"DELETE FROM drafts WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+		"DELETE FROM drafts WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 		userID, sessionID, patrolID,
 	)
 	return err
@@ -170,8 +170,8 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO submissions (id, user_id, session_id, patrol_id, locked)
-			 VALUES (?, ?, ?, ?, TRUE)
-			 ON DUPLICATE KEY UPDATE locked = TRUE, submitted_at = NOW()`,
+			 VALUES ($1, $2, $3, $4, TRUE)
+			 ON CONFLICT (user_id, session_id, patrol_id) DO UPDATE SET locked = TRUE, submitted_at = NOW()`,
 			submissionID, userID, sessionID, patrolID,
 		)
 		if err != nil {
@@ -180,7 +180,7 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 
 		// If it was a duplicate key update, get the real ID
 		row := tx.QueryRowContext(ctx,
-			"SELECT id FROM submissions WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+			"SELECT id FROM submissions WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 			userID, sessionID, patrolID,
 		)
 		if err := row.Scan(&submissionID); err != nil {
@@ -188,7 +188,7 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 		}
 
 		// Clear old scores if re-submitting
-		_, err = tx.ExecContext(ctx, "DELETE FROM submission_scores WHERE submission_id = ?", submissionID)
+		_, err = tx.ExecContext(ctx, "DELETE FROM submission_scores WHERE submission_id = $1", submissionID)
 		if err != nil {
 			return fmt.Errorf("clearing old submission scores: %w", err)
 		}
@@ -205,7 +205,7 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 
 		for _, s := range scoreRows {
 			_, err := tx.ExecContext(ctx,
-				"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES (?, ?, ?, ?)",
+				"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES ($1, $2, $3, $4)",
 				s.ID, s.SubmissionID, s.CriterionID, s.Value,
 			)
 			if err != nil {
@@ -215,7 +215,7 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 
 		// Delete the draft now that we've submitted
 		_, err = tx.ExecContext(ctx,
-			"DELETE FROM drafts WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+			"DELETE FROM drafts WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 			userID, sessionID, patrolID,
 		)
 		if err != nil {
@@ -242,7 +242,7 @@ func (d *DB) GetSubmissionsForSession(ctx context.Context, userID, sessionID str
 		`SELECT s.id, s.user_id, s.session_id, s.patrol_id, p.name, s.locked, s.submitted_at
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
-		 WHERE s.user_id = ? AND s.session_id = ?
+		 WHERE s.user_id = $1 AND s.session_id = $2
 		 ORDER BY s.submitted_at ASC`,
 		userID, sessionID,
 	)
@@ -265,7 +265,7 @@ func (d *DB) GetSubmissionsForSession(ctx context.Context, userID, sessionID str
 // GetSubmissionScores returns all scores for a submission.
 func (d *DB) GetSubmissionScores(ctx context.Context, submissionID string) ([]SubmissionScoreRow, error) {
 	rows, err := d.QueryContext(ctx,
-		"SELECT id, submission_id, criterion_id, value FROM submission_scores WHERE submission_id = ?",
+		"SELECT id, submission_id, criterion_id, value FROM submission_scores WHERE submission_id = $1",
 		submissionID,
 	)
 	if err != nil {
@@ -286,7 +286,7 @@ func (d *DB) GetSubmissionScores(ctx context.Context, submissionID string) ([]Su
 
 // UnlockSubmission sets locked=false on a submission (admin only).
 func (d *DB) UnlockSubmission(ctx context.Context, submissionID string) (*SubmissionRow, error) {
-	_, err := d.ExecContext(ctx, "UPDATE submissions SET locked = FALSE WHERE id = ?", submissionID)
+	_, err := d.ExecContext(ctx, "UPDATE submissions SET locked = FALSE WHERE id = $1", submissionID)
 	if err != nil {
 		return nil, fmt.Errorf("unlocking submission: %w", err)
 	}
@@ -295,7 +295,7 @@ func (d *DB) UnlockSubmission(ctx context.Context, submissionID string) (*Submis
 		`SELECT s.id, s.user_id, s.session_id, s.patrol_id, p.name, s.locked, s.submitted_at
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
-		 WHERE s.id = ?`,
+		 WHERE s.id = $1`,
 		submissionID,
 	)
 
@@ -312,7 +312,7 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 		`SELECT s.id, s.user_id, s.session_id, s.patrol_id, p.name, s.locked, s.submitted_at
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
-		 WHERE s.session_id = ?
+		 WHERE s.session_id = $1
 		 ORDER BY s.submitted_at ASC`,
 		sessionID,
 	)
@@ -343,13 +343,13 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 		// Look up the session's template to get the full criteria list
 		var templateID string
 		if err := tx.QueryRowContext(ctx,
-			"SELECT template_id FROM sessions WHERE id = ?", sessionID,
+			"SELECT template_id FROM sessions WHERE id = $1", sessionID,
 		).Scan(&templateID); err != nil {
 			return fmt.Errorf("looking up session template: %w", err)
 		}
 
 		critRows, err := tx.QueryContext(ctx,
-			"SELECT id FROM criteria WHERE template_id = ?", templateID,
+			"SELECT id FROM criteria WHERE template_id = $1", templateID,
 		)
 		if err != nil {
 			return fmt.Errorf("querying criteria: %w", err)
@@ -369,7 +369,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 		patrolRows, err := tx.QueryContext(ctx,
 			`SELECT p.id, p.name FROM user_patrols up
 			 JOIN patrols p ON p.id = up.patrol_id
-			 WHERE up.user_id = ?`,
+			 WHERE up.user_id = $1`,
 			userID,
 		)
 		if err != nil {
@@ -392,7 +392,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 
 		// Fetch all drafts for this user+session, indexed by patrol
 		draftRows, err := tx.QueryContext(ctx,
-			"SELECT id, patrol_id FROM drafts WHERE user_id = ? AND session_id = ?",
+			"SELECT id, patrol_id FROM drafts WHERE user_id = $1 AND session_id = $2",
 			userID, sessionID,
 		)
 		if err != nil {
@@ -421,7 +421,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Skip patrols that already have a submission
 			var existingCount int
 			if err := tx.QueryRowContext(ctx,
-				"SELECT COUNT(*) FROM submissions WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+				"SELECT COUNT(*) FROM submissions WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 				userID, sessionID, patrol.ID,
 			).Scan(&existingCount); err != nil {
 				return fmt.Errorf("checking existing submission: %w", err)
@@ -439,7 +439,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Overlay draft scores if a draft exists
 			if draft, ok := draftsByPatrol[patrol.ID]; ok {
 				scoreRows, err := tx.QueryContext(ctx,
-					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = ?",
+					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = $1",
 					draft.ID,
 				)
 				if err != nil {
@@ -457,7 +457,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 				scoreRows.Close()
 
 				// Delete the draft
-				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = ?", draft.ID)
+				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = $1", draft.ID)
 				if err != nil {
 					return fmt.Errorf("deleting draft: %w", err)
 				}
@@ -466,7 +466,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Create the submission
 			submissionID := uuid.New().String()
 			_, err = tx.ExecContext(ctx,
-				"INSERT INTO submissions (id, user_id, session_id, patrol_id, locked) VALUES (?, ?, ?, ?, TRUE)",
+				"INSERT INTO submissions (id, user_id, session_id, patrol_id, locked) VALUES ($1, $2, $3, $4, TRUE)",
 				submissionID, userID, sessionID, patrol.ID,
 			)
 			if err != nil {
@@ -476,7 +476,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Insert submission scores (all criteria, defaulting to 0)
 			for criterionID, value := range scores {
 				_, err := tx.ExecContext(ctx,
-					"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES (?, ?, ?, ?)",
+					"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES ($1, $2, $3, $4)",
 					uuid.New().String(), submissionID, criterionID, value,
 				)
 				if err != nil {
@@ -507,7 +507,7 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 	return d.InTx(ctx, func(tx *sql.Tx) error {
 		// Fetch all submissions for this user+session
 		subRows, err := tx.QueryContext(ctx,
-			"SELECT id, patrol_id FROM submissions WHERE user_id = ? AND session_id = ?",
+			"SELECT id, patrol_id FROM submissions WHERE user_id = $1 AND session_id = $2",
 			userID, sessionID,
 		)
 		if err != nil {
@@ -539,7 +539,7 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 		for _, sub := range subs {
 			// Load submission scores
 			scoreRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, value FROM submission_scores WHERE submission_id = ?",
+				"SELECT criterion_id, value FROM submission_scores WHERE submission_id = $1",
 				sub.ID,
 			)
 			if err != nil {
@@ -561,14 +561,14 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			// Create a draft from the submission scores (or update if one exists)
 			var draftID string
 			row := tx.QueryRowContext(ctx,
-				"SELECT id FROM drafts WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
+				"SELECT id FROM drafts WHERE user_id = $1 AND session_id = $2 AND patrol_id = $3",
 				userID, sessionID, sub.PatrolID,
 			)
 			err = row.Scan(&draftID)
 			if err == sql.ErrNoRows {
 				draftID = uuid.New().String()
 				_, err = tx.ExecContext(ctx,
-					"INSERT INTO drafts (id, user_id, session_id, patrol_id) VALUES (?, ?, ?, ?)",
+					"INSERT INTO drafts (id, user_id, session_id, patrol_id) VALUES ($1, $2, $3, $4)",
 					draftID, userID, sessionID, sub.PatrolID,
 				)
 				if err != nil {
@@ -582,8 +582,8 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			for criterionID, value := range scores {
 				scoreID := uuid.New().String()
 				_, err := tx.ExecContext(ctx,
-					`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES (?, ?, ?, ?)
-					 ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+					`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES ($1, $2, $3, $4)
+					 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value`,
 					scoreID, draftID, criterionID, value,
 				)
 				if err != nil {
@@ -593,7 +593,7 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 
 			// Delete the submission (cascade deletes submission_scores)
 			_, err = tx.ExecContext(ctx,
-				"DELETE FROM submissions WHERE id = ?", sub.ID,
+				"DELETE FROM submissions WHERE id = $1", sub.ID,
 			)
 			if err != nil {
 				return fmt.Errorf("deleting submission: %w", err)
@@ -610,7 +610,7 @@ func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, userID, sessionID,
 		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value
 		 FROM submission_scores ss
 		 JOIN submissions s ON s.id = ss.submission_id
-		 WHERE s.user_id = ? AND s.session_id = ? AND s.patrol_id = ?`,
+		 WHERE s.user_id = $1 AND s.session_id = $2 AND s.patrol_id = $3`,
 		userID, sessionID, patrolID,
 	)
 	if err != nil {

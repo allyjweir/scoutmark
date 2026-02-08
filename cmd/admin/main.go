@@ -17,7 +17,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
@@ -36,7 +36,7 @@ Commands:
   list-sessions     List all sessions with status
 
 Environment:
-  DATABASE_URL      MySQL connection string (default: root:scoutmark@tcp(localhost:3306)/scoutmark?parseTime=true)
+  DATABASE_URL      PostgreSQL connection string (default: postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable)
 `
 
 func main() {
@@ -77,10 +77,10 @@ func main() {
 func connectDB() (*sql.DB, error) {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "root:scoutmark@tcp(localhost:3306)/scoutmark?parseTime=true"
+		dsn = "postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable"
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -136,7 +136,7 @@ func createUser() error {
 	defer db.Close()
 
 	var exists bool
-	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", username).Scan(&exists); err != nil {
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)", username).Scan(&exists); err != nil {
 		return fmt.Errorf("checking existing user: %w", err)
 	}
 	if exists {
@@ -145,7 +145,7 @@ func createUser() error {
 
 	userID := uuid.New().String()
 	_, err = db.Exec(
-		"INSERT INTO users (id, username, password_hash, display_name, is_admin) VALUES (?, ?, ?, ?, ?)",
+		"INSERT INTO users (id, username, password_hash, display_name, is_admin) VALUES ($1, $2, $3, $4, $5)",
 		userID, username, string(hash), displayName, isAdmin,
 	)
 	if err != nil {
@@ -193,7 +193,7 @@ func changePassword() error {
 	}
 	defer db.Close()
 
-	result, err := db.Exec("UPDATE users SET password_hash = ? WHERE username = ?", string(hash), username)
+	result, err := db.Exec("UPDATE users SET password_hash = $1 WHERE username = $2", string(hash), username)
 	if err != nil {
 		return fmt.Errorf("updating password: %w", err)
 	}
@@ -317,7 +317,7 @@ Flags:
 
 	// Verify event exists
 	var eventName string
-	if err := db.QueryRow("SELECT name FROM events WHERE id = ?", *eventID).Scan(&eventName); err != nil {
+	if err := db.QueryRow("SELECT name FROM events WHERE id = $1", *eventID).Scan(&eventName); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("event %q not found\n\nAvailable events:\n%s", *eventID, listAvailable(db, "SELECT id, name FROM events ORDER BY name"))
 		}
@@ -326,7 +326,7 @@ Flags:
 
 	// Verify template exists
 	var templateName string
-	if err := db.QueryRow("SELECT name FROM criteria_templates WHERE id = ?", *templateID).Scan(&templateName); err != nil {
+	if err := db.QueryRow("SELECT name FROM criteria_templates WHERE id = $1", *templateID).Scan(&templateName); err != nil {
 		if err == sql.ErrNoRows {
 			return fmt.Errorf("template %q not found\n\nAvailable templates:\n%s", *templateID, listAvailable(db, "SELECT id, name FROM criteria_templates ORDER BY name"))
 		}
@@ -334,7 +334,7 @@ Flags:
 	}
 
 	_, err = db.Exec(
-		"INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at) VALUES (?, ?, ?, ?, ?, ?)",
+		"INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at) VALUES ($1, $2, $3, $4, $5, $6)",
 		id, *eventID, *templateID, *name, startsAt, endsAt,
 	)
 	if err != nil {

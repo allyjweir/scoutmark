@@ -2,9 +2,9 @@
 
 # Start everything for development
 dev: proto
-	@echo "Starting MySQL..."
-	docker-compose up -d mysql
-	@echo "Waiting for MySQL..."
+	@echo "Starting PostgreSQL..."
+	docker-compose up -d postgres
+	@echo "Waiting for PostgreSQL..."
 	@sleep 3
 	@make server &
 	@make frontend
@@ -27,7 +27,7 @@ migrate:
 
 # Seed development data
 seed:
-	mysql -u root -pscoutmark scoutmark -h 0.0.0.0 < migrations/002_seed_dev.sql
+	PGPASSWORD=scoutmark psql -U scoutmark -d scoutmark -h localhost < migrations/002_seed_dev.sql
 
 # Create a new user interactively
 create-user:

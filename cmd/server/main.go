@@ -59,7 +59,7 @@ func run(ctx context.Context) error {
 
 	// ─── Handlers ───────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(db)
-	sessionHandler := handlers.NewSessionHandler(db)
+	sessionHandler := handlers.NewSessionHandler(db, hub)
 	authMiddleware := auth.Middleware(db)
 
 	// ─── Routes ─────────────────────────────────────────────────

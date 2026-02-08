@@ -72,7 +72,7 @@ export interface WSClientMessage {
 
 export interface WSServerMessage {
   request_id?: string;
-  type: 'draft_saved' | 'patrol_submitted' | 'error' | 'subscribed';
+  type: 'draft_saved' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated';
   payload: unknown;
 }
 
@@ -98,4 +98,21 @@ export interface WSPatrolSubmittedPayload {
 export interface WSErrorPayload {
   code: string;
   message: string;
+}
+
+export interface WSPatrolProgressPayload {
+  patrol_id: string;
+  patrol_name: string;
+  status: 'not_started' | 'drafting' | 'submitted';
+}
+
+export interface WSUserProgressPayload {
+  user_id: string;
+  display_name: string;
+  patrols: WSPatrolProgressPayload[];
+}
+
+export interface WSProgressUpdatedPayload {
+  session_id: string;
+  users: WSUserProgressPayload[];
 }

@@ -12,6 +12,7 @@ export class ScoutmarkSocket {
   private maxReconnectAttempts = 10;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
+  private _shouldReconnect = true;
 
   constructor(private getToken: () => string | null) {}
 
@@ -31,6 +32,8 @@ export class ScoutmarkSocket {
   connect(): void {
     const token = this.getToken();
     if (!token) return;
+
+    this._shouldReconnect = true;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/ws?token=${token}`;
@@ -68,7 +71,9 @@ export class ScoutmarkSocket {
 
     this.ws.onclose = () => {
       this._connected = false;
-      this.attemptReconnect();
+      if (this._shouldReconnect) {
+        this.attemptReconnect();
+      }
     };
 
     this.ws.onerror = () => {
@@ -77,11 +82,19 @@ export class ScoutmarkSocket {
   }
 
   disconnect(): void {
+    this._shouldReconnect = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
-    this.ws?.close();
-    this.ws = null;
+    if (this.ws) {
+      // Remove handlers before closing to prevent phantom reconnect
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      this.ws.close();
+      this.ws = null;
+    }
     this._connected = false;
   }
 

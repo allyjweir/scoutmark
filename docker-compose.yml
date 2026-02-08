@@ -1,15 +1,16 @@
 version: "3.8"
 
 services:
-  mysql:
-    image: mysql:8.0
+  postgres:
+    image: postgres:16
     environment:
-      MYSQL_ROOT_PASSWORD: scoutmark
-      MYSQL_DATABASE: scoutmark
+      POSTGRES_USER: scoutmark
+      POSTGRES_PASSWORD: scoutmark
+      POSTGRES_DB: scoutmark
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pg_data:/var/lib/postgresql/data
 
   jaeger:
     image: jaegertracing/all-in-one:1.54
@@ -21,4 +22,4 @@ services:
       - "4318:4318"    # OTLP HTTP receiver
 
 volumes:
-  mysql_data:
+  pg_data:

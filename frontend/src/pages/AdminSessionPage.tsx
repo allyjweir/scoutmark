@@ -4,9 +4,10 @@ import {
   Box, Heading, Text, Spinner, Flash, Button, Label,
   ProgressBar, CounterLabel,
 } from '@primer/react';
-import type { Session } from '../lib/types';
+import type { Session, WSServerMessage, WSProgressUpdatedPayload } from '../lib/types';
 import * as api from '../lib/api';
 import type { UserProgress } from '../lib/api';
+import { useSessionSubscription } from '../hooks/useWebSocket';
 
 const STATUS_COLORS: Record<string, string> = {
   submitted: 'success.emphasis',
@@ -72,31 +73,17 @@ export const AdminSessionPage = () => {
       .finally(() => setLoading(false));
   }, [sessionId, applyUsers]);
 
-  // Auto-refresh countdown (15 seconds)
-  const REFRESH_INTERVAL = 15;
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
-  const countdownRef = useRef(REFRESH_INTERVAL);
-
-  const refreshNow = useCallback(() => {
-    if (!sessionId) return;
-    api.getSessionProgress(sessionId)
-      .then(({ users }) => applyUsers(users))
-      .catch(() => { /* silent refresh failure */ });
-    setCountdown(REFRESH_INTERVAL);
-    countdownRef.current = REFRESH_INTERVAL;
+  // Live updates via WebSocket
+  const handleWSMessage = useCallback((msg: WSServerMessage) => {
+    if (msg.type === 'progress_updated') {
+      const payload = msg.payload as WSProgressUpdatedPayload;
+      if (payload.session_id === sessionId) {
+        applyUsers(payload.users as UserProgress[]);
+      }
+    }
   }, [sessionId, applyUsers]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    const tick = setInterval(() => {
-      countdownRef.current -= 1;
-      setCountdown(countdownRef.current);
-      if (countdownRef.current <= 0) {
-        refreshNow();
-      }
-    }, 1000);
-    return () => clearInterval(tick);
-  }, [sessionId, refreshNow]);
+  useSessionSubscription(sessionId, handleWSMessage);
 
   // Overall stats
   const stats = useMemo(() => {
@@ -165,20 +152,20 @@ export const AdminSessionPage = () => {
           <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
             Admin Progress View
           </Text>
-          <Button variant="invisible" size="small" onClick={refreshNow} sx={{ fontSize: 0, color: 'fg.muted', p: 0 }}>
-            ↻ {countdown}s
-          </Button>
-        </Box>
-        {/* Refresh countdown bar */}
-        <Box mt={2} height="2px" borderRadius={1} bg="neutral.muted" overflow="hidden">
-          <Box
-            height="100%"
-            bg="accent.emphasis"
-            sx={{
-              width: `${(countdown / REFRESH_INTERVAL) * 100}%`,
-              transition: 'width 1s linear',
-            }}
-          />
+          <Box display="flex" alignItems="center" sx={{ gap: 1 }}>
+            <Box
+              sx={{
+                width: 8, height: 8, borderRadius: '50%',
+                bg: 'success.emphasis',
+                '@keyframes pulse': {
+                  '0%, 100%': { opacity: 1 },
+                  '50%': { opacity: 0.4 },
+                },
+                animation: 'pulse 2s ease-in-out infinite',
+              }}
+            />
+            <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Live</Text>
+          </Box>
         </Box>
       </Box>
 

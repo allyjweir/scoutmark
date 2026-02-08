@@ -84,6 +84,7 @@ func run(ctx context.Context) error {
 
 	// Admin routes
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))
+	mux.Handle("GET /api/admin/sessions/{session_id}/progress", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionProgress))))
 
 	// WebSocket
 	mux.Handle("GET /api/ws", authMiddleware(http.HandlerFunc(hub.HandleWebSocket)))

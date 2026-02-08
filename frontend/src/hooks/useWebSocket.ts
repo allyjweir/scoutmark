@@ -5,33 +5,34 @@ import type { WSServerMessage, WSSaveDraftPayload } from '../lib/types';
 
 const getToken = () => localStorage.getItem('session_token');
 
-// Singleton socket instance shared across the app
-let socketInstance: ScoutmarkSocket | null = null;
+// Singleton socket instance shared across the app.
+// We intentionally never nullify this — every hook that calls getSocket()
+// must always receive the same object, otherwise useDraftSync and
+// useWebSocket end up with different instances (split-brain).
+const socketInstance = new ScoutmarkSocket(getToken);
 
-const getSocket = (): ScoutmarkSocket => {
-  if (!socketInstance) {
-    socketInstance = new ScoutmarkSocket(getToken);
-  }
-  return socketInstance;
-};
+const getSocket = (): ScoutmarkSocket => socketInstance;
 
 /**
  * useWebSocket manages the WebSocket connection lifecycle.
- * Call this once at the app level.
+ * Call this once at the app level. Pass `isAuthenticated` so the
+ * socket connects after login and disconnects after logout.
  */
-export const useWebSocket = () => {
-  const socket = useMemo(getSocket, []);
+export const useWebSocket = (isAuthenticated = false) => {
+  const socket = getSocket();
 
   useEffect(() => {
-    const token = getToken();
-    if (token) {
-      socket.connect();
+    if (isAuthenticated) {
+      const token = getToken();
+      if (token && !socket.connected) {
+        socket.connect();
+      }
+    } else {
+      // Reset clears handlers, queues, and disconnects — but keeps the
+      // same object so every hook still references the same instance.
+      socket.reset();
     }
-
-    return () => {
-      // Don't disconnect on unmount — keep alive across navigations
-    };
-  }, [socket]);
+  }, [socket, isAuthenticated]);
 
   return socket;
 };
@@ -43,7 +44,7 @@ export const useSessionSubscription = (
   sessionId: string | undefined,
   onMessage?: (msg: WSServerMessage) => void,
 ) => {
-  const socket = useMemo(getSocket, []);
+  const socket = getSocket();
 
   useEffect(() => {
     if (!sessionId) return;
@@ -61,7 +62,7 @@ export const useSessionSubscription = (
  * Scores are auto-saved 500ms after the last change.
  */
 export const useDraftSync = (sessionId: string, patrolId: string) => {
-  const socket = useMemo(getSocket, []);
+  const socket = getSocket();
   const lastSavedRef = useRef<string | null>(null);
 
   const saveDraft = useCallback(

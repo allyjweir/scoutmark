@@ -333,12 +333,64 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 }
 
 // FinaliseSession converts all drafts for a user+session into submissions in one transaction.
+// For any patrol the user is assigned to, missing criteria are filled in with zero.
+// Patrols with no draft at all are also submitted with all-zero scores.
 // Returns the list of newly created submissions.
 func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]SubmissionRow, error) {
 	var submissions []SubmissionRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
-		// Fetch all drafts for this user+session
+		// Look up the session's template to get the full criteria list
+		var templateID string
+		if err := tx.QueryRowContext(ctx,
+			"SELECT template_id FROM sessions WHERE id = ?", sessionID,
+		).Scan(&templateID); err != nil {
+			return fmt.Errorf("looking up session template: %w", err)
+		}
+
+		critRows, err := tx.QueryContext(ctx,
+			"SELECT id FROM criteria WHERE template_id = ?", templateID,
+		)
+		if err != nil {
+			return fmt.Errorf("querying criteria: %w", err)
+		}
+		var criterionIDs []string
+		for critRows.Next() {
+			var id string
+			if err := critRows.Scan(&id); err != nil {
+				critRows.Close()
+				return fmt.Errorf("scanning criterion: %w", err)
+			}
+			criterionIDs = append(criterionIDs, id)
+		}
+		critRows.Close()
+
+		// Get all patrols assigned to this user
+		patrolRows, err := tx.QueryContext(ctx,
+			`SELECT p.id, p.name FROM user_patrols up
+			 JOIN patrols p ON p.id = up.patrol_id
+			 WHERE up.user_id = ?`,
+			userID,
+		)
+		if err != nil {
+			return fmt.Errorf("querying user patrols: %w", err)
+		}
+		type patrolInfo struct {
+			ID   string
+			Name string
+		}
+		var userPatrols []patrolInfo
+		for patrolRows.Next() {
+			var p patrolInfo
+			if err := patrolRows.Scan(&p.ID, &p.Name); err != nil {
+				patrolRows.Close()
+				return fmt.Errorf("scanning patrol: %w", err)
+			}
+			userPatrols = append(userPatrols, p)
+		}
+		patrolRows.Close()
+
+		// Fetch all drafts for this user+session, indexed by patrol
 		draftRows, err := tx.QueryContext(ctx,
 			"SELECT id, patrol_id FROM drafts WHERE user_id = ? AND session_id = ?",
 			userID, sessionID,
@@ -346,35 +398,31 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 		if err != nil {
 			return fmt.Errorf("querying drafts: %w", err)
 		}
-
 		type draftInfo struct {
 			ID       string
 			PatrolID string
 		}
-		var drafts []draftInfo
+		draftsByPatrol := make(map[string]draftInfo)
 		for draftRows.Next() {
 			var d draftInfo
 			if err := draftRows.Scan(&d.ID, &d.PatrolID); err != nil {
 				draftRows.Close()
 				return fmt.Errorf("scanning draft: %w", err)
 			}
-			drafts = append(drafts, d)
+			draftsByPatrol[d.PatrolID] = d
 		}
 		draftRows.Close()
 		if err := draftRows.Err(); err != nil {
 			return err
 		}
 
-		if len(drafts) == 0 {
-			return fmt.Errorf("no drafts to finalise")
-		}
-
-		for _, draft := range drafts {
+		// Process every assigned patrol (even ones with no draft)
+		for _, patrol := range userPatrols {
 			// Skip patrols that already have a submission
 			var existingCount int
 			if err := tx.QueryRowContext(ctx,
 				"SELECT COUNT(*) FROM submissions WHERE user_id = ? AND session_id = ? AND patrol_id = ?",
-				userID, sessionID, draft.PatrolID,
+				userID, sessionID, patrol.ID,
 			).Scan(&existingCount); err != nil {
 				return fmt.Errorf("checking existing submission: %w", err)
 			}
@@ -382,42 +430,50 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 				continue
 			}
 
-			// Load draft scores
-			scoreRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, value FROM draft_scores WHERE draft_id = ?",
-				draft.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("querying draft scores: %w", err)
+			// Start with zeros for all criteria
+			scores := make(map[string]int, len(criterionIDs))
+			for _, cid := range criterionIDs {
+				scores[cid] = 0
 			}
 
-			scores := make(map[string]int)
-			for scoreRows.Next() {
-				var criterionID string
-				var value int
-				if err := scoreRows.Scan(&criterionID, &value); err != nil {
-					scoreRows.Close()
-					return fmt.Errorf("scanning draft score: %w", err)
+			// Overlay draft scores if a draft exists
+			if draft, ok := draftsByPatrol[patrol.ID]; ok {
+				scoreRows, err := tx.QueryContext(ctx,
+					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = ?",
+					draft.ID,
+				)
+				if err != nil {
+					return fmt.Errorf("querying draft scores: %w", err)
 				}
-				scores[criterionID] = value
-			}
-			scoreRows.Close()
+				for scoreRows.Next() {
+					var criterionID string
+					var value int
+					if err := scoreRows.Scan(&criterionID, &value); err != nil {
+						scoreRows.Close()
+						return fmt.Errorf("scanning draft score: %w", err)
+					}
+					scores[criterionID] = value
+				}
+				scoreRows.Close()
 
-			if len(scores) == 0 {
-				continue // skip drafts with no scores
+				// Delete the draft
+				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = ?", draft.ID)
+				if err != nil {
+					return fmt.Errorf("deleting draft: %w", err)
+				}
 			}
 
 			// Create the submission
 			submissionID := uuid.New().String()
 			_, err = tx.ExecContext(ctx,
 				"INSERT INTO submissions (id, user_id, session_id, patrol_id, locked) VALUES (?, ?, ?, ?, TRUE)",
-				submissionID, userID, sessionID, draft.PatrolID,
+				submissionID, userID, sessionID, patrol.ID,
 			)
 			if err != nil {
-				return fmt.Errorf("inserting submission for patrol %s: %w", draft.PatrolID, err)
+				return fmt.Errorf("inserting submission for patrol %s: %w", patrol.ID, err)
 			}
 
-			// Insert submission scores
+			// Insert submission scores (all criteria, defaulting to 0)
 			for criterionID, value := range scores {
 				_, err := tx.ExecContext(ctx,
 					"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES (?, ?, ?, ?)",
@@ -428,26 +484,12 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 				}
 			}
 
-			// Delete the draft
-			_, err = tx.ExecContext(ctx,
-				"DELETE FROM drafts WHERE id = ?", draft.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("deleting draft: %w", err)
-			}
-
-			// Get patrol name for the response
-			var patrolName string
-			if err := tx.QueryRowContext(ctx, "SELECT name FROM patrols WHERE id = ?", draft.PatrolID).Scan(&patrolName); err != nil {
-				patrolName = draft.PatrolID
-			}
-
 			submissions = append(submissions, SubmissionRow{
 				ID:          submissionID,
 				UserID:      userID,
 				SessionID:   sessionID,
-				PatrolID:    draft.PatrolID,
-				PatrolName:  patrolName,
+				PatrolID:    patrol.ID,
+				PatrolName:  patrol.Name,
 				Locked:      true,
 				SubmittedAt: time.Now(),
 			})

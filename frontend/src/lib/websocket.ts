@@ -15,6 +15,15 @@ export class ScoutmarkSocket {
 
   constructor(private getToken: () => string | null) {}
 
+  /** Reset all internal state (handlers, queues, counters). */
+  reset(): void {
+    this.disconnect();
+    this.handlers.clear();
+    this.globalHandlers.clear();
+    this.messageQueue = [];
+    this.reconnectAttempts = 0;
+  }
+
   get connected(): boolean {
     return this._connected;
   }

@@ -107,10 +107,12 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract token to delete the specific session
+	// Delete the session — try cookie first, then Authorization header
 	cookie, err := r.Cookie("session_token")
 	if err == nil {
 		h.db.DeleteUserSession(ctx, cookie.Value)
+	} else if token := r.Header.Get("Authorization"); len(token) > 7 {
+		h.db.DeleteUserSession(ctx, token[7:]) // strip "Bearer "
 	}
 
 	// Clear cookie

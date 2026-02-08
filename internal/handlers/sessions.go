@@ -22,16 +22,17 @@ func NewSessionHandler(db *database.DB) *SessionHandler {
 }
 
 type sessionJSON struct {
-	ID         string          `json:"id"`
-	EventID    string          `json:"event_id"`
-	EventName  string          `json:"event_name"`
-	TemplateID string          `json:"template_id"`
-	Name       string          `json:"name"`
-	StartsAt   string          `json:"starts_at"`
-	EndsAt     string          `json:"ends_at"`
-	Status     string          `json:"status"`
-	CreatedAt  string          `json:"created_at"`
-	Criteria   []criterionJSON `json:"criteria,omitempty"`
+	ID            string          `json:"id"`
+	EventID       string          `json:"event_id"`
+	EventName     string          `json:"event_name"`
+	TemplateID    string          `json:"template_id"`
+	Name          string          `json:"name"`
+	StartsAt      string          `json:"starts_at"`
+	EndsAt        string          `json:"ends_at"`
+	Status        string          `json:"status"`
+	CreatedAt     string          `json:"created_at"`
+	Criteria      []criterionJSON `json:"criteria,omitempty"`
+	UserFinalised bool            `json:"user_finalised"`
 }
 
 type criterionJSON struct {
@@ -81,6 +82,8 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	_, span := tracing.Tracer().Start(ctx, "handler.list_sessions")
 	defer span.End()
 
+	user := auth.UserFromContext(ctx)
+
 	// Parse optional status filter from query params
 	statusParam := r.URL.Query()["status"]
 
@@ -91,19 +94,28 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up which sessions this user has fully finalised
+	finalisedSet, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		// Non-fatal: just proceed without finalised info
+		finalisedSet = map[string]bool{}
+	}
+
 	span.SetAttributes(attribute.Int("sessions.count", len(sessions)))
 
 	result := lo.Map(sessions, func(s database.SessionDetailRow, _ int) sessionJSON {
 		return sessionJSON{
-			ID:         s.ID,
-			EventID:    s.EventID,
-			EventName:  s.EventName,
-			TemplateID: s.TemplateID,
-			Name:       s.Name,
-			StartsAt:   s.StartsAt.Format("2006-01-02T15:04:05Z"),
-			EndsAt:     s.EndsAt.Format("2006-01-02T15:04:05Z"),
-			Status:     s.ComputeStatus(),
-			CreatedAt:  s.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			ID:            s.ID,
+			EventID:       s.EventID,
+			EventName:     s.EventName,
+			TemplateID:    s.TemplateID,
+			Name:          s.Name,
+			StartsAt:      s.StartsAt.Format("2006-01-02T15:04:05Z"),
+			EndsAt:        s.EndsAt.Format("2006-01-02T15:04:05Z"),
+			Status:        s.ComputeStatus(),
+			CreatedAt:     s.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UserFinalised: finalisedSet[s.ID],
 		}
 	})
 
@@ -480,4 +492,86 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"scores": result})
+}
+
+// GetSessionProgress handles GET /api/admin/sessions/{session_id}/progress
+// Returns scoring progress for all users in a session (admin only).
+func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_session_progress")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	// Fetch session details
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+
+	// Fetch progress rows
+	progress, err := h.db.GetSessionProgress(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch progress")
+		return
+	}
+
+	// Group by user
+	type patrolProgress struct {
+		PatrolID   string `json:"patrol_id"`
+		PatrolName string `json:"patrol_name"`
+		Status     string `json:"status"` // not_started, drafting, submitted
+	}
+	type userProgress struct {
+		UserID      string           `json:"user_id"`
+		DisplayName string           `json:"display_name"`
+		Patrols     []patrolProgress `json:"patrols"`
+	}
+
+	userMap := make(map[string]*userProgress)
+	var userOrder []string
+
+	for _, row := range progress {
+		up, exists := userMap[row.UserID]
+		if !exists {
+			up = &userProgress{
+				UserID:      row.UserID,
+				DisplayName: row.DisplayName,
+			}
+			userMap[row.UserID] = up
+			userOrder = append(userOrder, row.UserID)
+		}
+		up.Patrols = append(up.Patrols, patrolProgress{
+			PatrolID:   row.PatrolID,
+			PatrolName: row.PatrolName,
+			Status:     row.Status,
+		})
+	}
+
+	// Preserve insertion order
+	users := make([]userProgress, 0, len(userOrder))
+	for _, id := range userOrder {
+		users = append(users, *userMap[id])
+	}
+
+	span.SetAttributes(attribute.Int("users.count", len(users)))
+
+	sessionResult := sessionJSON{
+		ID:        session.ID,
+		EventID:   session.EventID,
+		EventName: session.EventName,
+		Name:      session.Name,
+		StartsAt:  session.StartsAt.Format("2006-01-02T15:04:05Z"),
+		EndsAt:    session.EndsAt.Format("2006-01-02T15:04:05Z"),
+		Status:    session.ComputeStatus(),
+		CreatedAt: session.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session": sessionResult,
+		"users":   users,
+	})
 }

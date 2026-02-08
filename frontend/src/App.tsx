@@ -5,6 +5,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
+import { AdminSessionPage } from './pages/AdminSessionPage';
 import type { ReactNode } from 'react';
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
@@ -27,9 +28,10 @@ const ProtectedRoute = ({ children }: { children: ReactNode }) => {
 
 const WebSocketProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  // Only connect WebSocket when logged in
-  useWebSocket();
-  return user ? <>{children}</> : <>{children}</>;
+  useWebSocket(!!user);
+  // Key on user ID so the entire tree remounts on user change,
+  // clearing all component-level state (scores, sessions, etc.)
+  return <div key={user?.id ?? 'anon'}>{children}</div>;
 };
 
 const AppRoutes = () => (
@@ -49,6 +51,14 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <ScoringPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/sessions/:sessionId"
+        element={
+          <ProtectedRoute>
+            <AdminSessionPage />
           </ProtectedRoute>
         }
       />

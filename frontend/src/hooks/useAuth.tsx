@@ -36,7 +36,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const logout = useCallback(async () => {
-    await api.logout();
+    try {
+      await api.logout();
+    } catch {
+      // Always log out client-side even if server call fails
+    }
+    localStorage.removeItem('session_token');
     setUser(null);
   }, []);
 

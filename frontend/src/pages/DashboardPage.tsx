@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Box, Heading, Text, Spinner, Flash, Button } from '@primer/react';
 import { groupBy, sortBy } from 'lodash';
@@ -27,30 +27,6 @@ export const DashboardPage = () => {
       return () => clearTimeout(timer);
     }
   }, [finalisedName]);
-
-  // Sessions that were finalised in the last 30 minutes
-  const recentlyFinalised = useMemo(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('finalised_sessions') ?? '{}');
-      const now = Date.now();
-      const thirtyMin = 30 * 60 * 1000;
-      const recent = new Set<string>();
-
-      // Clean up old entries while we're at it
-      const cleaned: Record<string, string> = {};
-      for (const [id, iso] of Object.entries(stored)) {
-        const elapsed = now - new Date(iso as string).getTime();
-        if (elapsed < thirtyMin) {
-          recent.add(id);
-          cleaned[id] = iso as string;
-        }
-      }
-      localStorage.setItem('finalised_sessions', JSON.stringify(cleaned));
-      return recent;
-    } catch {
-      return new Set<string>();
-    }
-  }, [sessions]);
 
   useEffect(() => {
     api.listSessions()
@@ -103,6 +79,28 @@ export const DashboardPage = () => {
         </Flash>
       )}
 
+      {/* Admin quick-access */}
+      {user?.is_admin && (activeSessions.length > 0 || closedSessions.length > 0) && (
+        <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
+          <Heading sx={{ fontSize: 1, mb: 2, color: 'accent.fg' }}>
+            🛡️ Admin — Session Progress
+          </Heading>
+          <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>
+            {[...activeSessions, ...closedSessions].map((session) => (
+              <Button
+                key={session.id}
+                variant="invisible"
+                onClick={() => navigate(`/admin/sessions/${session.id}`)}
+                sx={{ justifyContent: 'flex-start', fontWeight: 'normal', fontSize: 1 }}
+                size="small"
+              >
+                📊 {session.name} — {session.event_name} ({session.status.toLowerCase()})
+              </Button>
+            ))}
+          </Box>
+        </Box>
+      )}
+
       {/* Active Sessions */}
       {activeSessions.length > 0 && (
         <Box mb={4}>
@@ -114,7 +112,7 @@ export const DashboardPage = () => {
               key={session.id}
               session={session}
               onClick={() => handleSessionClick(session)}
-              recentlyFinalised={recentlyFinalised.has(session.id)}
+              recentlyFinalised={session.user_finalised}
             />
           ))}
         </Box>
@@ -143,7 +141,7 @@ export const DashboardPage = () => {
               key={session.id}
               session={session}
               onClick={() => handleSessionClick(session)}
-              recentlyFinalised={recentlyFinalised.has(session.id)}
+              recentlyFinalised={session.user_finalised}
             />
           ))}
         </Box>

@@ -211,6 +211,7 @@ export const ScoringPage = () => {
   // Finalise — submit all patrols at once
   const handleFinalise = useCallback(async () => {
     if (!sessionId) return;
+    setShowConfirmFinalise(false);
     setSubmitting(true);
     setError('');
 
@@ -218,15 +219,6 @@ export const ScoringPage = () => {
       await flushDraft();
       const result = await api.finaliseSession(sessionId);
       setSubmissions(result.submissions);
-
-      // Totals are already tracked from scoring — no need to reload
-
-      // Store the finalise time so the dashboard can highlight it
-      const finalisedSessions = JSON.parse(
-        localStorage.getItem('finalised_sessions') ?? '{}',
-      );
-      finalisedSessions[sessionId] = new Date().toISOString();
-      localStorage.setItem('finalised_sessions', JSON.stringify(finalisedSessions));
 
       // Navigate to dashboard with success feedback
       navigate('/', { state: { finalised: session?.name ?? 'Session' } });
@@ -296,6 +288,25 @@ export const ScoringPage = () => {
 
   const allSubmitted = patrols.length > 0 &&
     every(patrols, (p) => submittedPatrolIds.has(p.patrol_id));
+
+  // Incomplete-scores confirmation
+  const [showConfirmFinalise, setShowConfirmFinalise] = useState(false);
+
+  const incompletePatrols = useMemo(() => {
+    if (!patrols.length || !criteria.length) return [];
+    return patrols.filter((p) => {
+      if (submittedPatrolIds.has(p.patrol_id)) return false;
+      return !isPatrolComplete(p.patrol_id);
+    });
+  }, [patrols, criteria, submittedPatrolIds, isPatrolComplete]);
+
+  const requestFinalise = useCallback(() => {
+    if (incompletePatrols.length > 0) {
+      setShowConfirmFinalise(true);
+    } else {
+      handleFinalise();
+    }
+  }, [incompletePatrols, handleFinalise]);
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
 
@@ -466,7 +477,7 @@ export const ScoringPage = () => {
                 </Button>
                 <Button
                   variant="primary"
-                  onClick={handleFinalise}
+                  onClick={requestFinalise}
                   sx={{ flex: 2 }}
                   size="large"
                   disabled={submitting}
@@ -482,6 +493,69 @@ export const ScoringPage = () => {
               </Box>
             )}
           </Box>
+
+          {/* Incomplete scores confirmation overlay */}
+          {showConfirmFinalise && (
+            <Box
+              position="fixed"
+              top={0}
+              left={0}
+              right={0}
+              bottom={0}
+              bg="neutral.muted"
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              sx={{ zIndex: 100 }}
+              onClick={() => setShowConfirmFinalise(false)}
+            >
+              <Box
+                bg="canvas.default"
+                borderRadius={2}
+                borderWidth={1}
+                borderStyle="solid"
+                borderColor="attention.emphasis"
+                p={4}
+                mx={3}
+                maxWidth="400px"
+                sx={{ width: '100%' }}
+                onClick={(e: React.MouseEvent) => e.stopPropagation()}
+              >
+                <Heading sx={{ fontSize: 2, mb: 2 }}>⚠️ Incomplete Scores</Heading>
+                <Text as="p" sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>
+                  The following patrols have unset criteria that will be submitted as <strong>zero</strong>:
+                </Text>
+                <Box as="ul" sx={{ pl: 3, mb: 3 }}>
+                  {incompletePatrols.map((p) => (
+                    <Box as="li" key={p.patrol_id} sx={{ fontSize: 1, mb: 1 }}>
+                      <Text sx={{ fontWeight: 'bold' }}>{p.name}</Text>
+                      <Text sx={{ color: 'fg.muted' }}>
+                        {' '}— {(touchedMap[p.patrol_id]?.size ?? 0)}/{criteria.length} criteria set
+                      </Text>
+                    </Box>
+                  ))}
+                </Box>
+                <Box display="flex" sx={{ gap: 2 }}>
+                  <Button
+                    onClick={() => setShowConfirmFinalise(false)}
+                    sx={{ flex: 1 }}
+                    size="large"
+                  >
+                    Go Back
+                  </Button>
+                  <Button
+                    variant="danger"
+                    onClick={handleFinalise}
+                    sx={{ flex: 1 }}
+                    size="large"
+                    disabled={submitting}
+                  >
+                    {submitting ? 'Submitting…' : 'Submit Anyway'}
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          )}
         </>
       )}
 

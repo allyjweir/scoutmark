@@ -110,3 +110,22 @@ export const getSubmissionScores = async (
 
 export const unlockSubmission = async (submissionId: string): Promise<Submission> =>
   request(`/submissions/${submissionId}/unlock`, { method: 'POST' });
+
+// ─── Admin ──────────────────────────────────────────────────────────
+
+export interface PatrolProgress {
+  patrol_id: string;
+  patrol_name: string;
+  status: 'not_started' | 'drafting' | 'submitted';
+}
+
+export interface UserProgress {
+  user_id: string;
+  display_name: string;
+  patrols: PatrolProgress[];
+}
+
+export const getSessionProgress = async (
+  sessionId: string,
+): Promise<{ session: Session; users: UserProgress[] }> =>
+  request(`/admin/sessions/${sessionId}/progress`);

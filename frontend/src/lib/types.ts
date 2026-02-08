@@ -18,6 +18,7 @@ export interface Session {
   status: 'UPCOMING' | 'ACTIVE' | 'CLOSED';
   created_at: string;
   criteria?: Criterion[];
+  user_finalised: boolean;
 }
 
 export interface Criterion {

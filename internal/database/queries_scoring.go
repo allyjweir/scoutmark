@@ -536,6 +536,15 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			return fmt.Errorf("no submissions to revise")
 		}
 
+		// Delete award selections when revising (user will re-select after re-scoring)
+		_, err = tx.ExecContext(ctx,
+			"DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2",
+			userID, sessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("deleting awards during revise: %w", err)
+		}
+
 		for _, sub := range subs {
 			// Load submission scores
 			scoreRows, err := tx.QueryContext(ctx,
@@ -627,4 +636,138 @@ func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, userID, sessionID,
 		scores = append(scores, s)
 	}
 	return scores, rows.Err()
+}
+
+// ─── Award Queries ──────────────────────────────────────────────────
+
+// SessionAwardRow represents a user's award selection for a session.
+type SessionAwardRow struct {
+	ID        string
+	UserID    string
+	SessionID string
+	AwardType string // "best_patrol" or "most_improved"
+	PatrolID  string
+	UpdatedAt time.Time
+}
+
+// GetSessionAwards returns all award selections for a user in a session.
+func (d *DB) GetSessionAwards(ctx context.Context, userID, sessionID string) ([]SessionAwardRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT id, user_id, session_id, award_type, patrol_id, updated_at
+		 FROM session_awards
+		 WHERE user_id = $1 AND session_id = $2
+		 ORDER BY award_type`,
+		userID, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying session awards: %w", err)
+	}
+	defer rows.Close()
+
+	var awards []SessionAwardRow
+	for rows.Next() {
+		var a SessionAwardRow
+		if err := rows.Scan(&a.ID, &a.UserID, &a.SessionID, &a.AwardType, &a.PatrolID, &a.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning session award: %w", err)
+		}
+		awards = append(awards, a)
+	}
+	return awards, rows.Err()
+}
+
+// UpsertSessionAward saves or updates a single award selection for a user+session.
+func (d *DB) UpsertSessionAward(ctx context.Context, userID, sessionID, awardType, patrolID string) (*SessionAwardRow, error) {
+	id := uuid.New().String()
+	_, err := d.ExecContext(ctx,
+		`INSERT INTO session_awards (id, user_id, session_id, award_type, patrol_id)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (user_id, session_id, award_type) DO UPDATE
+		   SET patrol_id = EXCLUDED.patrol_id, updated_at = NOW()`,
+		id, userID, sessionID, awardType, patrolID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("upserting session award: %w", err)
+	}
+
+	row := d.QueryRowContext(ctx,
+		`SELECT id, user_id, session_id, award_type, patrol_id, updated_at
+		 FROM session_awards
+		 WHERE user_id = $1 AND session_id = $2 AND award_type = $3`,
+		userID, sessionID, awardType,
+	)
+	a := &SessionAwardRow{}
+	if err := row.Scan(&a.ID, &a.UserID, &a.SessionID, &a.AwardType, &a.PatrolID, &a.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("scanning upserted award: %w", err)
+	}
+	return a, nil
+}
+
+// DeleteSessionAwards removes all award selections for a user+session (used during revise).
+func (d *DB) DeleteSessionAwards(ctx context.Context, userID, sessionID string) error {
+	_, err := d.ExecContext(ctx,
+		"DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2",
+		userID, sessionID,
+	)
+	return err
+}
+
+// PatrolTotalRow represents a patrol's total score from a session.
+type PatrolTotalRow struct {
+	PatrolID   string
+	PatrolName string
+	Total      int
+}
+
+// GetPreviousSessionTotals returns per-patrol total scores for the current user
+// from the previous session (used to calculate "most improved").
+func (d *DB) GetPreviousSessionTotals(ctx context.Context, userID, previousSessionID string) ([]PatrolTotalRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT s.patrol_id, p.name, COALESCE(SUM(ss.value), 0) AS total
+		 FROM submissions s
+		 JOIN patrols p ON p.id = s.patrol_id
+		 LEFT JOIN submission_scores ss ON ss.submission_id = s.id
+		 WHERE s.user_id = $1 AND s.session_id = $2
+		 GROUP BY s.patrol_id, p.name
+		 ORDER BY p.name`,
+		userID, previousSessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying previous session totals: %w", err)
+	}
+	defer rows.Close()
+
+	var totals []PatrolTotalRow
+	for rows.Next() {
+		var t PatrolTotalRow
+		if err := rows.Scan(&t.PatrolID, &t.PatrolName, &t.Total); err != nil {
+			return nil, fmt.Errorf("scanning patrol total: %w", err)
+		}
+		totals = append(totals, t)
+	}
+	return totals, rows.Err()
+}
+
+// GetAllSessionAwards returns all award selections for all users in a session (admin view).
+func (d *DB) GetAllSessionAwards(ctx context.Context, sessionID string) ([]SessionAwardRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT sa.id, sa.user_id, sa.session_id, sa.award_type, sa.patrol_id, sa.updated_at
+		 FROM session_awards sa
+		 WHERE sa.session_id = $1
+		 ORDER BY sa.user_id, sa.award_type`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying all session awards: %w", err)
+	}
+	defer rows.Close()
+
+	var awards []SessionAwardRow
+	for rows.Next() {
+		var a SessionAwardRow
+		if err := rows.Scan(&a.ID, &a.UserID, &a.SessionID, &a.AwardType, &a.PatrolID, &a.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning session award: %w", err)
+		}
+		awards = append(awards, a)
+	}
+	return awards, rows.Err()
 }

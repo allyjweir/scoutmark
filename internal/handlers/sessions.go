@@ -30,17 +30,20 @@ func NewSessionHandler(db *database.DB, broadcaster SessionBroadcaster) *Session
 }
 
 type sessionJSON struct {
-	ID            string          `json:"id"`
-	EventID       string          `json:"event_id"`
-	EventName     string          `json:"event_name"`
-	TemplateID    string          `json:"template_id"`
-	Name          string          `json:"name"`
-	StartsAt      string          `json:"starts_at"`
-	EndsAt        string          `json:"ends_at"`
-	Status        string          `json:"status"`
-	CreatedAt     string          `json:"created_at"`
-	Criteria      []criterionJSON `json:"criteria,omitempty"`
-	UserFinalised bool            `json:"user_finalised"`
+	ID                string          `json:"id"`
+	EventID           string          `json:"event_id"`
+	EventName         string          `json:"event_name"`
+	TemplateID        string          `json:"template_id"`
+	Name              string          `json:"name"`
+	StartsAt          string          `json:"starts_at"`
+	EndsAt            string          `json:"ends_at"`
+	Status            string          `json:"status"`
+	CreatedAt         string          `json:"created_at"`
+	Criteria          []criterionJSON `json:"criteria,omitempty"`
+	UserFinalised     bool            `json:"user_finalised"`
+	PreviousSessionID *string         `json:"previous_session_id"`
+	AwardBestPatrol   bool            `json:"award_best_patrol"`
+	AwardMostImproved bool            `json:"award_most_improved"`
 }
 
 type criterionJSON struct {
@@ -84,6 +87,11 @@ type draftScoreJSON struct {
 	Value       int    `json:"value"`
 }
 
+type awardJSON struct {
+	AwardType string `json:"award_type"`
+	PatrolID  string `json:"patrol_id"`
+}
+
 // ListSessions handles GET /api/sessions
 func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -114,16 +122,19 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	result := lo.Map(sessions, func(s database.SessionDetailRow, _ int) sessionJSON {
 		return sessionJSON{
-			ID:            s.ID,
-			EventID:       s.EventID,
-			EventName:     s.EventName,
-			TemplateID:    s.TemplateID,
-			Name:          s.Name,
-			StartsAt:      s.StartsAt.Format("2006-01-02T15:04:05Z"),
-			EndsAt:        s.EndsAt.Format("2006-01-02T15:04:05Z"),
-			Status:        s.ComputeStatus(),
-			CreatedAt:     s.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			UserFinalised: finalisedSet[s.ID],
+			ID:                s.ID,
+			EventID:           s.EventID,
+			EventName:         s.EventName,
+			TemplateID:        s.TemplateID,
+			Name:              s.Name,
+			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
+			EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
+			Status:            s.ComputeStatus(),
+			CreatedAt:         s.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UserFinalised:     finalisedSet[s.ID],
+			PreviousSessionID: s.PreviousSessionID,
+			AwardBestPatrol:   s.AwardBestPatrol,
+			AwardMostImproved: s.AwardMostImproved,
 		}
 	})
 
@@ -180,15 +191,18 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	)
 
 	sessionResult := sessionJSON{
-		ID:         session.ID,
-		EventID:    session.EventID,
-		EventName:  session.EventName,
-		TemplateID: session.TemplateID,
-		Name:       session.Name,
-		StartsAt:   session.StartsAt.Format("2006-01-02T15:04:05Z"),
-		EndsAt:     session.EndsAt.Format("2006-01-02T15:04:05Z"),
-		Status:     session.ComputeStatus(),
-		CreatedAt:  session.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:                session.ID,
+		EventID:           session.EventID,
+		EventName:         session.EventName,
+		TemplateID:        session.TemplateID,
+		Name:              session.Name,
+		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
+		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
+		Status:            session.ComputeStatus(),
+		CreatedAt:         session.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		PreviousSessionID: session.PreviousSessionID,
+		AwardBestPatrol:   session.AwardBestPatrol,
+		AwardMostImproved: session.AwardMostImproved,
 		Criteria: lo.Map(criteria, func(c database.CriterionRow, _ int) criterionJSON {
 			return criterionJSON{
 				ID:          c.ID,
@@ -215,10 +229,22 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
+	// Fetch user's award selections for this session
+	awardRows, err := h.db.GetSessionAwards(ctx, user.ID, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		// Non-fatal, continue without awards
+		awardRows = nil
+	}
+	awardResult := lo.Map(awardRows, func(a database.SessionAwardRow, _ int) awardJSON {
+		return awardJSON{AwardType: a.AwardType, PatrolID: a.PatrolID}
+	})
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session":     sessionResult,
 		"patrols":     patrolResult,
 		"submissions": submissionResult,
+		"awards":      awardResult,
 	})
 }
 
@@ -638,18 +664,187 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 	span.SetAttributes(attribute.Int("users.count", len(users)))
 
 	sessionResult := sessionJSON{
-		ID:        session.ID,
-		EventID:   session.EventID,
-		EventName: session.EventName,
-		Name:      session.Name,
-		StartsAt:  session.StartsAt.Format("2006-01-02T15:04:05Z"),
-		EndsAt:    session.EndsAt.Format("2006-01-02T15:04:05Z"),
-		Status:    session.ComputeStatus(),
-		CreatedAt: session.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		ID:                session.ID,
+		EventID:           session.EventID,
+		EventName:         session.EventName,
+		Name:              session.Name,
+		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
+		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
+		Status:            session.ComputeStatus(),
+		CreatedAt:         session.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		PreviousSessionID: session.PreviousSessionID,
+		AwardBestPatrol:   session.AwardBestPatrol,
+		AwardMostImproved: session.AwardMostImproved,
+	}
+
+	// Fetch all awards for this session (admin view: all users)
+	allAwards, err := h.db.GetAllSessionAwards(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		allAwards = nil
+	}
+
+	// Build a patrol name lookup from progress data
+	patrolNames := make(map[string]string)
+	for _, row := range progress {
+		patrolNames[row.PatrolID] = row.PatrolName
+	}
+
+	// Group awards by user_id
+	type userAwardJSON struct {
+		AwardType  string `json:"award_type"`
+		PatrolID   string `json:"patrol_id"`
+		PatrolName string `json:"patrol_name"`
+	}
+	userAwardsMap := make(map[string][]userAwardJSON)
+	for _, a := range allAwards {
+		userAwardsMap[a.UserID] = append(userAwardsMap[a.UserID], userAwardJSON{
+			AwardType:  a.AwardType,
+			PatrolID:   a.PatrolID,
+			PatrolName: patrolNames[a.PatrolID],
+		})
+	}
+
+	// Attach awards to users
+	type userWithAwards struct {
+		UserID      string           `json:"user_id"`
+		DisplayName string           `json:"display_name"`
+		Patrols     []patrolProgress `json:"patrols"`
+		Awards      []userAwardJSON  `json:"awards,omitempty"`
+	}
+	usersWithAwards := make([]userWithAwards, 0, len(users))
+	for _, u := range users {
+		usersWithAwards = append(usersWithAwards, userWithAwards{
+			UserID:      u.UserID,
+			DisplayName: u.DisplayName,
+			Patrols:     u.Patrols,
+			Awards:      userAwardsMap[u.UserID],
+		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session": sessionResult,
-		"users":   users,
+		"users":   usersWithAwards,
 	})
+}
+
+// SaveAward handles POST /api/sessions/{session_id}/awards
+// Saves or updates a single award selection for the current user.
+func (h *SessionHandler) SaveAward(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.save_award")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	user := auth.UserFromContext(ctx)
+
+	var req struct {
+		AwardType string `json:"award_type"`
+		PatrolID  string `json:"patrol_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate award type
+	if req.AwardType != "best_patrol" && req.AwardType != "most_improved" {
+		writeError(w, r, http.StatusBadRequest, "invalid award type")
+		return
+	}
+
+	// Validate session exists and has this award enabled
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if req.AwardType == "best_patrol" && !session.AwardBestPatrol {
+		writeError(w, r, http.StatusBadRequest, "best patrol award not enabled for this session")
+		return
+	}
+	if req.AwardType == "most_improved" && !session.AwardMostImproved {
+		writeError(w, r, http.StatusBadRequest, "most improved award not enabled for this session")
+		return
+	}
+
+	// IDOR check: verify user owns the patrol
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, req.PatrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
+	span.SetAttributes(
+		attribute.String("award.type", req.AwardType),
+		attribute.String("award.patrol_id", req.PatrolID),
+	)
+
+	award, err := h.db.UpsertSessionAward(ctx, user.ID, sessionID, req.AwardType, req.PatrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not save award")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, awardJSON{
+		AwardType: award.AwardType,
+		PatrolID:  award.PatrolID,
+	})
+}
+
+// GetPreviousScores handles GET /api/sessions/{session_id}/previous-scores
+// Returns per-patrol totals from the previous session for the current user.
+func (h *SessionHandler) GetPreviousScores(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_previous_scores")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	user := auth.UserFromContext(ctx)
+
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+
+	if session.PreviousSessionID == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"totals": []any{}})
+		return
+	}
+
+	type patrolTotalJSON struct {
+		PatrolID   string `json:"patrol_id"`
+		PatrolName string `json:"patrol_name"`
+		Total      int    `json:"total"`
+	}
+
+	totals, err := h.db.GetPreviousSessionTotals(ctx, user.ID, *session.PreviousSessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch previous scores")
+		return
+	}
+
+	span.SetAttributes(attribute.Int("totals.count", len(totals)))
+
+	result := lo.Map(totals, func(t database.PatrolTotalRow, _ int) patrolTotalJSON {
+		return patrolTotalJSON{
+			PatrolID:   t.PatrolID,
+			PatrolName: t.PatrolName,
+			Total:      t.Total,
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"totals": result})
 }

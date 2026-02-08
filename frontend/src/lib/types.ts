@@ -19,6 +19,20 @@ export interface Session {
   created_at: string;
   criteria?: Criterion[];
   user_finalised: boolean;
+  previous_session_id: string | null;
+  award_best_patrol: boolean;
+  award_most_improved: boolean;
+}
+
+export interface Award {
+  award_type: 'best_patrol' | 'most_improved';
+  patrol_id: string;
+}
+
+export interface PreviousPatrolTotal {
+  patrol_id: string;
+  patrol_name: string;
+  total: number;
 }
 
 export interface Criterion {

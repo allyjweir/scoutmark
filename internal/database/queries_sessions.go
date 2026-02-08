@@ -47,14 +47,17 @@ func (d *DB) GetUserPatrols(ctx context.Context, userID string) ([]UserPatrolRow
 
 // SessionRow represents a scoring session.
 type SessionDetailRow struct {
-	ID         string
-	EventID    string
-	EventName  string
-	TemplateID string
-	Name       string
-	StartsAt   time.Time
-	EndsAt     time.Time
-	CreatedAt  time.Time
+	ID                string
+	EventID           string
+	EventName         string
+	TemplateID        string
+	Name              string
+	StartsAt          time.Time
+	EndsAt            time.Time
+	CreatedAt         time.Time
+	PreviousSessionID *string
+	AwardBestPatrol   bool
+	AwardMostImproved bool
 }
 
 // ComputeStatus derives the session status from time boundaries.
@@ -73,7 +76,8 @@ func (s *SessionDetailRow) ComputeStatus() string {
 // ListSessions returns sessions, optionally filtered by status.
 func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDetailRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at
+		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
+		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
 		 ORDER BY s.starts_at ASC`,
@@ -86,7 +90,8 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 	var sessions []SessionDetailRow
 	for rows.Next() {
 		var s SessionDetailRow
-		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
+			&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
 		}
 		sessions = append(sessions, s)
@@ -109,7 +114,8 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 // GetSession returns a single session by ID.
 func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRow, error) {
 	row := d.QueryRowContext(ctx,
-		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at
+		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
+		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
 		 WHERE s.id = $1`,
@@ -117,7 +123,8 @@ func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRo
 	)
 
 	s := &SessionDetailRow{}
-	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
+		&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
 		return nil, fmt.Errorf("scanning session: %w", err)
 	}
 	return s, nil

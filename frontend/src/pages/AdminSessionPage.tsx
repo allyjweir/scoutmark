@@ -325,6 +325,42 @@ export const AdminSessionPage = () => {
                     </Box>
                   ))}
                 </Box>
+
+                {/* Award winners (shown when user has finalised and has awards) */}
+                {userDone && user.awards && user.awards.length > 0 && (
+                  <Box
+                    px={3}
+                    pb={3}
+                    borderTopWidth={1}
+                    borderTopStyle="solid"
+                    borderTopColor="border.default"
+                    pt={2}
+                  >
+                    <Text sx={{ fontSize: 0, color: 'fg.muted', fontWeight: 'bold', mb: 1, display: 'block' }}>
+                      🏆 Awards
+                    </Text>
+                    <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }}>
+                      {user.awards.map((award) => (
+                        <Box
+                          key={award.award_type}
+                          display="flex"
+                          alignItems="center"
+                          sx={{ gap: 1 }}
+                        >
+                          <Text sx={{ fontSize: 0 }}>
+                            {award.award_type === 'best_patrol' ? '🥇' : '📈'}
+                          </Text>
+                          <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                            {award.award_type === 'best_patrol' ? 'Best:' : 'Most Improved:'}
+                          </Text>
+                          <Label variant="accent" size="small">
+                            {award.patrol_name || award.patrol_id}
+                          </Label>
+                        </Box>
+                      ))}
+                    </Box>
+                  </Box>
+                )}
               </Box>
             );
           })}

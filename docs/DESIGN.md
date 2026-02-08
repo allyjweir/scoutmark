@@ -34,9 +34,10 @@ Scoutmark is a mobile-first web application for scoring scout patrols across con
 | **User** | A login identity representing a subcamp team. One login is shared by everyone within the same subcamp. Users own an ordered list of patrols. |
 | **Criteria Template** | A reusable, named set of scoring dimensions. Defined once, attached to many sessions. |
 | **Criterion** | A single scoring dimension within a template. Has a title, description, configurable min and max values, and a sort order. |
-| **Session** | A time-windowed scoring event. Belongs to an event, uses a criteria template. Has a start and end time that determines its status (upcoming, active, closed). |
+| **Session** | A time-windowed scoring event. Belongs to an event, uses a criteria template. Has a start and end time that determines its status (upcoming, active, closed). Can optionally reference a previous session for chaining (e.g. consecutive camp days). |
 | **Draft** | In-progress scores for a specific (user, session, patrol) combination. Auto-saved over WebSocket. Deleted once submitted. |
 | **Submission** | Finalised, locked scores. Created when a user submits a draft. Locked by default; an admin can unlock. |
+| **Award** | An optional per-session recognition (e.g. Best Patrol, Most Improved). Auto-calculated from scores, user-overridable. Saved incrementally, locked on finalise. |
 
 ---
 
@@ -94,6 +95,26 @@ Once a draft is promoted to a submission, the draft is deleted. No audit trail o
 
 Every session is visible to every user. There is no session scoping per-user or per-subcamp. This may change in future but is sufficient for both current use cases.
 
+### Incremental Save
+
+All user-generated data is saved to the server incrementally as the user interacts — not batched on form submission. This is a foundational design principle. Drafts auto-save over WebSocket. Award selections save via HTTP as soon as the user changes them. This ensures:
+- No data loss from browser crashes, signal drops, or accidental navigation
+- Server always has the latest state, enabling seamless device switching
+- Explicit "finalise" or "submit" actions are confirmation steps, not data-save steps
+
+### Session Chaining (Previous Session)
+
+Sessions can optionally reference a `previous_session_id`, forming a linked list within an event (e.g. Monday → Tuesday → Wednesday inspections). This enables features like "most improved" calculations by comparing scores across consecutive sessions.
+
+### Awards
+
+Sessions can optionally enable awards: **Best Patrol** (highest total score) and **Most Improved** (biggest net improvement from previous session). Awards are:
+- Auto-calculated from patrol scores and presented as pre-selected dropdowns
+- User-overridable — the scorer can change the selection if they disagree
+- Saved incrementally as the user interacts (see Incremental Save principle)
+- Locked in on finalise alongside scores
+- Visible to admins on the progress view once a user has finalised
+
 ---
 
 ## Tech Stack
@@ -129,11 +150,13 @@ Event 1──* Session
 CriteriaTemplate 1──* Criterion
 Session *──1 CriteriaTemplate
 Session *──1 Event
+Session 0..1──1 Session (previous_session_id)
 User 1──* UserPatrol *──1 Patrol
 Draft = (User, Session, Patrol) unique
 Draft 1──* DraftScore ──1 Criterion
 Submission = (User, Session, Patrol) unique
 Submission 1──* SubmissionScore ──1 Criterion
+SessionAward = (User, Session, AwardType) unique → Patrol
 ```
 
 All primary keys are UUIDs stored as `VARCHAR(36)`.

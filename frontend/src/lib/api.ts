@@ -1,4 +1,4 @@
-import type { User, Session, Patrol, Draft, Submission, SubmissionScore } from './types';
+import type { User, Session, Patrol, Draft, Submission, SubmissionScore, Award, PreviousPatrolTotal } from './types';
 
 const BASE_URL = '/api';
 
@@ -66,6 +66,7 @@ export const getSession = async (sessionId: string): Promise<{
   session: Session;
   patrols: Patrol[];
   submissions: Submission[];
+  awards: Award[];
 }> => request(`/sessions/${sessionId}`);
 
 // ─── Drafts ─────────────────────────────────────────────────────────
@@ -111,7 +112,30 @@ export const getSubmissionScores = async (
 export const unlockSubmission = async (submissionId: string): Promise<Submission> =>
   request(`/submissions/${submissionId}/unlock`, { method: 'POST' });
 
+// ─── Awards ─────────────────────────────────────────────────────────
+
+export const saveAward = async (
+  sessionId: string,
+  awardType: string,
+  patrolId: string,
+): Promise<Award> =>
+  request(`/sessions/${sessionId}/awards`, {
+    method: 'POST',
+    body: JSON.stringify({ award_type: awardType, patrol_id: patrolId }),
+  });
+
+export const getPreviousScores = async (
+  sessionId: string,
+): Promise<{ totals: PreviousPatrolTotal[] }> =>
+  request(`/sessions/${sessionId}/previous-scores`);
+
 // ─── Admin ──────────────────────────────────────────────────────────
+
+export interface UserAward {
+  award_type: string;
+  patrol_id: string;
+  patrol_name: string;
+}
 
 export interface PatrolProgress {
   patrol_id: string;
@@ -123,6 +147,7 @@ export interface UserProgress {
   user_id: string;
   display_name: string;
   patrols: PatrolProgress[];
+  awards?: UserAward[];
 }
 
 export const getSessionProgress = async (

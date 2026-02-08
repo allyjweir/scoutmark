@@ -29,6 +29,11 @@ export const ScoringPage = () => {
   const [viewingScores, setViewingScores] = useState<Record<string, number>>({});
   const [revising, setRevising] = useState(false);
 
+  // Award state
+  const [awards, setAwards] = useState<Record<string, string>>({}); // award_type → patrol_id
+  const [previousTotals, setPreviousTotals] = useState<Record<string, number>>({}); // patrol_id → previous total
+  const [previousTotalsLoaded, setPreviousTotalsLoaded] = useState(false);
+
   // Track total score per patrol (patrol_id → total)
   const [patrolTotals, setPatrolTotals] = useState<Record<string, number | null>>({});
 
@@ -52,10 +57,33 @@ export const ScoringPage = () => {
     if (!sessionId) return;
 
     api.getSession(sessionId)
-      .then(({ session, patrols, submissions }) => {
+      .then(({ session, patrols, submissions, awards: savedAwards }) => {
         setSession(session);
         setPatrols(patrols);
         setSubmissions(submissions);
+
+        // Restore saved award selections
+        if (savedAwards?.length) {
+          const awardMap: Record<string, string> = {};
+          for (const a of savedAwards) {
+            awardMap[a.award_type] = a.patrol_id;
+          }
+          setAwards(awardMap);
+        }
+
+        // Load previous session totals if most_improved is enabled
+        if (session.award_most_improved && session.previous_session_id) {
+          api.getPreviousScores(sessionId).then(({ totals }) => {
+            const map: Record<string, number> = {};
+            for (const t of totals) {
+              map[t.patrol_id] = t.total;
+            }
+            setPreviousTotals(map);
+            setPreviousTotalsLoaded(true);
+          }).catch(() => setPreviousTotalsLoaded(true));
+        } else {
+          setPreviousTotalsLoaded(true);
+        }
 
         // If all patrols already submitted, go to summary
         const submittedIds = new Set(submissions.map((s) => s.patrol_id));
@@ -76,6 +104,22 @@ export const ScoringPage = () => {
           );
           if (firstUnsubmitted >= 0) {
             setCurrentPatrolIndex(firstUnsubmitted);
+          }
+
+          // Pre-load draft status for ALL non-submitted patrols so
+          // touchedMap + patrolTotals are correct if the user jumps to summary
+          for (const patrol of patrols) {
+            if (submittedIds.has(patrol.patrol_id)) continue;
+            api.getDraft(sessionId, patrol.patrol_id).then(({ draft }) => {
+              if (draft?.scores?.length) {
+                setTouchedMap((prev) => ({
+                  ...prev,
+                  [patrol.patrol_id]: new Set(draft.scores.map((s) => s.criterion_id)),
+                }));
+                const total = draft.scores.reduce((sum, s) => sum + s.value, 0);
+                setPatrolTotals((prev) => ({ ...prev, [patrol.patrol_id]: total }));
+              }
+            }).catch(() => { /* ignore */ });
           }
         }
       })
@@ -263,8 +307,9 @@ export const ScoringPage = () => {
 
     try {
       await api.reviseSession(sessionId);
-      // Clear submissions and put user back in scoring mode
+      // Clear submissions, awards, and put user back in scoring mode
       setSubmissions([]);
+      setAwards({});
       setTouchedMap({});
       setPatrolTotals({});
       setCurrentPatrolIndex(0);
@@ -275,6 +320,82 @@ export const ScoringPage = () => {
       setRevising(false);
     }
   }, [sessionId]);
+
+  // ─── Award logic ───────────────────────────────────────────────
+
+  const hasAwards = session?.award_best_patrol || session?.award_most_improved;
+  const hasPreviousSession = !!session?.previous_session_id;
+
+  // Auto-calculate best patrol (highest total)
+  const suggestedBestPatrol = useMemo(() => {
+    if (!patrols.length) return null;
+    let best: { id: string; total: number } | null = null;
+    for (const p of patrols) {
+      const total = patrolTotals[p.patrol_id];
+      if (total != null && (best === null || total > best.total)) {
+        best = { id: p.patrol_id, total };
+      }
+    }
+    return best?.id ?? null;
+  }, [patrols, patrolTotals]);
+
+  // Auto-calculate most improved (biggest net improvement from previous session)
+  const suggestedMostImproved = useMemo(() => {
+    if (!patrols.length || !previousTotalsLoaded || !hasPreviousSession) return null;
+    // Need at least one previous total to compare
+    if (Object.keys(previousTotals).length === 0) return null;
+
+    let best: { id: string; delta: number } | null = null;
+    for (const p of patrols) {
+      const currentTotal = patrolTotals[p.patrol_id];
+      const prevTotal = previousTotals[p.patrol_id];
+      if (currentTotal != null && prevTotal != null) {
+        const delta = currentTotal - prevTotal;
+        if (best === null || delta > best.delta) {
+          best = { id: p.patrol_id, delta };
+        }
+      }
+    }
+    return best?.id ?? null;
+  }, [patrols, patrolTotals, previousTotals, previousTotalsLoaded, hasPreviousSession]);
+
+  // Get the effective award value (saved selection, or auto-calculated suggestion)
+  const getAwardValue = useCallback(
+    (awardType: string): string => {
+      if (awards[awardType]) return awards[awardType];
+      if (awardType === 'best_patrol') return suggestedBestPatrol ?? '';
+      if (awardType === 'most_improved') return suggestedMostImproved ?? '';
+      return '';
+    },
+    [awards, suggestedBestPatrol, suggestedMostImproved],
+  );
+
+  // Save award selection (incremental)
+  const handleAwardChange = useCallback(
+    async (awardType: string, patrolId: string) => {
+      if (!sessionId) return;
+      setAwards((prev) => ({ ...prev, [awardType]: patrolId }));
+      try {
+        await api.saveAward(sessionId, awardType, patrolId);
+      } catch (err) {
+        console.error('[award] Save failed:', err);
+        // Don't show error for background save — it'll retry on finalise
+      }
+    },
+    [sessionId],
+  );
+
+  // Auto-save awards when suggestions become available and no explicit choice exists
+  useEffect(() => {
+    if (!sessionId || !hasAwards) return;
+
+    if (session?.award_best_patrol && suggestedBestPatrol && !awards.best_patrol) {
+      api.saveAward(sessionId, 'best_patrol', suggestedBestPatrol).catch(() => {});
+    }
+    if (session?.award_most_improved && suggestedMostImproved && !awards.most_improved) {
+      api.saveAward(sessionId, 'most_improved', suggestedMostImproved).catch(() => {});
+    }
+  }, [sessionId, hasAwards, session, suggestedBestPatrol, suggestedMostImproved, awards]);
 
   // Progress tracking
   const submittedPatrolIds = useMemo(
@@ -374,6 +495,7 @@ export const ScoringPage = () => {
       {/* ─── Summary view ─── */}
       {view === 'summary' && (
         <>
+          {/* Scrollable patrol list */}
           <Box flex={1} p={3} overflow="auto">
             <Heading sx={{ fontSize: 3, mb: 3 }}>Review Scores</Heading>
 
@@ -435,63 +557,155 @@ export const ScoringPage = () => {
             </Box>
           </Box>
 
-          {/* Finalise bar */}
+          {/* Fixed bottom panel: Awards + Action buttons */}
           <Box
-            p={3}
             borderTopWidth={1}
             borderTopStyle="solid"
             borderTopColor="border.default"
             bg="canvas.subtle"
-            display="flex"
-            sx={{ gap: 2 }}
           >
-            {allSubmitted ? (
-              <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <Box textAlign="center" p={2}>
-                  <Text sx={{ color: 'success.fg', fontWeight: 'bold', fontSize: 2 }}>
-                    🎉 All patrols scored! Great work.
-                  </Text>
+            {/* Awards panel (only if session has awards enabled) */}
+            {hasAwards && (
+              <Box
+                p={3}
+                borderBottomWidth={1}
+                borderBottomStyle="solid"
+                borderBottomColor="border.default"
+              >
+                <Heading sx={{ fontSize: 1, mb: 2, color: 'fg.muted', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  🏆 Awards
+                </Heading>
+                <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+                  {/* Best Patrol award */}
+                  {session.award_best_patrol && (
+                    <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                      <Text sx={{ fontSize: 1, fontWeight: 'bold', minWidth: '120px', flexShrink: 0 }}>
+                        🥇 Best Patrol
+                      </Text>
+                      <Box sx={{ flex: 1 }}>
+                        <select
+                          value={getAwardValue('best_patrol')}
+                          onChange={(e) => handleAwardChange('best_patrol', e.target.value)}
+                          disabled={allSubmitted}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            border: '1px solid var(--borderColor-default, #d0d7de)',
+                            backgroundColor: 'var(--bgColor-default, #fff)',
+                            fontSize: '14px',
+                            cursor: allSubmitted ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          <option value="">Select patrol…</option>
+                          {patrols.map((p) => (
+                            <option key={p.patrol_id} value={p.patrol_id}>
+                              {p.name}
+                              {patrolTotals[p.patrol_id] != null ? ` (${patrolTotals[p.patrol_id]} pts)` : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </Box>
+                    </Box>
+                  )}
+
+                  {/* Most Improved award */}
+                  {session.award_most_improved && (
+                    <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                      <Text sx={{ fontSize: 1, fontWeight: 'bold', minWidth: '120px', flexShrink: 0 }}>
+                        📈 Most Improved
+                      </Text>
+                      <Box sx={{ flex: 1 }}>
+                        {hasPreviousSession ? (
+                          <select
+                            value={getAwardValue('most_improved')}
+                            onChange={(e) => handleAwardChange('most_improved', e.target.value)}
+                            disabled={allSubmitted}
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              borderRadius: '6px',
+                              border: '1px solid var(--borderColor-default, #d0d7de)',
+                              backgroundColor: 'var(--bgColor-default, #fff)',
+                              fontSize: '14px',
+                              cursor: allSubmitted ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            <option value="">Select patrol…</option>
+                            {patrols.map((p) => {
+                              const curr = patrolTotals[p.patrol_id];
+                              const prev = previousTotals[p.patrol_id];
+                              const delta = curr != null && prev != null ? curr - prev : null;
+                              return (
+                                <option key={p.patrol_id} value={p.patrol_id}>
+                                  {p.name}
+                                  {delta != null ? ` (${delta >= 0 ? '+' : ''}${delta})` : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        ) : (
+                          <Text sx={{ fontSize: 1, color: 'fg.muted', fontStyle: 'italic', py: 1 }}>
+                            No previous session — not available
+                          </Text>
+                        )}
+                      </Box>
+                    </Box>
+                  )}
                 </Box>
-                {session.status === 'ACTIVE' && (
-                  <Button
-                    onClick={handleRevise}
-                    disabled={revising}
-                    sx={{ width: '100%' }}
-                    size="large"
-                  >
-                    {revising ? 'Reopening…' : '✏️ Revise Scores'}
-                  </Button>
-                )}
-              </Box>
-            ) : session.status === 'ACTIVE' ? (
-              <>
-                <Button
-                  onClick={() => {
-                    setView('scoring');
-                    setCurrentPatrolIndex(patrols.length - 1);
-                  }}
-                  sx={{ flex: 1 }}
-                  size="large"
-                >
-                  ← Prev
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={requestFinalise}
-                  sx={{ flex: 2 }}
-                  size="large"
-                  disabled={submitting}
-                >
-                  {submitting ? 'Submitting…' : 'Finalise Scores'}
-                </Button>
-              </>
-            ) : (
-              <Box textAlign="center" p={2} sx={{ flex: 1 }}>
-                <Text sx={{ color: 'fg.muted', fontSize: 1 }}>
-                  This session is closed.
-                </Text>
               </Box>
             )}
+
+            {/* Action buttons */}
+            <Box p={3} display="flex" sx={{ gap: 2 }}>
+              {allSubmitted ? (
+                <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <Box textAlign="center" p={2}>
+                    <Text sx={{ color: 'success.fg', fontWeight: 'bold', fontSize: 2 }}>
+                      🎉 All patrols scored! Great work.
+                    </Text>
+                  </Box>
+                  {session.status === 'ACTIVE' && (
+                    <Button
+                      onClick={handleRevise}
+                      disabled={revising}
+                      sx={{ width: '100%' }}
+                      size="large"
+                    >
+                      {revising ? 'Reopening…' : '✏️ Revise Scores'}
+                    </Button>
+                  )}
+                </Box>
+              ) : session.status === 'ACTIVE' ? (
+                <>
+                  <Button
+                    onClick={() => {
+                      setView('scoring');
+                      setCurrentPatrolIndex(patrols.length - 1);
+                    }}
+                    sx={{ flex: 1 }}
+                    size="large"
+                  >
+                    ← Prev
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={requestFinalise}
+                    sx={{ flex: 2 }}
+                    size="large"
+                    disabled={submitting}
+                  >
+                    {submitting ? 'Submitting…' : 'Finalise Scores'}
+                  </Button>
+                </>
+              ) : (
+                <Box textAlign="center" p={2} sx={{ flex: 1 }}>
+                  <Text sx={{ color: 'fg.muted', fontSize: 1 }}>
+                    This session is closed.
+                  </Text>
+                </Box>
+              )}
+            </Box>
           </Box>
 
           {/* Incomplete scores confirmation overlay */}
@@ -565,41 +779,70 @@ export const ScoringPage = () => {
           {/* Patrol selector strip */}
           <Box
             display="flex"
-            overflowX="auto"
-            p={2}
-            sx={{ gap: 1 }}
+            alignItems="center"
             borderBottomWidth={1}
             borderBottomStyle="solid"
             borderBottomColor="border.default"
           >
-            {patrols.map((patrol, index) => {
-              const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
-              const isComplete = isPatrolComplete(patrol.patrol_id);
-              const isCurrent = index === currentPatrolIndex;
+            {/* Scrollable patrol list */}
+            <Box
+              display="flex"
+              overflowX="auto"
+              p={2}
+              sx={{
+                gap: 1,
+                flex: 1,
+                minWidth: 0,
+                // Hide scrollbar but keep scrollable
+                '&::-webkit-scrollbar': { display: 'none' },
+                scrollbarWidth: 'none',
+              }}
+            >
+              {patrols.map((patrol, index) => {
+                const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
+                const isComplete = isPatrolComplete(patrol.patrol_id);
+                const isCurrent = index === currentPatrolIndex;
 
-              return (
-                <Button
-                  key={patrol.patrol_id}
-                  variant={isCurrent ? 'primary' : 'invisible'}
-                  size="small"
-                  onClick={() => goToPatrol(index)}
-                  sx={{
-                    flexShrink: 0,
-                    position: 'relative',
-                  }}
-                >
-                  {patrol.name}
-                  {(isSubmitted || isComplete) && (
-                    <Label
-                      variant={isSubmitted ? 'success' : 'accent'}
-                      sx={{ ml: 1 }}
-                    >
-                      ✓
-                    </Label>
-                  )}
-                </Button>
-              );
-            })}
+                return (
+                  <Button
+                    key={patrol.patrol_id}
+                    variant={isCurrent ? 'primary' : 'invisible'}
+                    size="small"
+                    onClick={() => goToPatrol(index)}
+                    sx={{
+                      flexShrink: 0,
+                      position: 'relative',
+                    }}
+                  >
+                    {patrol.name}
+                    {(isSubmitted || isComplete) && (
+                      <Label
+                        variant={isSubmitted ? 'success' : 'accent'}
+                        sx={{ ml: 1 }}
+                      >
+                        ✓
+                      </Label>
+                    )}
+                  </Button>
+                );
+              })}
+            </Box>
+
+            {/* Pinned Summary button */}
+            <Box
+              p={2}
+              pl={1}
+              sx={{
+                flexShrink: 0,
+                borderLeftWidth: 1,
+                borderLeftStyle: 'solid',
+                borderLeftColor: 'border.default',
+              }}
+            >
+              <Button size="small" onClick={goToSummary}>
+                Summary →
+              </Button>
+            </Box>
           </Box>
 
           {/* Scoring area */}

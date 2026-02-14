@@ -52,9 +52,10 @@ type ServerMessage struct {
 }
 
 type SaveDraftPayload struct {
-	SessionID string         `json:"session_id"`
-	PatrolID  string         `json:"patrol_id"`
-	Scores    map[string]int `json:"scores"`
+	SessionID string            `json:"session_id"`
+	PatrolID  string            `json:"patrol_id"`
+	Scores    map[string]int    `json:"scores"`
+	Comments  map[string]string `json:"comments"`
 }
 
 type DraftSavedPayload struct {
@@ -371,7 +372,7 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 
 	span := tracing.Tracer()
 	_, saveSpan := span.Start(ctx, "ws.save_draft.db")
-	_, err = c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores)
+	_, err = c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores, payload.Comments)
 	saveSpan.End()
 
 	if err != nil {

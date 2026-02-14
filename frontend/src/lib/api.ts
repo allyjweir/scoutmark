@@ -150,7 +150,43 @@ export interface UserProgress {
   awards?: UserAward[];
 }
 
+export interface SessionComment {
+  user_id: string;
+  display_name: string;
+  patrol_id: string;
+  patrol_name: string;
+  criterion_id: string;
+  criterion_title: string;
+  value: number;
+  comment: string;
+}
+
 export const getSessionProgress = async (
   sessionId: string,
 ): Promise<{ session: Session; users: UserProgress[] }> =>
   request(`/admin/sessions/${sessionId}/progress`);
+
+export const getSessionComments = async (
+  sessionId: string,
+): Promise<{ comments: SessionComment[] }> =>
+  request(`/admin/sessions/${sessionId}/comments`);
+
+export interface AdminPatrolScores {
+  patrol_id: string;
+  patrol_name: string;
+  scores: { criterion_id: string; value: number; comment: string }[];
+}
+
+export interface AdminUserScoresResponse {
+  user_id: string;
+  display_name: string;
+  session_name: string;
+  criteria: { id: string; title: string; description: string; min_value: number; max_value: number; sort_order: number }[];
+  patrols: AdminPatrolScores[];
+}
+
+export const getAdminUserScores = async (
+  sessionId: string,
+  userId: string,
+): Promise<AdminUserScoresResponse> =>
+  request(`/admin/sessions/${sessionId}/users/${userId}/scores`);

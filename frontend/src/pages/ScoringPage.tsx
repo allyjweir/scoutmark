@@ -21,13 +21,18 @@ export const ScoringPage = () => {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [currentPatrolIndex, setCurrentPatrolIndex] = useState(0);
   const [scores, setScores] = useState<Record<string, number | null>>({});
+  const [comments, setComments] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [view, setView] = useState<View>('scoring');
   const [jumpedFromSummary, setJumpedFromSummary] = useState(false);
   const [viewingScores, setViewingScores] = useState<Record<string, number>>({});
+  const [viewingComments, setViewingComments] = useState<Record<string, string>>({});
   const [revising, setRevising] = useState(false);
+
+  // Persist comments across patrol switches (patrol_id → criterion_id → comment)
+  const [patrolComments, setPatrolComments] = useState<Record<string, Record<string, string>>>({});
 
   // Award state
   const [awards, setAwards] = useState<Record<string, string>>({}); // award_type → patrol_id
@@ -118,6 +123,14 @@ export const ScoringPage = () => {
                 }));
                 const total = draft.scores.reduce((sum, s) => sum + s.value, 0);
                 setPatrolTotals((prev) => ({ ...prev, [patrol.patrol_id]: total }));
+                // Restore comments
+                const commentMap: Record<string, string> = {};
+                for (const s of draft.scores) {
+                  if (s.comment) commentMap[s.criterion_id] = s.comment;
+                }
+                if (Object.keys(commentMap).length > 0) {
+                  setPatrolComments((prev) => ({ ...prev, [patrol.patrol_id]: commentMap }));
+                }
               }
             }).catch(() => { /* ignore */ });
           }
@@ -139,6 +152,14 @@ export const ScoringPage = () => {
         );
         setScores(restored);
 
+        // Restore comments from draft
+        const restoredComments: Record<string, string> = {};
+        for (const s of draft.scores) {
+          restoredComments[s.criterion_id] = s.comment || '';
+        }
+        setComments(restoredComments);
+        setPatrolComments((prev) => ({ ...prev, [currentPatrol.patrol_id]: restoredComments }));
+
         // Mark all restored criteria as touched
         setTouchedMap((prev) => ({
           ...prev,
@@ -151,10 +172,13 @@ export const ScoringPage = () => {
       } else {
         // Initialize with null — slider shows at 0 but dimmed/unset
         const initial: Record<string, number | null> = {};
+        const initialComments: Record<string, string> = {};
         for (const c of criteria) {
           initial[c.id] = null;
+          initialComments[c.id] = '';
         }
         setScores(initial);
+        setComments(initialComments);
       }
     });
   }, [sessionId, currentPatrol?.patrol_id, criteria, view]);
@@ -175,7 +199,7 @@ export const ScoringPage = () => {
           }
         }
         if (Object.keys(saveable).length > 0) {
-          saveDraft(saveable);
+          saveDraft(saveable, comments);
         }
 
         // Update patrol total
@@ -196,7 +220,35 @@ export const ScoringPage = () => {
         });
       }
     },
-    [saveDraft, currentPatrol],
+    [saveDraft, currentPatrol, comments],
+  );
+
+  // Handle comment change (auto-saves via debounced draft save)
+  const handleCommentChange = useCallback(
+    (criterionId: string, newComment: string) => {
+      setComments((prev) => {
+        const next = { ...prev, [criterionId]: newComment };
+
+        // Persist to patrolComments map
+        if (currentPatrol) {
+          setPatrolComments((pc) => ({ ...pc, [currentPatrol.patrol_id]: next }));
+        }
+
+        // Trigger a draft save with current scores + updated comments
+        const saveable: Record<string, number> = {};
+        for (const [k, v] of Object.entries(scores)) {
+          if (v !== null) {
+            saveable[k] = v;
+          }
+        }
+        if (Object.keys(saveable).length > 0) {
+          saveDraft(saveable, next);
+        }
+
+        return next;
+      });
+    },
+    [saveDraft, currentPatrol, scores],
   );
 
   // Check if all criteria for a patrol are touched
@@ -286,10 +338,13 @@ export const ScoringPage = () => {
           patrol.patrol_id,
         );
         const scoreMap: Record<string, number> = {};
+        const commentMap: Record<string, string> = {};
         for (const s of submissionScores) {
           scoreMap[s.criterion_id] = s.value;
+          if (s.comment) commentMap[s.criterion_id] = s.comment;
         }
         setViewingScores(scoreMap);
+        setViewingComments(commentMap);
         setCurrentPatrolIndex(patrolIndex);
         setView('viewing');
       } catch (err) {
@@ -312,6 +367,7 @@ export const ScoringPage = () => {
       setAwards({});
       setTouchedMap({});
       setPatrolTotals({});
+      setPatrolComments({});
       setCurrentPatrolIndex(0);
       setView('scoring');
     } catch (err) {
@@ -503,6 +559,7 @@ export const ScoringPage = () => {
               {patrols.map((patrol, index) => {
                 const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
                 const isComplete = isPatrolComplete(patrol.patrol_id);
+                const commentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
 
                 return (
                   <Box
@@ -533,6 +590,9 @@ export const ScoringPage = () => {
                       <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
                         {patrol.name}
                       </Text>
+                      {commentCount > 0 && (
+                        <Text sx={{ fontSize: 0, color: 'fg.muted' }}>💬 {commentCount}</Text>
+                      )}
                       {isSubmitted && (
                         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Tap to view</Text>
                       )}
@@ -802,6 +862,7 @@ export const ScoringPage = () => {
                 const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
                 const isComplete = isPatrolComplete(patrol.patrol_id);
                 const isCurrent = index === currentPatrolIndex;
+                const patrolCommentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
 
                 return (
                   <Button
@@ -815,6 +876,9 @@ export const ScoringPage = () => {
                     }}
                   >
                     {patrol.name}
+                    {patrolCommentCount > 0 && (
+                      <Text sx={{ ml: 1, fontSize: 0, opacity: 0.8 }}>💬{patrolCommentCount}</Text>
+                    )}
                     {(isSubmitted || isComplete) && (
                       <Label
                         variant={isSubmitted ? 'success' : 'accent'}
@@ -862,7 +926,9 @@ export const ScoringPage = () => {
                     key={criterion.id}
                     criterion={criterion}
                     value={scores[criterion.id] ?? null}
+                    comment={comments[criterion.id] ?? ''}
                     onChange={(value) => handleScoreChange(criterion.id, value)}
+                    onCommentChange={(comment) => handleCommentChange(criterion.id, comment)}
                     disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
                   />
                 ))}
@@ -930,7 +996,9 @@ export const ScoringPage = () => {
                   key={criterion.id}
                   criterion={criterion}
                   value={viewingScores[criterion.id] ?? null}
+                  comment={viewingComments[criterion.id] ?? ''}
                   onChange={() => {}}
+                  onCommentChange={() => {}}
                   disabled
                 />
               ))}

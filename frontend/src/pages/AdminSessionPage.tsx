@@ -6,7 +6,7 @@ import {
 } from '@primer/react';
 import type { Session, WSServerMessage, WSProgressUpdatedPayload } from '../lib/types';
 import * as api from '../lib/api';
-import type { UserProgress } from '../lib/api';
+import type { UserProgress, SessionComment } from '../lib/api';
 import { useSessionSubscription } from '../hooks/useWebSocket';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -29,6 +29,12 @@ export const AdminSessionPage = () => {
   const [users, setUsers] = useState<UserProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Comments — loaded eagerly, refreshed on WS updates
+  const [comments, setComments] = useState<SessionComment[]>([]);
+
+  // Per-scorer expanded comments toggle
+  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
 
   // Track which users changed on the last refresh
   const [changedUserIds, setChangedUserIds] = useState<Set<string>>(new Set());
@@ -61,13 +67,29 @@ export const AdminSessionPage = () => {
     setUsers(incoming);
   }, []);
 
+  // Fetch comments
+  const loadComments = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const { comments: c } = await api.getSessionComments(sessionId);
+      setComments(c ?? []);
+    } catch {
+      // ignore
+    }
+  }, [sessionId]);
+
+  // Initial load — progress + comments in parallel
   useEffect(() => {
     if (!sessionId) return;
 
-    api.getSessionProgress(sessionId)
-      .then(({ session, users }) => {
-        setSession(session);
-        applyUsers(users, true);
+    Promise.all([
+      api.getSessionProgress(sessionId),
+      api.getSessionComments(sessionId).catch(() => ({ comments: [] as SessionComment[] })),
+    ])
+      .then(([progress, commentsResult]) => {
+        setSession(progress.session);
+        applyUsers(progress.users, true);
+        setComments(commentsResult.comments ?? []);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -79,11 +101,44 @@ export const AdminSessionPage = () => {
       const payload = msg.payload as WSProgressUpdatedPayload;
       if (payload.session_id === sessionId) {
         applyUsers(payload.users as UserProgress[]);
+        loadComments();
       }
     }
-  }, [sessionId, applyUsers]);
+  }, [sessionId, applyUsers, loadComments]);
 
   useSessionSubscription(sessionId, handleWSMessage);
+
+  // Toggle a scorer's comments dropdown
+  const toggleUserComments = useCallback((userId: string) => {
+    setExpandedUsers((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) next.delete(userId);
+      else next.add(userId);
+      return next;
+    });
+  }, []);
+
+  // Group comments by user → patrol
+  const commentsByUser = useMemo(() => {
+    const map: Record<string, Record<string, { patrolName: string; items: SessionComment[] }>> = {};
+    for (const c of comments) {
+      if (!map[c.user_id]) map[c.user_id] = {};
+      if (!map[c.user_id][c.patrol_id]) {
+        map[c.user_id][c.patrol_id] = { patrolName: c.patrol_name, items: [] };
+      }
+      map[c.user_id][c.patrol_id].items.push(c);
+    }
+    return map;
+  }, [comments]);
+
+  // Comment count per user
+  const commentCountByUser = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of comments) {
+      counts[c.user_id] = (counts[c.user_id] || 0) + 1;
+    }
+    return counts;
+  }, [comments]);
 
   // Overall stats
   const stats = useMemo(() => {
@@ -235,8 +290,10 @@ export const AdminSessionPage = () => {
             ).length;
             const userTotal = user.patrols.length;
             const userDone = userSubmitted === userTotal;
-
             const justChanged = changedUserIds.has(user.user_id);
+            const userCommentCount = commentCountByUser[user.user_id] || 0;
+            const isExpanded = expandedUsers.has(user.user_id);
+            const userCommentsByPatrol = commentsByUser[user.user_id] || {};
 
             return (
               <Box
@@ -359,6 +416,83 @@ export const AdminSessionPage = () => {
                         </Box>
                       ))}
                     </Box>
+                  </Box>
+                )}
+
+                {/* Per-scorer comments dropdown */}
+                {userCommentCount > 0 && (
+                  <Box
+                    borderTopWidth={1}
+                    borderTopStyle="solid"
+                    borderTopColor="border.default"
+                  >
+                    <Box
+                      as="button"
+                      onClick={() => toggleUserComments(user.user_id)}
+                      sx={{
+                        width: '100%',
+                        px: 3,
+                        py: 2,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        bg: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        ':hover': { bg: 'canvas.subtle' },
+                      }}
+                    >
+                      <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                        <Text sx={{ fontSize: 1, fontWeight: 'bold' }}>💬 Comments</Text>
+                        <CounterLabel>{userCommentCount}</CounterLabel>
+                      </Box>
+                      <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                        {isExpanded ? '▲' : '▼'}
+                      </Text>
+                    </Box>
+
+                    {isExpanded && (
+                      <Box px={3} pb={3}>
+                        <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
+                          {Object.entries(userCommentsByPatrol).map(([patrolId, { patrolName, items }]) => (
+                            <Box key={patrolId}>
+                              <Box display="flex" alignItems="center" sx={{ gap: 2 }} mb={2}>
+                                <Text sx={{ fontWeight: 'bold', fontSize: 1 }}>
+                                  {patrolName}
+                                </Text>
+                                <CounterLabel>{items.length}</CounterLabel>
+                              </Box>
+
+                              <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+                                {items.map((c, i) => (
+                                  <Box
+                                    key={`${c.criterion_id}-${i}`}
+                                    p={2}
+                                    borderWidth={1}
+                                    borderStyle="solid"
+                                    borderColor="border.default"
+                                    borderRadius={2}
+                                    bg="canvas.subtle"
+                                  >
+                                    <Box display="flex" justifyContent="space-between" alignItems="baseline" mb={1}>
+                                      <Text sx={{ fontSize: 0, fontWeight: 'bold', color: 'fg.default' }}>
+                                        {c.criterion_title}
+                                      </Text>
+                                      <Text sx={{ fontSize: 0, color: 'fg.muted', fontVariantNumeric: 'tabular-nums' }}>
+                                        Score: {c.value}/10
+                                      </Text>
+                                    </Box>
+                                    <Text sx={{ fontSize: 1, display: 'block', color: 'fg.default' }}>
+                                      &ldquo;{c.comment}&rdquo;
+                                    </Text>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </Box>
+                          ))}
+                        </Box>
+                      </Box>
+                    )}
                   </Box>
                 )}
               </Box>

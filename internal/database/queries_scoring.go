@@ -28,6 +28,7 @@ type DraftScoreRow struct {
 	DraftID     string
 	CriterionID string
 	Value       int
+	Comment     string
 }
 
 // GetDraft fetches a draft by (user, session, patrol).
@@ -53,7 +54,7 @@ func (d *DB) GetDraft(ctx context.Context, userID, sessionID, patrolID string) (
 // GetDraftScores returns all scores for a draft.
 func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRow, error) {
 	rows, err := d.QueryContext(ctx,
-		"SELECT id, draft_id, criterion_id, value FROM draft_scores WHERE draft_id = $1",
+		"SELECT id, draft_id, criterion_id, value, comment FROM draft_scores WHERE draft_id = $1",
 		draftID,
 	)
 	if err != nil {
@@ -64,7 +65,7 @@ func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRo
 	var scores []DraftScoreRow
 	for rows.Next() {
 		var s DraftScoreRow
-		if err := rows.Scan(&s.ID, &s.DraftID, &s.CriterionID, &s.Value); err != nil {
+		if err := rows.Scan(&s.ID, &s.DraftID, &s.CriterionID, &s.Value, &s.Comment); err != nil {
 			return nil, fmt.Errorf("scanning draft score: %w", err)
 		}
 		scores = append(scores, s)
@@ -74,7 +75,7 @@ func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRo
 
 // SaveDraft upserts a draft and its scores. Creates the draft if it doesn't exist,
 // then upserts each score.
-func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, scores map[string]int) (*DraftRow, error) {
+func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, scores map[string]int, comments map[string]string) (*DraftRow, error) {
 	var draft *DraftRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
@@ -108,10 +109,14 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 		// Upsert each score
 		for criterionID, value := range scores {
 			scoreID := uuid.New().String()
+			comment := ""
+			if comments != nil {
+				comment = comments[criterionID]
+			}
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES ($1, $2, $3, $4)
-				 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value`,
-				scoreID, draftID, criterionID, value,
+				`INSERT INTO draft_scores (id, draft_id, criterion_id, value, comment) VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value, comment = EXCLUDED.comment`,
+				scoreID, draftID, criterionID, value, comment,
 			)
 			if err != nil {
 				return fmt.Errorf("upserting draft score for criterion %s: %w", criterionID, err)
@@ -159,10 +164,11 @@ type SubmissionScoreRow struct {
 	SubmissionID string
 	CriterionID  string
 	Value        int
+	Comment      string
 }
 
 // CreateSubmission creates a new submission from scores and deletes the draft.
-func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID string, scores map[string]int) (*SubmissionRow, error) {
+func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID string, scores map[string]int, comments map[string]string) (*SubmissionRow, error) {
 	var submission *SubmissionRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
@@ -195,18 +201,23 @@ func (d *DB) CreateSubmission(ctx context.Context, userID, sessionID, patrolID s
 
 		// Insert new scores
 		scoreRows := lo.MapToSlice(scores, func(criterionID string, value int) SubmissionScoreRow {
+			comment := ""
+			if comments != nil {
+				comment = comments[criterionID]
+			}
 			return SubmissionScoreRow{
 				ID:           uuid.New().String(),
 				SubmissionID: submissionID,
 				CriterionID:  criterionID,
 				Value:        value,
+				Comment:      comment,
 			}
 		})
 
 		for _, s := range scoreRows {
 			_, err := tx.ExecContext(ctx,
-				"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES ($1, $2, $3, $4)",
-				s.ID, s.SubmissionID, s.CriterionID, s.Value,
+				"INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment) VALUES ($1, $2, $3, $4, $5)",
+				s.ID, s.SubmissionID, s.CriterionID, s.Value, s.Comment,
 			)
 			if err != nil {
 				return fmt.Errorf("inserting submission score: %w", err)
@@ -265,7 +276,7 @@ func (d *DB) GetSubmissionsForSession(ctx context.Context, userID, sessionID str
 // GetSubmissionScores returns all scores for a submission.
 func (d *DB) GetSubmissionScores(ctx context.Context, submissionID string) ([]SubmissionScoreRow, error) {
 	rows, err := d.QueryContext(ctx,
-		"SELECT id, submission_id, criterion_id, value FROM submission_scores WHERE submission_id = $1",
+		"SELECT id, submission_id, criterion_id, value, comment FROM submission_scores WHERE submission_id = $1",
 		submissionID,
 	)
 	if err != nil {
@@ -276,7 +287,7 @@ func (d *DB) GetSubmissionScores(ctx context.Context, submissionID string) ([]Su
 	var scores []SubmissionScoreRow
 	for rows.Next() {
 		var s SubmissionScoreRow
-		if err := rows.Scan(&s.ID, &s.SubmissionID, &s.CriterionID, &s.Value); err != nil {
+		if err := rows.Scan(&s.ID, &s.SubmissionID, &s.CriterionID, &s.Value, &s.Comment); err != nil {
 			return nil, fmt.Errorf("scanning submission score: %w", err)
 		}
 		scores = append(scores, s)
@@ -432,6 +443,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 
 			// Start with zeros for all criteria
 			scores := make(map[string]int, len(criterionIDs))
+			comments := make(map[string]string, len(criterionIDs))
 			for _, cid := range criterionIDs {
 				scores[cid] = 0
 			}
@@ -439,7 +451,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Overlay draft scores if a draft exists
 			if draft, ok := draftsByPatrol[patrol.ID]; ok {
 				scoreRows, err := tx.QueryContext(ctx,
-					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = $1",
+					"SELECT criterion_id, value, comment FROM draft_scores WHERE draft_id = $1",
 					draft.ID,
 				)
 				if err != nil {
@@ -448,11 +460,13 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 				for scoreRows.Next() {
 					var criterionID string
 					var value int
-					if err := scoreRows.Scan(&criterionID, &value); err != nil {
+					var comment string
+					if err := scoreRows.Scan(&criterionID, &value, &comment); err != nil {
 						scoreRows.Close()
 						return fmt.Errorf("scanning draft score: %w", err)
 					}
 					scores[criterionID] = value
+					comments[criterionID] = comment
 				}
 				scoreRows.Close()
 
@@ -476,8 +490,8 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			// Insert submission scores (all criteria, defaulting to 0)
 			for criterionID, value := range scores {
 				_, err := tx.ExecContext(ctx,
-					"INSERT INTO submission_scores (id, submission_id, criterion_id, value) VALUES ($1, $2, $3, $4)",
-					uuid.New().String(), submissionID, criterionID, value,
+					"INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment) VALUES ($1, $2, $3, $4, $5)",
+					uuid.New().String(), submissionID, criterionID, value, comments[criterionID],
 				)
 				if err != nil {
 					return fmt.Errorf("inserting submission score: %w", err)
@@ -548,22 +562,27 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 		for _, sub := range subs {
 			// Load submission scores
 			scoreRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, value FROM submission_scores WHERE submission_id = $1",
+				"SELECT criterion_id, value, comment FROM submission_scores WHERE submission_id = $1",
 				sub.ID,
 			)
 			if err != nil {
 				return fmt.Errorf("querying submission scores: %w", err)
 			}
 
-			scores := make(map[string]int)
+			type scoreWithComment struct {
+				Value   int
+				Comment string
+			}
+			scores := make(map[string]scoreWithComment)
 			for scoreRows.Next() {
 				var criterionID string
 				var value int
-				if err := scoreRows.Scan(&criterionID, &value); err != nil {
+				var comment string
+				if err := scoreRows.Scan(&criterionID, &value, &comment); err != nil {
 					scoreRows.Close()
 					return fmt.Errorf("scanning submission score: %w", err)
 				}
-				scores[criterionID] = value
+				scores[criterionID] = scoreWithComment{Value: value, Comment: comment}
 			}
 			scoreRows.Close()
 
@@ -588,12 +607,12 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			}
 
 			// Upsert draft scores from submission scores
-			for criterionID, value := range scores {
+			for criterionID, sc := range scores {
 				scoreID := uuid.New().String()
 				_, err := tx.ExecContext(ctx,
-					`INSERT INTO draft_scores (id, draft_id, criterion_id, value) VALUES ($1, $2, $3, $4)
-					 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value`,
-					scoreID, draftID, criterionID, value,
+					`INSERT INTO draft_scores (id, draft_id, criterion_id, value, comment) VALUES ($1, $2, $3, $4, $5)
+					 ON CONFLICT (draft_id, criterion_id) DO UPDATE SET value = EXCLUDED.value, comment = EXCLUDED.comment`,
+					scoreID, draftID, criterionID, sc.Value, sc.Comment,
 				)
 				if err != nil {
 					return fmt.Errorf("upserting draft score: %w", err)
@@ -616,7 +635,7 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 // GetSubmissionScoresByPatrol returns the scores for a user's submission on a specific patrol.
 func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, userID, sessionID, patrolID string) ([]SubmissionScoreRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value
+		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value, ss.comment
 		 FROM submission_scores ss
 		 JOIN submissions s ON s.id = ss.submission_id
 		 WHERE s.user_id = $1 AND s.session_id = $2 AND s.patrol_id = $3`,
@@ -630,7 +649,7 @@ func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, userID, sessionID,
 	var scores []SubmissionScoreRow
 	for rows.Next() {
 		var s SubmissionScoreRow
-		if err := rows.Scan(&s.ID, &s.SubmissionID, &s.CriterionID, &s.Value); err != nil {
+		if err := rows.Scan(&s.ID, &s.SubmissionID, &s.CriterionID, &s.Value, &s.Comment); err != nil {
 			return nil, fmt.Errorf("scanning submission score: %w", err)
 		}
 		scores = append(scores, s)
@@ -770,4 +789,103 @@ func (d *DB) GetAllSessionAwards(ctx context.Context, sessionID string) ([]Sessi
 		awards = append(awards, a)
 	}
 	return awards, rows.Err()
+}
+
+// ─── Comment Queries (Admin) ────────────────────────────────────────
+
+// AdminUserSubmissionRow represents a single patrol submission with its scores for admin viewing.
+type AdminUserSubmissionRow struct {
+	PatrolID   string
+	PatrolName string
+	Scores     []SubmissionScoreRow
+}
+
+// GetAdminUserSubmissions returns all submissions (with scores) for a specific user in a session.
+// Admin-only: no ownership check.
+func (d *DB) GetAdminUserSubmissions(ctx context.Context, userID, sessionID string) ([]AdminUserSubmissionRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT s.patrol_id, p.name AS patrol_name,
+		        ss.id, ss.submission_id, ss.criterion_id, ss.value, ss.comment
+		 FROM submissions s
+		 JOIN patrols p ON p.id = s.patrol_id
+		 JOIN submission_scores ss ON ss.submission_id = s.id
+		 JOIN criteria c ON c.id = ss.criterion_id
+		 WHERE s.user_id = $1 AND s.session_id = $2
+		 ORDER BY p.name, c.sort_order`,
+		userID, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying admin user submissions: %w", err)
+	}
+	defer rows.Close()
+
+	patrolMap := make(map[string]*AdminUserSubmissionRow)
+	var patrolOrder []string
+
+	for rows.Next() {
+		var patrolID, patrolName string
+		var sc SubmissionScoreRow
+		if err := rows.Scan(&patrolID, &patrolName, &sc.ID, &sc.SubmissionID, &sc.CriterionID, &sc.Value, &sc.Comment); err != nil {
+			return nil, fmt.Errorf("scanning admin user submission: %w", err)
+		}
+		entry, exists := patrolMap[patrolID]
+		if !exists {
+			entry = &AdminUserSubmissionRow{PatrolID: patrolID, PatrolName: patrolName}
+			patrolMap[patrolID] = entry
+			patrolOrder = append(patrolOrder, patrolID)
+		}
+		entry.Scores = append(entry.Scores, sc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]AdminUserSubmissionRow, 0, len(patrolOrder))
+	for _, id := range patrolOrder {
+		result = append(result, *patrolMap[id])
+	}
+	return result, nil
+}
+
+// SessionCommentRow represents a single comment left on a submission score.
+type SessionCommentRow struct {
+	UserID         string
+	DisplayName    string
+	PatrolID       string
+	PatrolName     string
+	CriterionID    string
+	CriterionTitle string
+	Value          int
+	Comment        string
+}
+
+// GetAllSessionComments returns all non-empty comments across all submissions for a session.
+// Used by the admin view to see what commentary users have left.
+func (d *DB) GetAllSessionComments(ctx context.Context, sessionID string) ([]SessionCommentRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT u.id, u.display_name, s.patrol_id, p.name, ss.criterion_id, c.title, ss.value, ss.comment
+		 FROM submission_scores ss
+		 JOIN submissions s ON s.id = ss.submission_id
+		 JOIN users u ON u.id = s.user_id
+		 JOIN patrols p ON p.id = s.patrol_id
+		 JOIN criteria c ON c.id = ss.criterion_id
+		 WHERE s.session_id = $1 AND ss.comment != ''
+		 ORDER BY p.name, c.sort_order, u.display_name`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying session comments: %w", err)
+	}
+	defer rows.Close()
+
+	var comments []SessionCommentRow
+	for rows.Next() {
+		var c SessionCommentRow
+		if err := rows.Scan(&c.UserID, &c.DisplayName, &c.PatrolID, &c.PatrolName,
+			&c.CriterionID, &c.CriterionTitle, &c.Value, &c.Comment); err != nil {
+			return nil, fmt.Errorf("scanning session comment: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	return comments, rows.Err()
 }

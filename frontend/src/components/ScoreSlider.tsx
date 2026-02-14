@@ -1,15 +1,18 @@
-import { useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { Box, Text } from '@primer/react';
 import type { Criterion } from '../lib/types';
 
 interface ScoreSliderProps {
   criterion: Criterion;
   value: number | null;
+  comment: string;
   onChange: (value: number) => void;
+  onCommentChange: (comment: string) => void;
   disabled?: boolean;
 }
 
-export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSliderProps) => {
+export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChange, disabled }: ScoreSliderProps) => {
+  const [commentOpen, setCommentOpen] = useState(comment.length > 0);
   const isSet = value !== null;
   const displayValue = value ?? criterion.min_value;
   const range = criterion.max_value - criterion.min_value;
@@ -20,6 +23,13 @@ export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSlide
       onChange(parseInt(e.target.value, 10));
     },
     [onChange],
+  );
+
+  const handleCommentChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      onCommentChange(e.target.value);
+    },
+    [onCommentChange],
   );
 
   return (
@@ -97,6 +107,58 @@ export const ScoreSlider = ({ criterion, value, onChange, disabled }: ScoreSlide
           }}
         />
       </Box>
+
+      {/* Comment toggle + textarea */}
+      {!disabled && (
+        <Box mt={2}>
+          {!commentOpen ? (
+            <Text
+              as="button"
+              onClick={() => setCommentOpen(true)}
+              sx={{
+                fontSize: 0,
+                color: 'fg.muted',
+                cursor: 'pointer',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                textDecoration: 'underline',
+                textDecorationStyle: 'dotted',
+                ':hover': { color: 'fg.default' },
+              }}
+            >
+              + Add comment
+            </Text>
+          ) : (
+            <textarea
+              value={comment}
+              onChange={handleCommentChange}
+              placeholder="Optional comment…"
+              rows={2}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                borderRadius: '6px',
+                border: '1px solid var(--borderColor-default, #d0d7de)',
+                backgroundColor: 'var(--bgColor-default, #fff)',
+                fontSize: '13px',
+                fontFamily: 'inherit',
+                resize: 'vertical',
+                minHeight: '48px',
+              }}
+            />
+          )}
+        </Box>
+      )}
+
+      {/* Read-only comment display */}
+      {disabled && comment && (
+        <Box mt={2} p={2} bg="canvas.subtle" borderRadius={2}>
+          <Text sx={{ fontSize: 0, color: 'fg.muted', fontStyle: 'italic' }}>
+            💬 {comment}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };

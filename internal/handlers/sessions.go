@@ -73,6 +73,7 @@ type submissionJSON struct {
 type submissionScoreJSON struct {
 	CriterionID string `json:"criterion_id"`
 	Value       int    `json:"value"`
+	Comment     string `json:"comment"`
 }
 
 type draftJSON struct {
@@ -85,6 +86,7 @@ type draftJSON struct {
 type draftScoreJSON struct {
 	CriterionID string `json:"criterion_id"`
 	Value       int    `json:"value"`
+	Comment     string `json:"comment"`
 }
 
 type awardJSON struct {
@@ -298,7 +300,7 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 		PatrolID:  draft.PatrolID,
 		UpdatedAt: draft.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		Scores: lo.Map(scores, func(s database.DraftScoreRow, _ int) draftScoreJSON {
-			return draftScoreJSON{CriterionID: s.CriterionID, Value: s.Value}
+			return draftScoreJSON{CriterionID: s.CriterionID, Value: s.Value, Comment: s.Comment}
 		}),
 	}
 
@@ -342,7 +344,8 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Scores map[string]int `json:"scores"`
+		Scores   map[string]int    `json:"scores"`
+		Comments map[string]string `json:"comments"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid request body")
@@ -375,7 +378,7 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int("scores.count", len(req.Scores)))
 
-	submission, err := h.db.CreateSubmission(ctx, user.ID, sessionID, patrolID, req.Scores)
+	submission, err := h.db.CreateSubmission(ctx, user.ID, sessionID, patrolID, req.Scores, req.Comments)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not submit scores")
@@ -592,6 +595,7 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 		return submissionScoreJSON{
 			CriterionID: s.CriterionID,
 			Value:       s.Value,
+			Comment:     s.Comment,
 		}
 	})
 
@@ -847,4 +851,136 @@ func (h *SessionHandler) GetPreviousScores(w http.ResponseWriter, r *http.Reques
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"totals": result})
+}
+
+// GetAdminUserScores handles GET /api/admin/sessions/{session_id}/users/{user_id}/scores
+// Returns all submitted scores for a specific user in a session (admin only).
+func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	userID := r.PathValue("user_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_admin_user_scores")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("session.id", sessionID),
+		attribute.String("user.id", userID),
+	)
+
+	// Fetch session details (for criteria)
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+
+	// Fetch criteria
+	criteriaRows, err := h.db.GetTemplateCriteria(ctx, session.TemplateID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch criteria")
+		return
+	}
+
+	// Fetch user display name
+	targetUser, err := h.db.GetUserByID(ctx, userID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "user not found")
+		return
+	}
+
+	// Fetch all submissions for this user in this session
+	submissions, err := h.db.GetAdminUserSubmissions(ctx, userID, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch submissions")
+		return
+	}
+
+	span.SetAttributes(attribute.Int("submissions.count", len(submissions)))
+
+	criteria := lo.Map(criteriaRows, func(c database.CriterionRow, _ int) criterionJSON {
+		return criterionJSON{
+			ID:          c.ID,
+			Title:       c.Title,
+			Description: c.Description,
+			MinValue:    c.MinValue,
+			MaxValue:    c.MaxValue,
+			SortOrder:   c.SortOrder,
+		}
+	})
+
+	type patrolScoresJSON struct {
+		PatrolID   string                `json:"patrol_id"`
+		PatrolName string                `json:"patrol_name"`
+		Scores     []submissionScoreJSON `json:"scores"`
+	}
+
+	patrols := lo.Map(submissions, func(s database.AdminUserSubmissionRow, _ int) patrolScoresJSON {
+		return patrolScoresJSON{
+			PatrolID:   s.PatrolID,
+			PatrolName: s.PatrolName,
+			Scores: lo.Map(s.Scores, func(sc database.SubmissionScoreRow, _ int) submissionScoreJSON {
+				return submissionScoreJSON{
+					CriterionID: sc.CriterionID,
+					Value:       sc.Value,
+					Comment:     sc.Comment,
+				}
+			}),
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":      userID,
+		"display_name": targetUser.DisplayName,
+		"session_name": session.Name,
+		"criteria":     criteria,
+		"patrols":      patrols,
+	})
+}
+
+// GetSessionComments handles GET /api/admin/sessions/{session_id}/comments
+// Returns all non-empty comments across all users for a session (admin only).
+func (h *SessionHandler) GetSessionComments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_session_comments")
+	defer span.End()
+	span.SetAttributes(attribute.String("session.id", sessionID))
+
+	comments, err := h.db.GetAllSessionComments(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch comments")
+		return
+	}
+
+	span.SetAttributes(attribute.Int("comments.count", len(comments)))
+
+	type commentJSON struct {
+		UserID         string `json:"user_id"`
+		DisplayName    string `json:"display_name"`
+		PatrolID       string `json:"patrol_id"`
+		PatrolName     string `json:"patrol_name"`
+		CriterionID    string `json:"criterion_id"`
+		CriterionTitle string `json:"criterion_title"`
+		Value          int    `json:"value"`
+		Comment        string `json:"comment"`
+	}
+
+	result := lo.Map(comments, func(c database.SessionCommentRow, _ int) commentJSON {
+		return commentJSON{
+			UserID:         c.UserID,
+			DisplayName:    c.DisplayName,
+			PatrolID:       c.PatrolID,
+			PatrolName:     c.PatrolName,
+			CriterionID:    c.CriterionID,
+			CriterionTitle: c.CriterionTitle,
+			Value:          c.Value,
+			Comment:        c.Comment,
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"comments": result})
 }

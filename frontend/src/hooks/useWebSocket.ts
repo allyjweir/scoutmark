@@ -66,11 +66,12 @@ export const useDraftSync = (sessionId: string, patrolId: string) => {
   const lastSavedRef = useRef<string | null>(null);
 
   const saveDraft = useCallback(
-    (scores: Record<string, number>) => {
+    (scores: Record<string, number>, comments: Record<string, string>) => {
       const payload: WSSaveDraftPayload = {
         session_id: sessionId,
         patrol_id: patrolId,
         scores,
+        comments,
       };
       return socket.saveDraft(payload).then((response) => {
         if (response.type === 'draft_saved') {

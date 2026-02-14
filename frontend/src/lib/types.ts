@@ -60,6 +60,7 @@ export interface Draft {
 export interface DraftScore {
   criterion_id: string;
   value: number;
+  comment: string;
 }
 
 export interface Submission {
@@ -74,6 +75,7 @@ export interface Submission {
 export interface SubmissionScore {
   criterion_id: string;
   value: number;
+  comment: string;
 }
 
 // ─── WebSocket Types ───────────────────────────────────────────────
@@ -94,6 +96,7 @@ export interface WSSaveDraftPayload {
   session_id: string;
   patrol_id: string;
   scores: Record<string, number>;
+  comments: Record<string, string>;
 }
 
 export interface WSDraftSavedPayload {

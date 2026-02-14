@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
 import { AdminSessionPage } from './pages/AdminSessionPage';
+import { AdminScorerPage } from './pages/AdminScorerPage';
 import type { ReactNode } from 'react';
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
@@ -59,6 +60,14 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <AdminSessionPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/sessions/:sessionId/scorer/:userId"
+        element={
+          <ProtectedRoute>
+            <AdminScorerPage />
           </ProtectedRoute>
         }
       />

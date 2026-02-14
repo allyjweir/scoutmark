@@ -38,6 +38,7 @@ Commands:
   create-patrol     Create a patrol
   assign-patrol     Assign a patrol to a user
   create-session    Create a scoring session
+  update-session    Update session settings (awards, previous session)
   list-sessions     List all sessions with status
 
 Environment:
@@ -70,6 +71,8 @@ func main() {
 		err = assignPatrol()
 	case "create-session":
 		err = createSession()
+	case "update-session":
+		err = updateSession()
 	case "list-sessions":
 		err = listSessions()
 	case "help", "-h", "--help":
@@ -309,6 +312,9 @@ func createSession() error {
 	startStr := fs.String("start", "", `Start time in RFC3339 or "now" (default: now)`)
 	durationStr := fs.String("duration", "3h", "Duration from start (e.g. 2h, 6h, 30m)")
 	sessionID := fs.String("id", "", "Session ID (default: auto-generated UUID)")
+	awardBestPatrol := fs.Bool("award-best-patrol", false, "Enable Best Patrol award")
+	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
+	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining / Most Improved)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a scoring session
@@ -382,9 +388,23 @@ Flags:
 		return fmt.Errorf("checking template: %w", err)
 	}
 
+	var prevID *string
+	if *previousSessionID != "" {
+		// Verify previous session exists
+		var prevName string
+		if err := db.QueryRow("SELECT name FROM sessions WHERE id = $1", *previousSessionID).Scan(&prevName); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("previous session %q not found", *previousSessionID)
+			}
+			return fmt.Errorf("checking previous session: %w", err)
+		}
+		prevID = previousSessionID
+	}
+
 	_, err = db.Exec(
-		"INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at) VALUES ($1, $2, $3, $4, $5, $6)",
-		id, *eventID, *templateID, *name, startsAt, endsAt,
+		`INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at, award_best_patrol, award_most_improved, previous_session_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		id, *eventID, *templateID, *name, startsAt, endsAt, *awardBestPatrol, *awardMostImproved, prevID,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting session: %w", err)
@@ -399,6 +419,92 @@ Flags:
 	fmt.Printf("  Starts:   %s\n", startsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Ends:     %s\n", endsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Duration: %s\n", duration)
+	if *awardBestPatrol || *awardMostImproved {
+		fmt.Printf("  Awards:   best_patrol=%v most_improved=%v\n", *awardBestPatrol, *awardMostImproved)
+	}
+	if prevID != nil {
+		fmt.Printf("  Previous: %s\n", *prevID)
+	}
+	return nil
+}
+
+func updateSession() error {
+	fs := flag.NewFlagSet("update-session", flag.ExitOnError)
+
+	sessionID := fs.String("id", "", "Session ID (required)")
+	awardBestPatrol := fs.Bool("award-best-patrol", false, "Enable Best Patrol award")
+	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
+	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Update a session's settings
+
+Usage:
+  admin update-session -id <session-id> [flags]
+
+Examples:
+  admin update-session -id ses-mon -award-best-patrol -award-most-improved
+  admin update-session -id ses-tue -previous-session ses-mon
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+
+	if *sessionID == "" {
+		fs.Usage()
+		return fmt.Errorf("required flag: -id")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Verify session exists
+	var name string
+	if err := db.QueryRow("SELECT name FROM sessions WHERE id = $1", *sessionID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("session %q not found", *sessionID)
+		}
+		return fmt.Errorf("checking session: %w", err)
+	}
+
+	var prevID *string
+	if *previousSessionID != "" {
+		var prevName string
+		if err := db.QueryRow("SELECT name FROM sessions WHERE id = $1", *previousSessionID).Scan(&prevName); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("previous session %q not found", *previousSessionID)
+			}
+			return fmt.Errorf("checking previous session: %w", err)
+		}
+		prevID = previousSessionID
+	}
+
+	_, err = db.Exec(
+		`UPDATE sessions
+		 SET award_best_patrol = $2, award_most_improved = $3, previous_session_id = $4
+		 WHERE id = $1`,
+		*sessionID, *awardBestPatrol, *awardMostImproved, prevID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating session: %w", err)
+	}
+
+	fmt.Println()
+	fmt.Println("✓ Session updated")
+	fmt.Printf("  ID:     %s\n", *sessionID)
+	fmt.Printf("  Name:   %s\n", name)
+	fmt.Printf("  Awards: best_patrol=%v most_improved=%v\n", *awardBestPatrol, *awardMostImproved)
+	if prevID != nil {
+		fmt.Printf("  Previous: %s\n", *prevID)
+	}
 	return nil
 }
 

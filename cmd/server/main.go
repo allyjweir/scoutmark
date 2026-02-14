@@ -118,8 +118,8 @@ func run(ctx context.Context) error {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve frontend static files (in production, built React app)
-	mux.Handle("/", http.FileServer(http.Dir("frontend/dist")))
+	// Serve frontend static files with SPA fallback
+	mux.Handle("/", spaHandler("frontend/dist"))
 
 	// ─── Security middleware stack ─────────────────────────────
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
@@ -283,4 +283,33 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// spaHandler serves static files from dir, falling back to index.html
+// for any path that doesn't match a real file (SPA client-side routing).
+func spaHandler(dir string) http.Handler {
+	fs := http.Dir(dir)
+	fileServer := http.FileServer(fs)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to open the requested file
+		path := r.URL.Path
+		if path == "/" {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if the file exists
+		f, err := fs.Open(path)
+		if err != nil {
+			// File doesn't exist — serve index.html for SPA routing
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		f.Close()
+
+		// File exists — serve it normally
+		fileServer.ServeHTTP(w, r)
+	})
 }

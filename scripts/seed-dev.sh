@@ -151,23 +151,28 @@ echo "Creating sessions..."
 
 $ADMIN create-session \
   -id ses-sun -event evt-ba-2026 -template tpl-camp \
-  -name "Sunday" -start now -duration 3h
+  -name "Sunday" -start now -duration 3h \
+  -award-best-patrol
 
 $ADMIN create-session \
   -id ses-mon -event evt-ba-2026 -template tpl-camp \
-  -name "Monday" -start "2026-02-09T06:00:00Z" -duration 4h
+  -name "Monday" -start "2026-02-09T06:00:00Z" -duration 4h \
+  -award-best-patrol -award-most-improved -previous-session ses-sun
 
 $ADMIN create-session \
   -id ses-tue -event evt-ba-2026 -template tpl-camp \
-  -name "Tuesday" -start "2026-02-10T06:00:00Z" -duration 4h
+  -name "Tuesday" -start "2026-02-10T06:00:00Z" -duration 4h \
+  -award-best-patrol -award-most-improved -previous-session ses-mon
 
 $ADMIN create-session \
   -id ses-wed -event evt-ba-2026 -template tpl-camp \
-  -name "Wednesday" -start "2026-02-11T06:00:00Z" -duration 4h
+  -name "Wednesday" -start "2026-02-11T06:00:00Z" -duration 4h \
+  -award-best-patrol -award-most-improved -previous-session ses-tue
 
 $ADMIN create-session \
   -id ses-thu -event evt-ba-2026 -template tpl-camp \
-  -name "Thursday" -start "2026-02-12T06:00:00Z" -duration 4h
+  -name "Thursday" -start "2026-02-12T06:00:00Z" -duration 4h \
+  -award-best-patrol -award-most-improved -previous-session ses-wed
 
 echo
 echo "═══════════════════════════════════════════════"

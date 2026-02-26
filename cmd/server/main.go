@@ -145,7 +145,7 @@ func run(ctx context.Context) error {
 		server.Shutdown(shutdownCtx)
 	}()
 
-	fmt.Printf("Scoutmark v%s starting on %s\n", version, addr)
+	fmt.Printf("Scoutmark v%s starting on %s (started at %s)\n", version, addr, time.Now().Format("15:04:05 MST"))
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		return fmt.Errorf("server error: %w", err)
 	}

@@ -64,6 +64,18 @@ type DraftSavedPayload struct {
 	SavedAt   time.Time `json:"saved_at"`
 }
 
+// DraftUpdatedPayload is broadcast to other users when someone saves a draft score.
+// This enables live multiplayer: other users see the new values appear.
+type DraftUpdatedPayload struct {
+	SessionID string            `json:"session_id"`
+	PatrolID  string            `json:"patrol_id"`
+	UserID    string            `json:"user_id"`
+	UserName  string            `json:"user_name"`
+	Scores    map[string]int    `json:"scores"`
+	Comments  map[string]string `json:"comments"`
+	SavedAt   time.Time         `json:"saved_at"`
+}
+
 type PatrolSubmittedPayload struct {
 	SessionID       string    `json:"session_id"`
 	PatrolID        string    `json:"patrol_id"`
@@ -78,6 +90,31 @@ type ErrorPayload struct {
 
 type SubscribeSessionPayload struct {
 	SessionID string `json:"session_id"`
+}
+
+type PresencePayload struct {
+	SessionID string `json:"session_id"`
+	PatrolID  string `json:"patrol_id"`
+}
+
+type PresenceUpdatedPayload struct {
+	SessionID string `json:"session_id"`
+	PatrolID  string `json:"patrol_id"`
+	UserID    string `json:"user_id"`
+	UserName  string `json:"user_name"`
+}
+
+// PresenceEntry is a single user's presence state.
+type PresenceEntry struct {
+	UserID   string `json:"user_id"`
+	UserName string `json:"user_name"`
+	PatrolID string `json:"patrol_id"`
+}
+
+// PresenceStatePayload is sent to a client with the full list of other users present in a session.
+type PresenceStatePayload struct {
+	SessionID string          `json:"session_id"`
+	Users     []PresenceEntry `json:"users"`
 }
 
 type PatrolProgressPayload struct {
@@ -107,6 +144,8 @@ type Client struct {
 	send       chan ServerMessage
 	sessions   map[string]bool // subscribed session IDs
 	sessionsMu sync.RWMutex
+	presence   map[string]string // session_id → patrol_id currently viewing
+	presenceMu sync.RWMutex
 }
 
 func (c *Client) subscribeTo(sessionID string) {
@@ -119,6 +158,19 @@ func (c *Client) isSubscribedTo(sessionID string) bool {
 	c.sessionsMu.RLock()
 	defer c.sessionsMu.RUnlock()
 	return c.sessions[sessionID]
+}
+
+func (c *Client) setPresence(sessionID, patrolID string) {
+	c.presenceMu.Lock()
+	defer c.presenceMu.Unlock()
+	c.presence[sessionID] = patrolID
+}
+
+func (c *Client) getPresence(sessionID string) (string, bool) {
+	c.presenceMu.RLock()
+	defer c.presenceMu.RUnlock()
+	p, ok := c.presence[sessionID]
+	return p, ok
 }
 
 // ─── Hub ────────────────────────────────────────────────────────────
@@ -160,6 +212,31 @@ func (h *Hub) Run() {
 			h.clientsMu.Unlock()
 		}
 	}
+}
+
+// GetSessionPresence returns the list of presence entries for a session,
+// optionally excluding one client.
+func (h *Hub) GetSessionPresence(sessionID string, exclude *Client) []PresenceEntry {
+	h.clientsMu.RLock()
+	defer h.clientsMu.RUnlock()
+
+	var entries []PresenceEntry
+	for c := range h.clients {
+		if c == exclude {
+			continue
+		}
+		if !c.isSubscribedTo(sessionID) {
+			continue
+		}
+		if patrolID, ok := c.getPresence(sessionID); ok {
+			entries = append(entries, PresenceEntry{
+				UserID:   c.user.ID,
+				UserName: c.user.DisplayName,
+				PatrolID: patrolID,
+			})
+		}
+	}
+	return entries
 }
 
 // BroadcastToSession sends a message to all clients subscribed to a session,
@@ -250,6 +327,7 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		user:     user,
 		send:     make(chan ServerMessage, 256),
 		sessions: make(map[string]bool),
+		presence: make(map[string]string),
 	}
 
 	h.register <- client
@@ -333,6 +411,8 @@ func (c *Client) handleMessage(msg ClientMessage) {
 		c.handleSaveDraft(ctx, msg)
 	case "subscribe_session":
 		c.handleSubscribeSession(ctx, msg)
+	case "presence":
+		c.handlePresence(ctx, msg)
 	default:
 		c.sendError(msg.RequestID, "UNKNOWN_TYPE", fmt.Sprintf("unknown message type: %s", msg.Type))
 	}
@@ -391,6 +471,20 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 		},
 	}
 
+	// Broadcast the draft update to all OTHER session subscribers (live multiplayer)
+	c.hub.BroadcastToSession(payload.SessionID, ServerMessage{
+		Type: "draft_updated",
+		Payload: DraftUpdatedPayload{
+			SessionID: payload.SessionID,
+			PatrolID:  payload.PatrolID,
+			UserID:    c.user.ID,
+			UserName:  c.user.DisplayName,
+			Scores:    payload.Scores,
+			Comments:  payload.Comments,
+			SavedAt:   time.Now(),
+		},
+	}, c) // exclude the sender
+
 	// Broadcast updated progress to all session subscribers (admin dashboard etc.)
 	c.hub.BroadcastSessionProgress(ctx, payload.SessionID)
 }
@@ -404,11 +498,59 @@ func (c *Client) handleSubscribeSession(ctx context.Context, msg ClientMessage) 
 
 	c.subscribeTo(payload.SessionID)
 
+	// Send back the current presence state for this session
+	entries := c.hub.GetSessionPresence(payload.SessionID, c)
+	if entries == nil {
+		entries = []PresenceEntry{}
+	}
+	c.send <- ServerMessage{
+		Type: "presence_state",
+		Payload: PresenceStatePayload{
+			SessionID: payload.SessionID,
+			Users:     entries,
+		},
+	}
+
 	c.send <- ServerMessage{
 		RequestID: msg.RequestID,
 		Type:      "subscribed",
 		Payload:   map[string]string{"session_id": payload.SessionID},
 	}
+}
+
+func (c *Client) handlePresence(ctx context.Context, msg ClientMessage) {
+	var payload PresencePayload
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		c.sendError(msg.RequestID, "INVALID_PAYLOAD", "could not parse presence payload")
+		return
+	}
+
+	// Track this client's presence
+	c.setPresence(payload.SessionID, payload.PatrolID)
+
+	// Send back the current presence state to the sender so they stay in sync
+	entries := c.hub.GetSessionPresence(payload.SessionID, c)
+	if entries == nil {
+		entries = []PresenceEntry{}
+	}
+	c.send <- ServerMessage{
+		Type: "presence_state",
+		Payload: PresenceStatePayload{
+			SessionID: payload.SessionID,
+			Users:     entries,
+		},
+	}
+
+	// Broadcast presence to all OTHER session subscribers
+	c.hub.BroadcastToSession(payload.SessionID, ServerMessage{
+		Type: "presence_updated",
+		Payload: PresenceUpdatedPayload{
+			SessionID: payload.SessionID,
+			PatrolID:  payload.PatrolID,
+			UserID:    c.user.ID,
+			UserName:  c.user.DisplayName,
+		},
+	}, c)
 }
 
 func (c *Client) sendError(requestID, code, message string) {

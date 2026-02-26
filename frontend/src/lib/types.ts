@@ -67,6 +67,7 @@ export interface Submission {
   id: string;
   patrol_id: string;
   patrol_name: string;
+  submitted_by?: string;
   locked: boolean;
   submitted_at: string;
   scores?: SubmissionScore[];
@@ -82,13 +83,13 @@ export interface SubmissionScore {
 
 export interface WSClientMessage {
   request_id: string;
-  type: 'save_draft' | 'subscribe_session';
+  type: 'save_draft' | 'subscribe_session' | 'presence';
   payload: unknown;
 }
 
 export interface WSServerMessage {
   request_id?: string;
-  type: 'draft_saved' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated';
+  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state';
   payload: unknown;
 }
 
@@ -105,11 +106,40 @@ export interface WSDraftSavedPayload {
   saved_at: string;
 }
 
+/** Broadcast to OTHER users when someone saves a draft score (live multiplayer). */
+export interface WSDraftUpdatedPayload {
+  session_id: string;
+  patrol_id: string;
+  user_id: string;
+  user_name: string;
+  scores: Record<string, number>;
+  comments: Record<string, string>;
+  saved_at: string;
+}
+
 export interface WSPatrolSubmittedPayload {
   session_id: string;
   patrol_id: string;
   user_display_name: string;
   submitted_at: string;
+}
+
+export interface WSPresenceUpdatedPayload {
+  session_id: string;
+  patrol_id: string;
+  user_id: string;
+  user_name: string;
+}
+
+export interface WSPresenceEntry {
+  user_id: string;
+  user_name: string;
+  patrol_id: string;
+}
+
+export interface WSPresenceStatePayload {
+  session_id: string;
+  users: WSPresenceEntry[];
 }
 
 export interface WSErrorPayload {

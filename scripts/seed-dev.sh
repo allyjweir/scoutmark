@@ -81,6 +81,8 @@ $ADMIN create-user -id usr-maclean   -username maclean   -password "$PASSWORD" -
 $ADMIN create-user -id usr-murray    -username murray    -password "$PASSWORD" -display-name "Murray"
 $ADMIN create-user -id usr-robertson -username robertson -password "$PASSWORD" -display-name "Robertson"
 $ADMIN create-user -id usr-stewart   -username stewart   -password "$PASSWORD" -display-name "Stewart"
+$ADMIN create-user -id usr-stacey   -username stacey   -password "$PASSWORD" -display-name "Stacey"
+$ADMIN create-user -id usr-ally     -username ally     -password "$PASSWORD" -display-name "Ally"
 echo
 
 # ─── Patrols ─────────────────────────────────────────────────────────
@@ -138,6 +140,8 @@ assign_patrols() {
 }
 
 assign_patrols usr-morrison  pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
+assign_patrols usr-stacey    pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
+assign_patrols usr-ally      pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
 assign_patrols usr-macdonald pat-mac-1 pat-mac-2 pat-mac-3 pat-mac-4 pat-mac-5
 assign_patrols usr-maclean   pat-mcl-1 pat-mcl-2 pat-mcl-3 pat-mcl-4 pat-mcl-5
 assign_patrols usr-murray    pat-mur-1 pat-mur-2 pat-mur-3 pat-mur-4 pat-mur-5
@@ -179,6 +183,7 @@ echo "════════════════════════�
 echo "  ✓ Development database seeded successfully!"
 echo ""
 echo "  Users:    campchief (admin), morrison, macdonald,"
-echo "            maclean, murray, robertson, stewart"
+echo "            maclean, murray, robertson, stewart,"
+echo "            stacey, ally"
 echo "  Password: $PASSWORD"
 echo "═══════════════════════════════════════════════"

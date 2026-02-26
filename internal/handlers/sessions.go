@@ -65,6 +65,7 @@ type submissionJSON struct {
 	ID          string                `json:"id"`
 	PatrolID    string                `json:"patrol_id"`
 	PatrolName  string                `json:"patrol_name"`
+	SubmittedBy string                `json:"submitted_by,omitempty"`
 	Locked      bool                  `json:"locked"`
 	SubmittedAt string                `json:"submitted_at"`
 	Scores      []submissionScoreJSON `json:"scores,omitempty"`
@@ -178,8 +179,9 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch existing submissions
-	submissions, err := h.db.GetSubmissionsForSession(ctx, user.ID, sessionID)
+	// Fetch existing submissions for user's patrols (shared model)
+	patrolIDs := lo.Map(patrols, func(p database.UserPatrolRow, _ int) string { return p.PatrolID })
+	submissions, err := h.db.GetSubmissionsForPatrols(ctx, sessionID, patrolIDs)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch submissions")
@@ -226,6 +228,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 			ID:          s.ID,
 			PatrolID:    s.PatrolID,
 			PatrolName:  s.PatrolName,
+			SubmittedBy: s.SubmittedBy,
 			Locked:      s.Locked,
 			SubmittedAt: s.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 		}
@@ -274,7 +277,7 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	draft, err := h.db.GetDraft(ctx, user.ID, sessionID, patrolID)
+	draft, err := h.db.GetDraft(ctx, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch draft")
@@ -393,6 +396,7 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, submissionJSON{
 		ID:          submission.ID,
 		PatrolID:    submission.PatrolID,
+		SubmittedBy: submission.SubmittedBy,
 		Locked:      submission.Locked,
 		SubmittedAt: submission.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 	})
@@ -423,6 +427,7 @@ func (h *SessionHandler) UnlockSubmission(w http.ResponseWriter, r *http.Request
 		ID:          submission.ID,
 		PatrolID:    submission.PatrolID,
 		PatrolName:  submission.PatrolName,
+		SubmittedBy: submission.SubmittedBy,
 		Locked:      submission.Locked,
 		SubmittedAt: submission.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 	})
@@ -449,6 +454,7 @@ func (h *SessionHandler) ListSubmissions(w http.ResponseWriter, r *http.Request)
 			ID:          s.ID,
 			PatrolID:    s.PatrolID,
 			PatrolName:  s.PatrolName,
+			SubmittedBy: s.SubmittedBy,
 			Locked:      s.Locked,
 			SubmittedAt: s.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 		}
@@ -487,8 +493,15 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Return all submissions for this session (including previously submitted)
-	allSubmissions, err := h.db.GetSubmissionsForSession(ctx, user.ID, sessionID)
+	// Return all submissions for user's patrols (including previously submitted)
+	userPatrols, err := h.db.GetUserPatrols(ctx, user.ID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
+		return
+	}
+	patrolIDs := lo.Map(userPatrols, func(p database.UserPatrolRow, _ int) string { return p.PatrolID })
+	allSubmissions, err := h.db.GetSubmissionsForPatrols(ctx, sessionID, patrolIDs)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch submissions")
@@ -505,6 +518,7 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			ID:          s.ID,
 			PatrolID:    s.PatrolID,
 			PatrolName:  s.PatrolName,
+			SubmittedBy: s.SubmittedBy,
 			Locked:      s.Locked,
 			SubmittedAt: s.SubmittedAt.Format("2006-01-02T15:04:05Z"),
 		}
@@ -582,7 +596,7 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	scores, err := h.db.GetSubmissionScoresByPatrol(ctx, user.ID, sessionID, patrolID)
+	scores, err := h.db.GetSubmissionScoresByPatrol(ctx, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch scores")
@@ -827,13 +841,22 @@ func (h *SessionHandler) GetPreviousScores(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Get user's patrol IDs for the lookup
+	userPatrols, err := h.db.GetUserPatrols(ctx, user.ID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
+		return
+	}
+	patrolIDs := lo.Map(userPatrols, func(p database.UserPatrolRow, _ int) string { return p.PatrolID })
+
 	type patrolTotalJSON struct {
 		PatrolID   string `json:"patrol_id"`
 		PatrolName string `json:"patrol_name"`
 		Total      int    `json:"total"`
 	}
 
-	totals, err := h.db.GetPreviousSessionTotals(ctx, user.ID, *session.PreviousSessionID)
+	totals, err := h.db.GetPreviousSessionTotals(ctx, *session.PreviousSessionID, patrolIDs)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch previous scores")

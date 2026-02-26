@@ -116,6 +116,13 @@ export class ScoutmarkSocket {
   }
 
   /**
+   * Send presence heartbeat — tells other users we're viewing a patrol.
+   */
+  sendPresence(sessionId: string, patrolId: string): void {
+    this.send('presence', { session_id: sessionId, patrol_id: patrolId });
+  }
+
+  /**
    * Save a draft. Debounce this on the caller side.
    * Returns a promise that resolves when the server acknowledges.
    */

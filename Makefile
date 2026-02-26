@@ -1,7 +1,7 @@
-.PHONY: dev server frontend proto migrate seed clean
+.PHONY: dev server frontend proto migrate seed reseed clean
 
 # Start everything for development
-dev: proto
+dev: 
 	@echo "Starting PostgreSQL..."
 	docker-compose up -d postgres
 	@echo "Waiting for PostgreSQL..."
@@ -28,6 +28,15 @@ migrate:
 # Seed development data (uses admin CLI)
 seed:
 	./scripts/seed-dev.sh
+
+# Reset dev database and re-seed
+reseed:
+	@echo "Dropping and recreating database..."
+	docker-compose exec -T postgres psql -U scoutmark -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+	@echo "Running migrations..."
+	@go run ./cmd/migrate
+	@echo "Seeding..."
+	@./scripts/seed-dev.sh
 
 # Create a new user interactively
 create-user:

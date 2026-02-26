@@ -170,21 +170,20 @@ func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]Crit
 
 // ─── User Completion Queries ────────────────────────────────────────
 
-// GetUserFinalisedSessionIDs returns the set of session IDs where the given user
-// has submitted scores for ALL of their assigned patrols.
+// GetUserFinalisedSessionIDs returns the set of session IDs where ALL of the
+// user's assigned patrols have been submitted (shared model — no user_id on submissions).
 func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map[string]bool, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT up.user_id, s.id AS session_id,
+		`SELECT s.id AS session_id,
 		        COUNT(up.patrol_id) AS total_patrols,
 		        COUNT(sub.id) AS submitted_patrols
 		 FROM user_patrols up
 		 CROSS JOIN sessions s
 		 LEFT JOIN submissions sub
-		   ON sub.user_id = up.user_id
-		  AND sub.session_id = s.id
+		   ON sub.session_id = s.id
 		  AND sub.patrol_id = up.patrol_id
 		 WHERE up.user_id = $1
-		 GROUP BY up.user_id, s.id
+		 GROUP BY s.id
 		 HAVING COUNT(up.patrol_id) > 0 AND COUNT(up.patrol_id) = COUNT(sub.id)`,
 		userID,
 	)
@@ -195,9 +194,9 @@ func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map
 
 	result := make(map[string]bool)
 	for rows.Next() {
-		var uid, sid string
+		var sid string
 		var total, submitted int
-		if err := rows.Scan(&uid, &sid, &total, &submitted); err != nil {
+		if err := rows.Scan(&sid, &total, &submitted); err != nil {
 			return nil, fmt.Errorf("scanning finalised session: %w", err)
 		}
 		result[sid] = true
@@ -217,9 +216,8 @@ type UserProgressRow struct {
 }
 
 // GetSessionProgress returns the scoring progress for all users assigned patrols in a session.
-// It checks drafts and submissions for each user+patrol combo.
+// Drafts are shared (no user_id), so drafting status is per-patrol not per-user.
 func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserProgressRow, error) {
-	// Get all users who have patrol assignments (these are the users who can score)
 	rows, err := d.QueryContext(ctx,
 		`SELECT u.id, u.display_name, up.patrol_id, p.name,
 		        CASE
@@ -230,8 +228,8 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 		 FROM users u
 		 JOIN user_patrols up ON up.user_id = u.id
 		 JOIN patrols p ON p.id = up.patrol_id
-		 LEFT JOIN submissions s ON s.user_id = u.id AND s.session_id = $1 AND s.patrol_id = up.patrol_id
-		 LEFT JOIN drafts dr ON dr.user_id = u.id AND dr.session_id = $2 AND dr.patrol_id = up.patrol_id
+		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = up.patrol_id
+		 LEFT JOIN drafts dr ON dr.session_id = $2 AND dr.patrol_id = up.patrol_id
 		 ORDER BY u.display_name, up.sort_order`,
 		sessionID, sessionID,
 	)

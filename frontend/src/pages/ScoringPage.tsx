@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box, Heading, Text, Spinner, Flash, Button, ProgressBar,
   Label, CounterLabel,
 } from '@primer/react';
 import { keyBy, mapValues, every } from 'lodash';
-import type { Session, Patrol, Submission } from '../lib/types';
+import type { Session, Patrol, Submission, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSServerMessage } from '../lib/types';
 import * as api from '../lib/api';
-import { useDraftSync, useSessionSubscription } from '../hooks/useWebSocket';
+import { useDraftSync, useSessionSubscription, usePresence } from '../hooks/useWebSocket';
+import { useAuth } from '../hooks/useAuth';
 import { ScoreSlider } from '../components/ScoreSlider';
 
 type View = 'scoring' | 'summary' | 'viewing';
@@ -15,6 +16,7 @@ type View = 'scoring' | 'summary' | 'viewing';
 export const ScoringPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const [session, setSession] = useState<Session | null>(null);
   const [patrols, setPatrols] = useState<Patrol[]>([]);
@@ -45,8 +47,26 @@ export const ScoringPage = () => {
   // Track which patrols have had all criteria touched (keyed by patrol_id)
   const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
 
+  // Live multiplayer: track who is present on each patrol and whether they're editing
+  // patrol_id → user_id → { user_name, at (timestamp), mode: 'viewing' | 'editing' }
+  const [presenceMap, setPresenceMap] = useState<Record<string, Record<string, { user_name: string; at: number; mode: 'viewing' | 'editing' }>>>({});
+  // Periodic re-render to expire stale presence entries (every 10s)
+  const [, setPresenceTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceTick((t) => t + 1), 10_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Ref for current patrol ID to use in WS callback
+  const currentPatrolIdRef = useRef<string>('');
+
   const currentPatrol = patrols[currentPatrolIndex];
   const criteria = session?.criteria ?? [];
+
+  // Keep ref in sync
+  useEffect(() => {
+    currentPatrolIdRef.current = currentPatrol?.patrol_id ?? '';
+  }, [currentPatrol?.patrol_id]);
 
   // Draft sync over WebSocket
   const { saveDraft, flushDraft } = useDraftSync(
@@ -54,8 +74,106 @@ export const ScoringPage = () => {
     currentPatrol?.patrol_id ?? '',
   );
 
-  // Subscribe to session updates
-  useSessionSubscription(sessionId);
+  // Subscribe to session updates — handles live multiplayer draft updates + presence
+  const handleWSMessage = useCallback((msg: WSServerMessage) => {
+    if (msg.type === 'presence_state') {
+      const payload = msg.payload as WSPresenceStatePayload;
+      setPresenceMap((prev) => {
+        const next = { ...prev };
+        for (const entry of payload.users) {
+          const patrolUsers = { ...(next[entry.patrol_id] ?? {}) };
+          const existing = patrolUsers[entry.user_id];
+          // Don't overwrite a recent 'editing' state
+          if (existing?.mode === 'editing' && (Date.now() - existing.at) < 30000) continue;
+          patrolUsers[entry.user_id] = { user_name: entry.user_name, at: Date.now(), mode: 'viewing' };
+          next[entry.patrol_id] = patrolUsers;
+        }
+        return next;
+      });
+    }
+
+    if (msg.type === 'presence_updated') {
+      const payload = msg.payload as WSPresenceUpdatedPayload;
+      const patrolId = payload.patrol_id;
+      setPresenceMap((prev) => {
+        const patrolUsers = { ...(prev[patrolId] ?? {}) };
+        const existing = patrolUsers[payload.user_id];
+        // Don't downgrade from 'editing' to 'viewing' if the editing timestamp is recent (< 30s)
+        if (existing?.mode === 'editing' && (Date.now() - existing.at) < 30000) {
+          patrolUsers[payload.user_id] = { ...existing, at: Date.now() };
+        } else {
+          patrolUsers[payload.user_id] = { user_name: payload.user_name, at: Date.now(), mode: 'viewing' };
+        }
+        return { ...prev, [patrolId]: patrolUsers };
+      });
+    }
+
+    if (msg.type === 'draft_updated') {
+      const payload = msg.payload as WSDraftUpdatedPayload;
+      // The server already excludes the sending WebSocket connection from
+      // the broadcast, so we don't filter by user_id here — that would
+      // break same-user multi-tab sync.
+
+      const patrolId = payload.patrol_id;
+
+      // Upgrade presence to 'editing'
+      setPresenceMap((prev) => {
+        const patrolUsers = { ...(prev[patrolId] ?? {}) };
+        patrolUsers[payload.user_id] = { user_name: payload.user_name, at: Date.now(), mode: 'editing' };
+        return { ...prev, [patrolId]: patrolUsers };
+      });
+
+      // Update touched map + totals for this patrol
+      setTouchedMap((prev) => {
+        const existing = prev[patrolId] ?? new Set();
+        const updated = new Set(existing);
+        for (const cid of Object.keys(payload.scores)) {
+          updated.add(cid);
+        }
+        return { ...prev, [patrolId]: updated };
+      });
+
+      // Update patrol total
+      let total = 0;
+      for (const v of Object.values(payload.scores)) {
+        total += v;
+      }
+      setPatrolTotals((prev) => ({ ...prev, [patrolId]: total }));
+
+      // Update comments tracking
+      if (payload.comments && Object.keys(payload.comments).length > 0) {
+        setPatrolComments((prev) => ({
+          ...prev,
+          [patrolId]: { ...(prev[patrolId] ?? {}), ...payload.comments },
+        }));
+      }
+
+      // If this update is for the patrol we're currently viewing, merge into local state
+      if (patrolId === currentPatrolIdRef.current) {
+        setScores((prev) => {
+          const next = { ...prev };
+          for (const [cid, value] of Object.entries(payload.scores)) {
+            next[cid] = value;
+          }
+          return next;
+        });
+        if (payload.comments) {
+          setComments((prev) => {
+            const next = { ...prev };
+            for (const [cid, comment] of Object.entries(payload.comments)) {
+              next[cid] = comment;
+            }
+            return next;
+          });
+        }
+      }
+    }
+  }, []);
+
+  useSessionSubscription(sessionId, handleWSMessage);
+
+  // Send presence heartbeats for the current patrol
+  usePresence(sessionId, currentPatrol?.patrol_id);
 
   // Load session data
   useEffect(() => {
@@ -560,6 +678,8 @@ export const ScoringPage = () => {
                 const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
                 const isComplete = isPatrolComplete(patrol.patrol_id);
                 const commentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
+                const patrolPresence = presenceMap[patrol.patrol_id] ?? {};
+                const activeUsers = Object.values(patrolPresence).filter(p => (Date.now() - p.at) < 30000);
 
                 return (
                   <Box
@@ -592,6 +712,11 @@ export const ScoringPage = () => {
                       </Text>
                       {commentCount > 0 && (
                         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>💬 {commentCount}</Text>
+                      )}
+                      {activeUsers.length > 0 && (
+                        <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                          👥 {activeUsers.map(u => u.user_name).join(', ')} {activeUsers.some(u => u.mode === 'editing') ? 'editing' : 'viewing'}
+                        </Text>
                       )}
                       {isSubmitted && (
                         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Tap to view</Text>
@@ -863,6 +988,10 @@ export const ScoringPage = () => {
                 const isComplete = isPatrolComplete(patrol.patrol_id);
                 const isCurrent = index === currentPatrolIndex;
                 const patrolCommentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
+                const patrolPresence = presenceMap[patrol.patrol_id] ?? {};
+                const activeUsers = Object.values(patrolPresence).filter(p => (Date.now() - p.at) < 30000);
+                const hasPresence = activeUsers.length > 0;
+                const anyEditing = activeUsers.some(p => p.mode === 'editing');
 
                 return (
                   <Button
@@ -874,10 +1003,26 @@ export const ScoringPage = () => {
                       flexShrink: 0,
                       position: 'relative',
                     }}
+                    title={hasPresence ? activeUsers.map(u => `${u.user_name} ${u.mode}`).join(', ') : undefined}
                   >
                     {patrol.name}
                     {patrolCommentCount > 0 && (
                       <Text sx={{ ml: 1, fontSize: 0, opacity: 0.8 }}>💬{patrolCommentCount}</Text>
+                    )}
+                    {hasPresence && !isCurrent && (
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          top: '-2px',
+                          right: '-2px',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          bg: anyEditing ? 'success.emphasis' : 'attention.emphasis',
+                          border: '2px solid',
+                          borderColor: 'canvas.default',
+                        }}
+                      />
                     )}
                     {(isSubmitted || isComplete) && (
                       <Label
@@ -918,6 +1063,26 @@ export const ScoringPage = () => {
                   <Label variant="success" size="large">Submitted ✓</Label>
                 )}
               </Box>
+
+              {/* Live multiplayer: show who else is present on this patrol */}
+              {(() => {
+                const patrolPresence = presenceMap[currentPatrol.patrol_id] ?? {};
+                const activeUsers = Object.values(patrolPresence).filter(p => (Date.now() - p.at) < 30000);
+                if (activeUsers.length === 0) return null;
+                const anyEditing = activeUsers.some(p => p.mode === 'editing');
+                const names = activeUsers.map(u => u.user_name);
+                const nameStr = names.length === 1
+                  ? names[0]
+                  : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+                const verb = anyEditing ? 'editing' : 'viewing';
+                return (
+                  <Flash variant={anyEditing ? 'warning' : 'default'} sx={{ mb: 3, py: 2, px: 3 }}>
+                    <Text sx={{ fontSize: 1 }}>
+                      👥 <strong>{nameStr}</strong> {activeUsers.length === 1 ? 'is' : 'are'} also {verb} this patrol
+                    </Text>
+                  </Flash>
+                );
+              })()}
 
               {/* Criteria sliders */}
               <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>

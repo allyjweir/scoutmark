@@ -36,11 +36,9 @@ export const LoginPage = () => {
       bg="canvas.default"
       p={4}
     >
+      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '360px' }}>
       <Box
-        as="form"
-        onSubmit={handleSubmit}
         width="100%"
-        maxWidth="360px"
         p={4}
         borderWidth={1}
         borderStyle="solid"
@@ -98,6 +96,7 @@ export const LoginPage = () => {
           {loading ? 'Signing in…' : 'Sign in'}
         </Button>
       </Box>
+      </form>
     </Box>
   );
 };

@@ -91,13 +91,12 @@ export const AdminScorerPage = () => {
             {patrols.map((patrol) => {
               const isOpen = expandedPatrol === patrol.patrol_id;
               const scoreMap: Record<string, number> = {};
-              const commentMap: Record<string, string> = {};
               for (const s of patrol.scores) {
                 scoreMap[s.criterion_id] = s.value;
-                if (s.comment) commentMap[s.criterion_id] = s.comment;
               }
               const total = patrol.scores.reduce((sum, s) => sum + s.value, 0);
-              const commentCount = Object.keys(commentMap).length;
+              const perUserComments = patrol.comments ?? [];
+              const commentCount = perUserComments.length;
 
               return (
                 <Box
@@ -140,7 +139,7 @@ export const AdminScorerPage = () => {
                     </Text>
                   </Box>
 
-                  {/* Expanded: show each criterion score + comment */}
+                  {/* Expanded: show each criterion score + per-user comments */}
                   {isOpen && (
                     <Box
                       px={3}
@@ -152,7 +151,9 @@ export const AdminScorerPage = () => {
                       <Box display="flex" flexDirection="column" sx={{ gap: 3 }} pt={3}>
                         {criteria.map((criterion) => {
                           const value = scoreMap[criterion.id];
-                          const comment = commentMap[criterion.id];
+                          const criterionComments = perUserComments.filter(
+                            (c) => c.criterion_id === criterion.id && c.comment.length > 0,
+                          );
                           const range = criterion.max_value - criterion.min_value;
                           const pct = range > 0 && value !== undefined
                             ? ((value - criterion.min_value) / range) * 100
@@ -223,12 +224,17 @@ export const AdminScorerPage = () => {
                                 />
                               </Box>
 
-                              {/* Comment */}
-                              {comment && (
-                                <Box mt={2} p={2} bg="canvas.subtle" borderRadius={2}>
-                                  <Text sx={{ fontSize: 0, color: 'fg.muted', fontStyle: 'italic' }}>
-                                    💬 {comment}
-                                  </Text>
+                              {/* Per-user comments */}
+                              {criterionComments.length > 0 && (
+                                <Box mt={2} display="flex" flexDirection="column" sx={{ gap: 1 }}>
+                                  {criterionComments.map((c) => (
+                                    <Box key={`${c.user_id}-${c.criterion_id}`} p={2} bg="canvas.subtle" borderRadius={2}>
+                                      <Text sx={{ fontSize: 0 }}>
+                                        <Text sx={{ fontWeight: 'bold', color: 'fg.default' }}>{c.display_name}:</Text>{' '}
+                                        <Text sx={{ color: 'fg.muted', fontStyle: 'italic' }}>{c.comment}</Text>
+                                      </Text>
+                                    </Box>
+                                  ))}
                                 </Box>
                               )}
                             </Box>

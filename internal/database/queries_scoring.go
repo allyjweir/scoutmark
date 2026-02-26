@@ -260,6 +260,18 @@ func (d *DB) CreateSubmission(ctx context.Context, submittedBy, sessionID, patro
 			}
 		}
 
+		// Copy per-user comments from draft to submission (before draft deletion cascades them)
+		if hasDraft {
+			// Clear old submission comments if re-submitting
+			_, err = tx.ExecContext(ctx, "DELETE FROM submission_comments WHERE submission_id = $1", submissionID)
+			if err != nil {
+				return fmt.Errorf("clearing old submission comments: %w", err)
+			}
+			if err := d.CopyDraftCommentsToSubmission(ctx, tx, sessionID, patrolID, submissionID); err != nil {
+				return fmt.Errorf("copying per-user comments: %w", err)
+			}
+		}
+
 		// Delete the shared draft
 		_, err = tx.ExecContext(ctx,
 			"DELETE FROM drafts WHERE session_id = $1 AND patrol_id = $2",
@@ -506,12 +518,6 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 					comments[criterionID] = comment
 				}
 				scoreRows.Close()
-
-				// Delete the shared draft
-				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = $1", draft.ID)
-				if err != nil {
-					return fmt.Errorf("deleting draft: %w", err)
-				}
 			}
 
 			// Create the submission
@@ -531,6 +537,21 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 				)
 				if err != nil {
 					return fmt.Errorf("inserting submission score: %w", err)
+				}
+			}
+
+			// Copy per-user comments from draft to submission (BEFORE draft deletion cascades them)
+			if _, ok := draftsByPatrol[patrol.ID]; ok {
+				if err := d.CopyDraftCommentsToSubmission(ctx, tx, sessionID, patrol.ID, submissionID); err != nil {
+					return fmt.Errorf("copying per-user comments for patrol %s: %w", patrol.ID, err)
+				}
+			}
+
+			// Delete the shared draft (cascades to draft_comments)
+			if _, ok := draftsByPatrol[patrol.ID]; ok {
+				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = $1", draftsByPatrol[patrol.ID].ID)
+				if err != nil {
+					return fmt.Errorf("deleting draft: %w", err)
 				}
 			}
 
@@ -678,7 +699,37 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 				}
 			}
 
-			// Delete the submission (cascade deletes submission_scores)
+			// Copy submission_comments back to draft_comments
+			commentRows, err := tx.QueryContext(ctx,
+				"SELECT criterion_id, user_id, display_name, comment, created_at FROM submission_comments WHERE submission_id = $1 AND comment != ''",
+				sub.ID,
+			)
+			if err != nil {
+				return fmt.Errorf("querying submission comments for revise: %w", err)
+			}
+			for commentRows.Next() {
+				var criterionID, commentUserID, displayName, commentText string
+				var createdAt time.Time
+				if err := commentRows.Scan(&criterionID, &commentUserID, &displayName, &commentText, &createdAt); err != nil {
+					commentRows.Close()
+					return fmt.Errorf("scanning submission comment for revise: %w", err)
+				}
+				commentID := uuid.New().String()
+				_, err := tx.ExecContext(ctx,
+					`INSERT INTO draft_comments (id, draft_id, criterion_id, user_id, display_name, comment, created_at, updated_at)
+					 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+					 ON CONFLICT (draft_id, criterion_id, user_id) DO UPDATE
+					   SET comment = EXCLUDED.comment, display_name = EXCLUDED.display_name, updated_at = NOW()`,
+					commentID, draftID, criterionID, commentUserID, displayName, commentText, createdAt,
+				)
+				if err != nil {
+					commentRows.Close()
+					return fmt.Errorf("inserting draft comment during revise: %w", err)
+				}
+			}
+			commentRows.Close()
+
+			// Delete the submission (cascade deletes submission_scores and submission_comments)
 			_, err = tx.ExecContext(ctx, "DELETE FROM submissions WHERE id = $1", sub.ID)
 			if err != nil {
 				return fmt.Errorf("deleting submission: %w", err)
@@ -956,18 +1007,20 @@ type SessionCommentRow struct {
 	Comment        string
 }
 
-// GetAllSessionComments returns all non-empty comments across all submissions for a session.
+// GetAllSessionComments returns all non-empty per-user comments across all submissions for a session.
+// Reads from the submission_comments table (per-user comment model).
 func (d *DB) GetAllSessionComments(ctx context.Context, sessionID string) ([]SessionCommentRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT COALESCE(ss.scored_by, s.submitted_by), COALESCE(u.display_name, 'Unknown'),
-		        s.patrol_id, p.name, ss.criterion_id, c.title, ss.value, ss.comment
-		 FROM submission_scores ss
-		 JOIN submissions s ON s.id = ss.submission_id
-		 LEFT JOIN users u ON u.id = COALESCE(ss.scored_by, s.submitted_by)
+		`SELECT sc.user_id, sc.display_name,
+		        s.patrol_id, p.name, sc.criterion_id, c.title,
+		        COALESCE(ss.value, 0), sc.comment
+		 FROM submission_comments sc
+		 JOIN submissions s ON s.id = sc.submission_id
 		 JOIN patrols p ON p.id = s.patrol_id
-		 JOIN criteria c ON c.id = ss.criterion_id
-		 WHERE s.session_id = $1 AND ss.comment != ''
-		 ORDER BY p.name, c.sort_order, u.display_name`,
+		 JOIN criteria c ON c.id = sc.criterion_id
+		 LEFT JOIN submission_scores ss ON ss.submission_id = s.id AND ss.criterion_id = sc.criterion_id
+		 WHERE s.session_id = $1 AND sc.comment != ''
+		 ORDER BY p.name, c.sort_order, sc.display_name`,
 		sessionID,
 	)
 	if err != nil {

@@ -87,9 +87,28 @@ export interface WSClientMessage {
   payload: unknown;
 }
 
+// Per-user comment on a criterion
+export interface DraftComment {
+  criterion_id: string;
+  user_id: string;
+  display_name: string;
+  comment: string;
+  updated_at: string;
+}
+
+// WebSocket: comment updated broadcast
+export interface WSCommentUpdatedPayload {
+  session_id: string;
+  patrol_id: string;
+  criterion_id: string;
+  user_id: string;
+  display_name: string;
+  comment: string;
+}
+
 export interface WSServerMessage {
   request_id?: string;
-  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state';
+  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state' | 'comment_updated';
   payload: unknown;
 }
 
@@ -129,12 +148,14 @@ export interface WSPresenceUpdatedPayload {
   patrol_id: string;
   user_id: string;
   user_name: string;
+  commenting_on?: string; // criterion_id being commented on
 }
 
 export interface WSPresenceEntry {
   user_id: string;
   user_name: string;
   patrol_id: string;
+  commenting_on?: string;
 }
 
 export interface WSPresenceStatePayload {

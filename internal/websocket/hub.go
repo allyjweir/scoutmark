@@ -93,22 +93,25 @@ type SubscribeSessionPayload struct {
 }
 
 type PresencePayload struct {
-	SessionID string `json:"session_id"`
-	PatrolID  string `json:"patrol_id"`
+	SessionID    string `json:"session_id"`
+	PatrolID     string `json:"patrol_id"`
+	CommentingOn string `json:"commenting_on,omitempty"` // criterion_id being commented on (empty = not commenting)
 }
 
 type PresenceUpdatedPayload struct {
-	SessionID string `json:"session_id"`
-	PatrolID  string `json:"patrol_id"`
-	UserID    string `json:"user_id"`
-	UserName  string `json:"user_name"`
+	SessionID    string `json:"session_id"`
+	PatrolID     string `json:"patrol_id"`
+	UserID       string `json:"user_id"`
+	UserName     string `json:"user_name"`
+	CommentingOn string `json:"commenting_on,omitempty"`
 }
 
 // PresenceEntry is a single user's presence state.
 type PresenceEntry struct {
-	UserID   string `json:"user_id"`
-	UserName string `json:"user_name"`
-	PatrolID string `json:"patrol_id"`
+	UserID       string `json:"user_id"`
+	UserName     string `json:"user_name"`
+	PatrolID     string `json:"patrol_id"`
+	CommentingOn string `json:"commenting_on,omitempty"`
 }
 
 // PresenceStatePayload is sent to a client with the full list of other users present in a session.
@@ -138,14 +141,15 @@ type ProgressUpdatedPayload struct {
 
 // Client represents a single WebSocket connection.
 type Client struct {
-	hub        *Hub
-	conn       *websocket.Conn
-	user       *auth.AuthUser
-	send       chan ServerMessage
-	sessions   map[string]bool // subscribed session IDs
-	sessionsMu sync.RWMutex
-	presence   map[string]string // session_id → patrol_id currently viewing
-	presenceMu sync.RWMutex
+	hub          *Hub
+	conn         *websocket.Conn
+	user         *auth.AuthUser
+	send         chan ServerMessage
+	sessions     map[string]bool // subscribed session IDs
+	sessionsMu   sync.RWMutex
+	presence     map[string]string // session_id → patrol_id currently viewing
+	commentingOn map[string]string // session_id → criterion_id being commented on
+	presenceMu   sync.RWMutex
 }
 
 func (c *Client) subscribeTo(sessionID string) {
@@ -160,17 +164,23 @@ func (c *Client) isSubscribedTo(sessionID string) bool {
 	return c.sessions[sessionID]
 }
 
-func (c *Client) setPresence(sessionID, patrolID string) {
+func (c *Client) setPresence(sessionID, patrolID, commentingOn string) {
 	c.presenceMu.Lock()
 	defer c.presenceMu.Unlock()
 	c.presence[sessionID] = patrolID
+	if commentingOn != "" {
+		c.commentingOn[sessionID] = commentingOn
+	} else {
+		delete(c.commentingOn, sessionID)
+	}
 }
 
-func (c *Client) getPresence(sessionID string) (string, bool) {
+func (c *Client) getPresence(sessionID string) (patrolID string, commentingOn string, ok bool) {
 	c.presenceMu.RLock()
 	defer c.presenceMu.RUnlock()
-	p, ok := c.presence[sessionID]
-	return p, ok
+	patrolID, ok = c.presence[sessionID]
+	commentingOn = c.commentingOn[sessionID]
+	return
 }
 
 // ─── Hub ────────────────────────────────────────────────────────────
@@ -228,11 +238,12 @@ func (h *Hub) GetSessionPresence(sessionID string, exclude *Client) []PresenceEn
 		if !c.isSubscribedTo(sessionID) {
 			continue
 		}
-		if patrolID, ok := c.getPresence(sessionID); ok {
+		if patrolID, commentingOn, ok := c.getPresence(sessionID); ok {
 			entries = append(entries, PresenceEntry{
-				UserID:   c.user.ID,
-				UserName: c.user.DisplayName,
-				PatrolID: patrolID,
+				UserID:       c.user.ID,
+				UserName:     c.user.DisplayName,
+				PatrolID:     patrolID,
+				CommentingOn: commentingOn,
 			})
 		}
 	}
@@ -307,6 +318,15 @@ func (h *Hub) BroadcastSessionProgress(ctx context.Context, sessionID string) {
 	}, nil)
 }
 
+// BroadcastCommentUpdated sends a comment_updated message to all session subscribers.
+// This satisfies the CommentBroadcaster interface used by handlers.
+func (h *Hub) BroadcastCommentUpdated(sessionID string, payload any, exclude any) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type:    "comment_updated",
+		Payload: payload,
+	}, nil) // broadcast to everyone including the sender for consistency
+}
+
 // HandleWebSocket handles the WebSocket upgrade and message loop.
 func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
@@ -322,12 +342,13 @@ func (h *Hub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:      h,
-		conn:     conn,
-		user:     user,
-		send:     make(chan ServerMessage, 256),
-		sessions: make(map[string]bool),
-		presence: make(map[string]string),
+		hub:          h,
+		conn:         conn,
+		user:         user,
+		send:         make(chan ServerMessage, 256),
+		sessions:     make(map[string]bool),
+		presence:     make(map[string]string),
+		commentingOn: make(map[string]string),
 	}
 
 	h.register <- client
@@ -526,7 +547,7 @@ func (c *Client) handlePresence(ctx context.Context, msg ClientMessage) {
 	}
 
 	// Track this client's presence
-	c.setPresence(payload.SessionID, payload.PatrolID)
+	c.setPresence(payload.SessionID, payload.PatrolID, payload.CommentingOn)
 
 	// Send back the current presence state to the sender so they stay in sync
 	entries := c.hub.GetSessionPresence(payload.SessionID, c)
@@ -545,10 +566,11 @@ func (c *Client) handlePresence(ctx context.Context, msg ClientMessage) {
 	c.hub.BroadcastToSession(payload.SessionID, ServerMessage{
 		Type: "presence_updated",
 		Payload: PresenceUpdatedPayload{
-			SessionID: payload.SessionID,
-			PatrolID:  payload.PatrolID,
-			UserID:    c.user.ID,
-			UserName:  c.user.DisplayName,
+			SessionID:    payload.SessionID,
+			PatrolID:     payload.PatrolID,
+			UserID:       c.user.ID,
+			UserName:     c.user.DisplayName,
+			CommentingOn: payload.CommentingOn,
 		},
 	}, c)
 }

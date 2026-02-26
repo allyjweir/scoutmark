@@ -4,8 +4,8 @@ import {
   Box, Heading, Text, Spinner, Flash, Button, ProgressBar,
   Label, CounterLabel,
 } from '@primer/react';
-import { keyBy, mapValues, every } from 'lodash';
-import type { Session, Patrol, Submission, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSServerMessage } from '../lib/types';
+import { keyBy, mapValues, every, debounce } from 'lodash';
+import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSServerMessage } from '../lib/types';
 import * as api from '../lib/api';
 import { useDraftSync, useSessionSubscription, usePresence } from '../hooks/useWebSocket';
 import { useAuth } from '../hooks/useAuth';
@@ -30,11 +30,15 @@ export const ScoringPage = () => {
   const [view, setView] = useState<View>('scoring');
   const [jumpedFromSummary, setJumpedFromSummary] = useState(false);
   const [viewingScores, setViewingScores] = useState<Record<string, number>>({});
-  const [viewingComments, setViewingComments] = useState<Record<string, string>>({});
   const [revising, setRevising] = useState(false);
+  // Per-user comments from the server (patrol_id → DraftComment[])
+  const [perUserComments, setPerUserComments] = useState<Record<string, DraftComment[]>>({});
 
-  // Persist comments across patrol switches (patrol_id → criterion_id → comment)
-  const [patrolComments, setPatrolComments] = useState<Record<string, Record<string, string>>>({});
+  // Per-user submitted comments for read-only viewing mode
+  const [viewingPerUserComments, setViewingPerUserComments] = useState<DraftComment[]>([]);
+
+  // Which criterion the current user is commenting on (for presence broadcasting)
+  const [commentingOn, setCommentingOn] = useState<string | undefined>(undefined);
 
   // Award state
   const [awards, setAwards] = useState<Record<string, string>>({}); // award_type → patrol_id
@@ -48,8 +52,8 @@ export const ScoringPage = () => {
   const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
 
   // Live multiplayer: track who is present on each patrol and whether they're editing
-  // patrol_id → user_id → { user_name, at (timestamp), mode: 'viewing' | 'editing' }
-  const [presenceMap, setPresenceMap] = useState<Record<string, Record<string, { user_name: string; at: number; mode: 'viewing' | 'editing' }>>>({});
+  // patrol_id → user_id → { user_name, at, mode, commenting_on? }
+  const [presenceMap, setPresenceMap] = useState<Record<string, Record<string, { user_name: string; at: number; mode: 'viewing' | 'editing'; commenting_on?: string }>>>({});
   // Periodic re-render to expire stale presence entries (every 10s)
   const [, setPresenceTick] = useState(0);
   useEffect(() => {
@@ -74,6 +78,41 @@ export const ScoringPage = () => {
     currentPatrol?.patrol_id ?? '',
   );
 
+  // Per-criterion debounced comment savers (REST API)
+  const commentSaversRef = useRef<Record<string, ReturnType<typeof debounce>>>({});
+  const getCommentSaver = useCallback((criterionId: string) => {
+    if (!commentSaversRef.current[criterionId]) {
+      commentSaversRef.current[criterionId] = debounce(
+        (sid: string, pid: string, comment: string) => {
+          api.saveDraftComment(sid, pid, criterionId, comment).catch((err) => {
+            console.error('[comment] Save failed:', err);
+          });
+        },
+        800,
+      );
+    }
+    return commentSaversRef.current[criterionId];
+  }, []);
+
+  // Flush all pending debounced comment saves immediately
+  const flushAllCommentSaves = useCallback(() => {
+    for (const saver of Object.values(commentSaversRef.current)) {
+      saver.flush();
+    }
+  }, []);
+
+  // Flush pending comment saves on unmount and before page reload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      flushAllCommentSaves();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      flushAllCommentSaves();
+    };
+  }, [flushAllCommentSaves]);
+
   // Subscribe to session updates — handles live multiplayer draft updates + presence
   const handleWSMessage = useCallback((msg: WSServerMessage) => {
     if (msg.type === 'presence_state') {
@@ -85,7 +124,7 @@ export const ScoringPage = () => {
           const existing = patrolUsers[entry.user_id];
           // Don't overwrite a recent 'editing' state
           if (existing?.mode === 'editing' && (Date.now() - existing.at) < 30000) continue;
-          patrolUsers[entry.user_id] = { user_name: entry.user_name, at: Date.now(), mode: 'viewing' };
+          patrolUsers[entry.user_id] = { user_name: entry.user_name, at: Date.now(), mode: 'viewing', commenting_on: entry.commenting_on };
           next[entry.patrol_id] = patrolUsers;
         }
         return next;
@@ -100,11 +139,42 @@ export const ScoringPage = () => {
         const existing = patrolUsers[payload.user_id];
         // Don't downgrade from 'editing' to 'viewing' if the editing timestamp is recent (< 30s)
         if (existing?.mode === 'editing' && (Date.now() - existing.at) < 30000) {
-          patrolUsers[payload.user_id] = { ...existing, at: Date.now() };
+          patrolUsers[payload.user_id] = { ...existing, at: Date.now(), commenting_on: payload.commenting_on };
         } else {
-          patrolUsers[payload.user_id] = { user_name: payload.user_name, at: Date.now(), mode: 'viewing' };
+          patrolUsers[payload.user_id] = { user_name: payload.user_name, at: Date.now(), mode: 'viewing', commenting_on: payload.commenting_on };
         }
         return { ...prev, [patrolId]: patrolUsers };
+      });
+    }
+
+    if (msg.type === 'comment_updated') {
+      const payload = msg.payload as WSCommentUpdatedPayload;
+      const patrolId = payload.patrol_id;
+      setPerUserComments((prev) => {
+        const existing = [...(prev[patrolId] ?? [])];
+        if (payload.comment === '') {
+          // Delete
+          return { ...prev, [patrolId]: existing.filter(
+            (c) => !(c.criterion_id === payload.criterion_id && c.user_id === payload.user_id)
+          )};
+        }
+        // Upsert
+        const idx = existing.findIndex(
+          (c) => c.criterion_id === payload.criterion_id && c.user_id === payload.user_id
+        );
+        const entry: DraftComment = {
+          criterion_id: payload.criterion_id,
+          user_id: payload.user_id,
+          display_name: payload.display_name,
+          comment: payload.comment,
+          updated_at: new Date().toISOString(),
+        };
+        if (idx >= 0) {
+          existing[idx] = entry;
+        } else {
+          existing.push(entry);
+        }
+        return { ...prev, [patrolId]: existing };
       });
     }
 
@@ -140,14 +210,6 @@ export const ScoringPage = () => {
       }
       setPatrolTotals((prev) => ({ ...prev, [patrolId]: total }));
 
-      // Update comments tracking
-      if (payload.comments && Object.keys(payload.comments).length > 0) {
-        setPatrolComments((prev) => ({
-          ...prev,
-          [patrolId]: { ...(prev[patrolId] ?? {}), ...payload.comments },
-        }));
-      }
-
       // If this update is for the patrol we're currently viewing, merge into local state
       if (patrolId === currentPatrolIdRef.current) {
         setScores((prev) => {
@@ -157,23 +219,14 @@ export const ScoringPage = () => {
           }
           return next;
         });
-        if (payload.comments) {
-          setComments((prev) => {
-            const next = { ...prev };
-            for (const [cid, comment] of Object.entries(payload.comments)) {
-              next[cid] = comment;
-            }
-            return next;
-          });
-        }
       }
     }
   }, []);
 
   useSessionSubscription(sessionId, handleWSMessage);
 
-  // Send presence heartbeats for the current patrol
-  usePresence(sessionId, currentPatrol?.patrol_id);
+  // Send presence heartbeats for the current patrol (includes commentingOn)
+  usePresence(sessionId, currentPatrol?.patrol_id, commentingOn);
 
   // Load session data
   useEffect(() => {
@@ -241,14 +294,21 @@ export const ScoringPage = () => {
                 }));
                 const total = draft.scores.reduce((sum, s) => sum + s.value, 0);
                 setPatrolTotals((prev) => ({ ...prev, [patrol.patrol_id]: total }));
-                // Restore comments
-                const commentMap: Record<string, string> = {};
-                for (const s of draft.scores) {
-                  if (s.comment) commentMap[s.criterion_id] = s.comment;
-                }
-                if (Object.keys(commentMap).length > 0) {
-                  setPatrolComments((prev) => ({ ...prev, [patrol.patrol_id]: commentMap }));
-                }
+              }
+            }).catch(() => { /* ignore */ });
+            // Load per-user comments for this patrol
+            api.getDraftComments(sessionId, patrol.patrol_id).then(({ comments: cmts }) => {
+              if (cmts?.length) {
+                setPerUserComments((prev) => ({
+                  ...prev,
+                  [patrol.patrol_id]: cmts.map((c) => ({
+                    criterion_id: c.criterion_id,
+                    user_id: c.user_id,
+                    display_name: c.display_name,
+                    comment: c.comment,
+                    updated_at: c.updated_at,
+                  })),
+                }));
               }
             }).catch(() => { /* ignore */ });
           }
@@ -262,6 +322,7 @@ export const ScoringPage = () => {
   useEffect(() => {
     if (!sessionId || !currentPatrol || view !== 'scoring') return;
 
+    // Load draft scores
     api.getDraft(sessionId, currentPatrol.patrol_id).then(({ draft }) => {
       if (draft?.scores?.length) {
         const restored: Record<string, number | null> = mapValues(
@@ -269,14 +330,6 @@ export const ScoringPage = () => {
           'value',
         );
         setScores(restored);
-
-        // Restore comments from draft
-        const restoredComments: Record<string, string> = {};
-        for (const s of draft.scores) {
-          restoredComments[s.criterion_id] = s.comment || '';
-        }
-        setComments(restoredComments);
-        setPatrolComments((prev) => ({ ...prev, [currentPatrol.patrol_id]: restoredComments }));
 
         // Mark all restored criteria as touched
         setTouchedMap((prev) => ({
@@ -290,16 +343,53 @@ export const ScoringPage = () => {
       } else {
         // Initialize with null — slider shows at 0 but dimmed/unset
         const initial: Record<string, number | null> = {};
-        const initialComments: Record<string, string> = {};
         for (const c of criteria) {
           initial[c.id] = null;
-          initialComments[c.id] = '';
         }
         setScores(initial);
-        setComments(initialComments);
       }
     });
-  }, [sessionId, currentPatrol?.patrol_id, criteria, view]);
+
+    // Load per-user comments (all users) and extract own comments for the textarea
+    api.getDraftComments(sessionId, currentPatrol.patrol_id).then(({ comments: cmts }) => {
+      if (cmts?.length) {
+        const mapped: DraftComment[] = cmts.map((c) => ({
+          criterion_id: c.criterion_id,
+          user_id: c.user_id,
+          display_name: c.display_name,
+          comment: c.comment,
+          updated_at: c.updated_at,
+        }));
+        setPerUserComments((prev) => ({ ...prev, [currentPatrol.patrol_id]: mapped }));
+
+        // Extract the current user's comments for the local textarea state
+        const ownComments: Record<string, string> = {};
+        for (const c of criteria) {
+          ownComments[c.id] = '';
+        }
+        for (const c of mapped) {
+          if (c.user_id === user?.id) {
+            ownComments[c.criterion_id] = c.comment;
+          }
+        }
+        setComments(ownComments);
+      } else {
+        // No comments yet — initialize empty
+        const initialComments: Record<string, string> = {};
+        for (const c of criteria) {
+          initialComments[c.id] = '';
+        }
+        setComments(initialComments);
+      }
+    }).catch(() => {
+      // Fallback: initialize empty comments
+      const initialComments: Record<string, string> = {};
+      for (const c of criteria) {
+        initialComments[c.id] = '';
+      }
+      setComments(initialComments);
+    });
+  }, [sessionId, currentPatrol?.patrol_id, criteria, view, user?.id]);
 
   // Auto-save scores when they change (only save non-null values)
   const handleScoreChange = useCallback(
@@ -317,7 +407,7 @@ export const ScoringPage = () => {
           }
         }
         if (Object.keys(saveable).length > 0) {
-          saveDraft(saveable, comments);
+          saveDraft(saveable, {});
         }
 
         // Update patrol total
@@ -338,36 +428,47 @@ export const ScoringPage = () => {
         });
       }
     },
-    [saveDraft, currentPatrol, comments],
+    [saveDraft, currentPatrol],
   );
 
-  // Handle comment change (auto-saves via debounced draft save)
+  // Handle comment change — save via REST API (debounced per criterion)
   const handleCommentChange = useCallback(
     (criterionId: string, newComment: string) => {
-      setComments((prev) => {
-        const next = { ...prev, [criterionId]: newComment };
+      setComments((prev) => ({ ...prev, [criterionId]: newComment }));
 
-        // Persist to patrolComments map
-        if (currentPatrol) {
-          setPatrolComments((pc) => ({ ...pc, [currentPatrol.patrol_id]: next }));
-        }
-
-        // Trigger a draft save with current scores + updated comments
-        const saveable: Record<string, number> = {};
-        for (const [k, v] of Object.entries(scores)) {
-          if (v !== null) {
-            saveable[k] = v;
-          }
-        }
-        if (Object.keys(saveable).length > 0) {
-          saveDraft(saveable, next);
-        }
-
-        return next;
-      });
+      // Debounced REST save
+      if (sessionId && currentPatrol) {
+        getCommentSaver(criterionId)(sessionId, currentPatrol.patrol_id, newComment);
+      }
     },
-    [saveDraft, currentPatrol, scores],
+    [sessionId, currentPatrol?.patrol_id, getCommentSaver],
   );
+
+  // Delete the current user's comment on a criterion
+  const handleCommentDelete = useCallback(
+    async (criterionId: string) => {
+      if (!sessionId || !currentPatrol) return;
+      setComments((prev) => ({ ...prev, [criterionId]: '' }));
+      try {
+        await api.deleteDraftComment(sessionId, currentPatrol.patrol_id, criterionId);
+      } catch (err) {
+        console.error('[comment] Delete failed:', err);
+      }
+    },
+    [sessionId, currentPatrol?.patrol_id],
+  );
+
+  // Track which criterion the user is commenting on (for presence broadcasting)
+  const handleCommentFocus = useCallback(
+    (criterionId: string) => {
+      setCommentingOn(criterionId);
+    },
+    [],
+  );
+
+  const handleCommentBlur = useCallback(() => {
+    setCommentingOn(undefined);
+  }, []);
 
   // Check if all criteria for a patrol are touched
   const isPatrolComplete = useCallback(
@@ -382,29 +483,32 @@ export const ScoringPage = () => {
   // Navigate between patrols
   const goToPatrol = useCallback(
     async (index: number) => {
+      flushAllCommentSaves();
       await flushDraft();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(false);
     },
-    [flushDraft],
+    [flushDraft, flushAllCommentSaves],
   );
 
   const goToSummary = useCallback(async () => {
+    flushAllCommentSaves();
     await flushDraft();
     setView('summary');
     setJumpedFromSummary(false);
-  }, [flushDraft]);
+  }, [flushDraft, flushAllCommentSaves]);
 
   // Jump from summary to a specific patrol, with "Back to Summary" nav
   const jumpToPatrolFromSummary = useCallback(
     async (index: number) => {
+      flushAllCommentSaves();
       await flushDraft();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(true);
     },
-    [flushDraft],
+    [flushDraft, flushAllCommentSaves],
   );
 
   const goNext = useCallback(() => {
@@ -430,6 +534,7 @@ export const ScoringPage = () => {
     setError('');
 
     try {
+      flushAllCommentSaves();
       await flushDraft();
       const result = await api.finaliseSession(sessionId);
       setSubmissions(result.submissions);
@@ -441,7 +546,7 @@ export const ScoringPage = () => {
       setError(err instanceof Error ? err.message : 'Finalise failed');
       setSubmitting(false);
     }
-  }, [sessionId, session, flushDraft, navigate]);
+  }, [sessionId, session, flushDraft, flushAllCommentSaves, navigate]);
 
   // View submitted scores for a patrol (read-only)
   const viewPatrolScores = useCallback(
@@ -456,13 +561,27 @@ export const ScoringPage = () => {
           patrol.patrol_id,
         );
         const scoreMap: Record<string, number> = {};
-        const commentMap: Record<string, string> = {};
         for (const s of submissionScores) {
           scoreMap[s.criterion_id] = s.value;
-          if (s.comment) commentMap[s.criterion_id] = s.comment;
         }
         setViewingScores(scoreMap);
-        setViewingComments(commentMap);
+
+        // Fetch per-user submitted comments
+        try {
+          const { comments: submittedComments } = await api.getSubmittedComments(sessionId, patrol.patrol_id);
+          setViewingPerUserComments(
+            (submittedComments ?? []).map((c) => ({
+              criterion_id: c.criterion_id,
+              user_id: c.user_id,
+              display_name: c.display_name,
+              comment: c.comment,
+              updated_at: c.updated_at,
+            })),
+          );
+        } catch {
+          setViewingPerUserComments([]);
+        }
+
         setCurrentPatrolIndex(patrolIndex);
         setView('viewing');
       } catch (err) {
@@ -485,7 +604,6 @@ export const ScoringPage = () => {
       setAwards({});
       setTouchedMap({});
       setPatrolTotals({});
-      setPatrolComments({});
       setCurrentPatrolIndex(0);
       setView('scoring');
     } catch (err) {
@@ -677,7 +795,7 @@ export const ScoringPage = () => {
               {patrols.map((patrol, index) => {
                 const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
                 const isComplete = isPatrolComplete(patrol.patrol_id);
-                const commentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
+                const commentCount = (perUserComments[patrol.patrol_id] ?? []).filter(c => c.comment.length > 0).length;
                 const patrolPresence = presenceMap[patrol.patrol_id] ?? {};
                 const activeUsers = Object.values(patrolPresence).filter(p => (Date.now() - p.at) < 30000);
 
@@ -987,7 +1105,7 @@ export const ScoringPage = () => {
                 const isSubmitted = submittedPatrolIds.has(patrol.patrol_id);
                 const isComplete = isPatrolComplete(patrol.patrol_id);
                 const isCurrent = index === currentPatrolIndex;
-                const patrolCommentCount = Object.values(patrolComments[patrol.patrol_id] ?? {}).filter(c => c.length > 0).length;
+                const patrolCommentCount = (perUserComments[patrol.patrol_id] ?? []).filter(c => c.comment.length > 0).length;
                 const patrolPresence = presenceMap[patrol.patrol_id] ?? {};
                 const activeUsers = Object.values(patrolPresence).filter(p => (Date.now() - p.at) < 30000);
                 const hasPresence = activeUsers.length > 0;
@@ -1086,17 +1204,36 @@ export const ScoringPage = () => {
 
               {/* Criteria sliders */}
               <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-                {criteria.map((criterion) => (
-                  <ScoreSlider
-                    key={criterion.id}
-                    criterion={criterion}
-                    value={scores[criterion.id] ?? null}
-                    comment={comments[criterion.id] ?? ''}
-                    onChange={(value) => handleScoreChange(criterion.id, value)}
-                    onCommentChange={(comment) => handleCommentChange(criterion.id, comment)}
-                    disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
-                  />
-                ))}
+                {criteria.map((criterion) => {
+                  // Other users' comments for this criterion
+                  const otherComments = (perUserComments[currentPatrol.patrol_id] ?? [])
+                    .filter((c) => c.criterion_id === criterion.id && c.user_id !== user?.id);
+
+                  // Commenting indicator: who else is typing on this criterion
+                  const patrolPresence = presenceMap[currentPatrol.patrol_id] ?? {};
+                  const commenters = Object.values(patrolPresence)
+                    .filter((p) => p.commenting_on === criterion.id && (Date.now() - p.at) < 30000);
+                  const commentingIndicator = commenters.length > 0
+                    ? `✏️ ${commenters.map((c) => c.user_name).join(', ')} ${commenters.length === 1 ? 'is' : 'are'} commenting`
+                    : undefined;
+
+                  return (
+                    <ScoreSlider
+                      key={criterion.id}
+                      criterion={criterion}
+                      value={scores[criterion.id] ?? null}
+                      comment={comments[criterion.id] ?? ''}
+                      otherComments={otherComments}
+                      commentingIndicator={commentingIndicator}
+                      onChange={(value) => handleScoreChange(criterion.id, value)}
+                      onCommentChange={(comment) => handleCommentChange(criterion.id, comment)}
+                      onCommentDelete={() => handleCommentDelete(criterion.id)}
+                      onCommentFocus={() => handleCommentFocus(criterion.id)}
+                      onCommentBlur={handleCommentBlur}
+                      disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
+                    />
+                  );
+                })}
               </Box>
             </Box>
           )}
@@ -1156,17 +1293,23 @@ export const ScoringPage = () => {
             </Box>
 
             <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-              {criteria.map((criterion) => (
-                <ScoreSlider
-                  key={criterion.id}
-                  criterion={criterion}
-                  value={viewingScores[criterion.id] ?? null}
-                  comment={viewingComments[criterion.id] ?? ''}
-                  onChange={() => {}}
-                  onCommentChange={() => {}}
-                  disabled
-                />
-              ))}
+              {criteria.map((criterion) => {
+                const submittedComments = viewingPerUserComments
+                  .filter((c) => c.criterion_id === criterion.id);
+                // Use the first comment as the "main" comment display, all go into otherComments
+                return (
+                  <ScoreSlider
+                    key={criterion.id}
+                    criterion={criterion}
+                    value={viewingScores[criterion.id] ?? null}
+                    comment=""
+                    otherComments={submittedComments}
+                    onChange={() => {}}
+                    onCommentChange={() => {}}
+                    disabled
+                  />
+                );
+              })}
             </Box>
           </Box>
 

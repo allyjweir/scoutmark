@@ -1,18 +1,135 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Box, Text } from '@primer/react';
-import type { Criterion } from '../lib/types';
+import type { Criterion, DraftComment } from '../lib/types';
 
 interface ScoreSliderProps {
   criterion: Criterion;
   value: number | null;
   comment: string;
+  otherComments?: DraftComment[];
+  commentingIndicator?: string; // e.g. "✏️ Ally is commenting"
   onChange: (value: number) => void;
   onCommentChange: (comment: string) => void;
+  onCommentDelete?: () => void;
+  onCommentFocus?: () => void;
+  onCommentBlur?: () => void;
   disabled?: boolean;
 }
 
-export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChange, disabled }: ScoreSliderProps) => {
+/* ── Custom slider CSS (injected once) ─────────────────────────────── */
+const SLIDER_CSS = `
+/* Reset browser defaults */
+input[type="range"].score-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 26px;
+  background: transparent;
+  cursor: pointer;
+  touch-action: none;
+  margin: 0;
+}
+input[type="range"].score-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+/* ── Track ── */
+input[type="range"].score-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bgColor-neutral-muted, #d0d7de);
+}
+input[type="range"].score-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  border: none;
+  background: var(--bgColor-neutral-muted, #d0d7de);
+}
+/* ── Filled portion (Firefox) ── */
+input[type="range"].score-slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fgColor-accent, #0969da);
+}
+input[type="range"].score-slider.score-slider--unset::-moz-range-progress {
+  background: var(--bgColor-neutral-muted, #d0d7de);
+}
+/* ── Thumb ── */
+input[type="range"].score-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--fgColor-accent, #0969da);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  margin-top: -9px;
+  transition: transform 0.1s ease;
+}
+input[type="range"].score-slider::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--fgColor-accent, #0969da);
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  transition: transform 0.1s ease;
+}
+input[type="range"].score-slider.score-slider--unset::-webkit-slider-thumb {
+  background: var(--fgColor-muted, #656d76);
+}
+input[type="range"].score-slider.score-slider--unset::-moz-range-thumb {
+  background: var(--fgColor-muted, #656d76);
+}
+/* Active / hover feedback */
+input[type="range"].score-slider:not(:disabled)::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+input[type="range"].score-slider:not(:disabled):active::-webkit-slider-thumb {
+  transform: scale(1.25);
+}
+input[type="range"].score-slider:not(:disabled)::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+input[type="range"].score-slider:not(:disabled):active::-moz-range-thumb {
+  transform: scale(1.25);
+}
+`;
+
+let styleInjected = false;
+function injectSliderStyles() {
+  if (styleInjected) return;
+  const style = document.createElement('style');
+  style.textContent = SLIDER_CSS;
+  document.head.appendChild(style);
+  styleInjected = true;
+}
+
+export const ScoreSlider = ({
+  criterion,
+  value,
+  comment,
+  otherComments = [],
+  commentingIndicator,
+  onChange,
+  onCommentChange,
+  onCommentDelete,
+  onCommentFocus,
+  onCommentBlur,
+  disabled,
+}: ScoreSliderProps) => {
   const [commentOpen, setCommentOpen] = useState(comment.length > 0);
+
+  // Inject custom slider CSS once
+  useEffect(() => { injectSliderStyles(); }, []);
+
+  // Open the comment section when a previously-saved comment arrives async
+  useEffect(() => {
+    if (comment.length > 0) {
+      setCommentOpen(true);
+    }
+  }, [comment]);
+
   const isSet = value !== null;
   const displayValue = value ?? criterion.min_value;
   const range = criterion.max_value - criterion.min_value;
@@ -31,6 +148,21 @@ export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChan
     },
     [onCommentChange],
   );
+
+  const handleDelete = useCallback(() => {
+    if (onCommentDelete) {
+      onCommentDelete();
+      setCommentOpen(false);
+    }
+  }, [onCommentDelete]);
+
+  // All comments to display (other users' comments)
+  const allComments = otherComments.filter((c) => c.comment.length > 0);
+
+  // Inline style for the WebKit filled track (can't use pseudo-element in CSS for dynamic %)
+  const trackBackground = isSet
+    ? `linear-gradient(to right, var(--fgColor-accent, #0969da) ${percentage}%, var(--bgColor-neutral-muted, #d0d7de) ${percentage}%)`
+    : 'var(--bgColor-neutral-muted, #d0d7de)';
 
   return (
     <Box>
@@ -59,6 +191,7 @@ export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChan
       <Box position="relative">
         <input
           type="range"
+          className={`score-slider${!isSet ? ' score-slider--unset' : ''}`}
           min={criterion.min_value}
           max={criterion.max_value}
           step={1}
@@ -66,55 +199,60 @@ export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChan
           onChange={handleChange}
           disabled={disabled}
           style={{
-            width: '100%',
-            height: '48px',
-            cursor: disabled ? 'not-allowed' : 'pointer',
-            accentColor: isSet
-              ? 'var(--fgColor-accent, #0969da)'
-              : 'var(--fgColor-muted, #656d76)',
-            opacity: disabled ? 0.5 : isSet ? 1 : 0.4,
+            // WebKit doesn't support ::-webkit-slider-runnable-track background
+            // with dynamic values in a stylesheet, so we set it inline.
+            // @ts-expect-error -- WebKit vendor style
+            '--track-bg': trackBackground,
+            background: trackBackground,
+            backgroundSize: '100% 6px',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
           }}
         />
-        {/* Track fill indicator */}
+        {/* Min / Max labels */}
         <Box
-          position="absolute"
-          bottom={0}
-          left={0}
-          right={0}
           display="flex"
           justifyContent="space-between"
+          mt={1}
         >
           <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.min_value}</Text>
           <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.max_value}</Text>
         </Box>
       </Box>
 
-      {/* Value indicator bar */}
-      <Box
-        mt={1}
-        height="4px"
-        borderRadius={2}
-        bg="neutral.muted"
-        overflow="hidden"
-      >
-        <Box
-          height="100%"
-          borderRadius={2}
-          bg={!isSet ? 'neutral.muted' : disabled ? 'neutral.emphasis' : 'accent.emphasis'}
-          sx={{
-            width: `${percentage}%`,
-            transition: 'width 0.1s ease-out',
-          }}
-        />
-      </Box>
+      {/* Commenting indicator from other users */}
+      {commentingIndicator && (
+        <Box mt={1}>
+          <Text sx={{ fontSize: 0, color: 'attention.fg', fontStyle: 'italic' }}>
+            {commentingIndicator}
+          </Text>
+        </Box>
+      )}
 
-      {/* Comment toggle + textarea */}
+      {/* Other users' comments — stacked labeled bubbles */}
+      {allComments.length > 0 && (
+        <Box mt={2} display="flex" flexDirection="column" sx={{ gap: 1 }}>
+          {allComments.map((c) => (
+            <Box key={`${c.user_id}-${c.criterion_id}`} p={2} bg="canvas.subtle" borderRadius={2}>
+              <Text sx={{ fontSize: 0 }}>
+                <Text sx={{ fontWeight: 'bold', color: 'fg.default' }}>{c.display_name}:</Text>{' '}
+                <Text sx={{ color: 'fg.muted', fontStyle: 'italic' }}>{c.comment}</Text>
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+
+      {/* Comment toggle + textarea (own comment) */}
       {!disabled && (
         <Box mt={2}>
           {!commentOpen ? (
             <Text
               as="button"
-              onClick={() => setCommentOpen(true)}
+              onClick={() => {
+                setCommentOpen(true);
+                onCommentFocus?.();
+              }}
               sx={{
                 fontSize: 0,
                 color: 'fg.muted',
@@ -130,29 +268,53 @@ export const ScoreSlider = ({ criterion, value, comment, onChange, onCommentChan
               + Add comment
             </Text>
           ) : (
-            <textarea
-              value={comment}
-              onChange={handleCommentChange}
-              placeholder="Optional comment…"
-              rows={2}
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: '6px',
-                border: '1px solid var(--borderColor-default, #d0d7de)',
-                backgroundColor: 'var(--bgColor-default, #fff)',
-                fontSize: '13px',
-                fontFamily: 'inherit',
-                resize: 'vertical',
-                minHeight: '48px',
-              }}
-            />
+            <Box>
+              <textarea
+                value={comment}
+                onChange={handleCommentChange}
+                onFocus={onCommentFocus}
+                onBlur={onCommentBlur}
+                placeholder="Your comment…"
+                rows={2}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--borderColor-default, #d0d7de)',
+                  backgroundColor: 'var(--bgColor-default, #fff)',
+                  fontSize: '13px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  minHeight: '48px',
+                }}
+              />
+              {onCommentDelete && (
+                <Box mt={1} display="flex" justifyContent="flex-end">
+                  <Text
+                    as="button"
+                    onClick={handleDelete}
+                    sx={{
+                      fontSize: 0,
+                      color: 'danger.fg',
+                      cursor: 'pointer',
+                      background: 'none',
+                      border: 'none',
+                      padding: '2px 6px',
+                      borderRadius: 1,
+                      ':hover': { bg: 'danger.subtle' },
+                    }}
+                  >
+                    ✕ Remove comment
+                  </Text>
+                </Box>
+              )}
+            </Box>
           )}
         </Box>
       )}
 
-      {/* Read-only comment display */}
-      {disabled && comment && (
+      {/* Read-only: show all comments as bubbles when disabled */}
+      {disabled && allComments.length === 0 && comment && (
         <Box mt={2} p={2} bg="canvas.subtle" borderRadius={2}>
           <Text sx={{ fontSize: 0, color: 'fg.muted', fontStyle: 'italic' }}>
             💬 {comment}

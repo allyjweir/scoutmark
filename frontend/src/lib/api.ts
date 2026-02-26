@@ -171,10 +171,18 @@ export const getSessionComments = async (
 ): Promise<{ comments: SessionComment[] }> =>
   request(`/admin/sessions/${sessionId}/comments`);
 
+export interface AdminPerUserComment {
+  criterion_id: string;
+  user_id: string;
+  display_name: string;
+  comment: string;
+}
+
 export interface AdminPatrolScores {
   patrol_id: string;
   patrol_name: string;
   scores: { criterion_id: string; value: number; comment: string }[];
+  comments?: AdminPerUserComment[];
 }
 
 export interface AdminUserScoresResponse {
@@ -190,3 +198,45 @@ export const getAdminUserScores = async (
   userId: string,
 ): Promise<AdminUserScoresResponse> =>
   request(`/admin/sessions/${sessionId}/users/${userId}/scores`);
+
+// ─── Per-User Comments ──────────────────────────────────────────────
+
+export interface DraftCommentAPI {
+  criterion_id: string;
+  user_id: string;
+  display_name: string;
+  comment: string;
+  updated_at: string;
+}
+
+export const getDraftComments = async (
+  sessionId: string,
+  patrolId: string,
+): Promise<{ comments: DraftCommentAPI[] }> =>
+  request(`/sessions/${sessionId}/patrols/${patrolId}/comments`);
+
+export const saveDraftComment = async (
+  sessionId: string,
+  patrolId: string,
+  criterionId: string,
+  comment: string,
+): Promise<DraftCommentAPI> =>
+  request(`/sessions/${sessionId}/patrols/${patrolId}/comments/${criterionId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ comment }),
+  });
+
+export const deleteDraftComment = async (
+  sessionId: string,
+  patrolId: string,
+  criterionId: string,
+): Promise<{ status: string }> =>
+  request(`/sessions/${sessionId}/patrols/${patrolId}/comments/${criterionId}`, {
+    method: 'DELETE',
+  });
+
+export const getSubmittedComments = async (
+  sessionId: string,
+  patrolId: string,
+): Promise<{ comments: DraftCommentAPI[] }> =>
+  request(`/sessions/${sessionId}/patrols/${patrolId}/submitted-comments`);

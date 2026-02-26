@@ -61,23 +61,24 @@ export const useSessionSubscription = (
  * usePresence sends periodic presence heartbeats so other users
  * know we're viewing a patrol. Fires immediately on patrol change
  * and every 15s while the patrol stays the same.
+ * Optionally includes which criterion is being commented on.
  */
-export const usePresence = (sessionId: string | undefined, patrolId: string | undefined) => {
+export const usePresence = (sessionId: string | undefined, patrolId: string | undefined, commentingOn?: string) => {
   const socket = getSocket();
 
   useEffect(() => {
     if (!sessionId || !patrolId) return;
 
     // Send immediately
-    socket.sendPresence(sessionId, patrolId);
+    socket.sendPresence(sessionId, patrolId, commentingOn);
 
     // Then every 15 seconds
     const interval = setInterval(() => {
-      socket.sendPresence(sessionId, patrolId);
+      socket.sendPresence(sessionId, patrolId, commentingOn);
     }, 15_000);
 
     return () => clearInterval(interval);
-  }, [socket, sessionId, patrolId]);
+  }, [socket, sessionId, patrolId, commentingOn]);
 };
 
 /**

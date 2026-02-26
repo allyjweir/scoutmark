@@ -118,8 +118,8 @@ export class ScoutmarkSocket {
   /**
    * Send presence heartbeat — tells other users we're viewing a patrol.
    */
-  sendPresence(sessionId: string, patrolId: string): void {
-    this.send('presence', { session_id: sessionId, patrol_id: patrolId });
+  sendPresence(sessionId: string, patrolId: string, commentingOn?: string): void {
+    this.send('presence', { session_id: sessionId, patrol_id: patrolId, commenting_on: commentingOn || '' });
   }
 
   /**

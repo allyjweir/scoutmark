@@ -83,6 +83,7 @@ $ADMIN create-user -id usr-robertson -username robertson -password "$PASSWORD" -
 $ADMIN create-user -id usr-stewart   -username stewart   -password "$PASSWORD" -display-name "Stewart"
 $ADMIN create-user -id usr-stacey   -username stacey   -password "$PASSWORD" -display-name "Stacey"
 $ADMIN create-user -id usr-ally     -username ally     -password "$PASSWORD" -display-name "Ally"
+$ADMIN create-user -id usr-iona     -username iona     -password "$PASSWORD" -display-name "Iona"
 echo
 
 # ─── Patrols ─────────────────────────────────────────────────────────
@@ -90,37 +91,37 @@ echo
 echo "Creating patrols..."
 
 # Morrison's patrols
-for p in "pat-mor-1:Patrol 1" "pat-mor-2:Patrol 2" "pat-mor-3:Patrol 3" "pat-mor-4:Patrol 4" "pat-mor-5:Patrol 5"; do
+for p in "pat-mor-1:Site 1" "pat-mor-2:Site 2" "pat-mor-3:Site 3" "pat-mor-4:Site 4" "pat-mor-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
 
 # MacDonald's patrols
-for p in "pat-mac-1:Patrol 1" "pat-mac-2:Patrol 2" "pat-mac-3:Patrol 3" "pat-mac-4:Patrol 4" "pat-mac-5:Patrol 5"; do
+for p in "pat-mac-1:Site 1" "pat-mac-2:Site 2" "pat-mac-3:Site 3" "pat-mac-4:Site 4" "pat-mac-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
 
 # MacLean's patrols
-for p in "pat-mcl-1:Patrol 1" "pat-mcl-2:Patrol 2" "pat-mcl-3:Patrol 3" "pat-mcl-4:Patrol 4" "pat-mcl-5:Patrol 5"; do
+for p in "pat-mcl-1:Site 1" "pat-mcl-2:Site 2" "pat-mcl-3:Site 3" "pat-mcl-4:Site 4" "pat-mcl-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
 
 # Murray's patrols
-for p in "pat-mur-1:Patrol 1" "pat-mur-2:Patrol 2" "pat-mur-3:Patrol 3" "pat-mur-4:Patrol 4" "pat-mur-5:Patrol 5"; do
+for p in "pat-mur-1:Site 1" "pat-mur-2:Site 2" "pat-mur-3:Site 3" "pat-mur-4:Site 4" "pat-mur-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
 
 # Robertson's patrols
-for p in "pat-rob-1:Patrol 1" "pat-rob-2:Patrol 2" "pat-rob-3:Patrol 3" "pat-rob-4:Patrol 4" "pat-rob-5:Patrol 5"; do
+for p in "pat-rob-1:Site 1" "pat-rob-2:Site 2" "pat-rob-3:Site 3" "pat-rob-4:Site 4" "pat-rob-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
 
 # Stewart's patrols
-for p in "pat-stw-1:Patrol 1" "pat-stw-2:Patrol 2" "pat-stw-3:Patrol 3" "pat-stw-4:Patrol 4" "pat-stw-5:Patrol 5"; do
+for p in "pat-stw-1:Site 1" "pat-stw-2:Site 2" "pat-stw-3:Site 3" "pat-stw-4:Site 4" "pat-stw-5:Site 5"; do
   IFS=: read -r id name <<< "$p"
   $ADMIN create-patrol -id "$id" -name "$name"
 done
@@ -142,6 +143,7 @@ assign_patrols() {
 assign_patrols usr-morrison  pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
 assign_patrols usr-stacey    pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
 assign_patrols usr-ally      pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
+assign_patrols usr-iona      pat-mor-1 pat-mor-2 pat-mor-3 pat-mor-4 pat-mor-5
 assign_patrols usr-macdonald pat-mac-1 pat-mac-2 pat-mac-3 pat-mac-4 pat-mac-5
 assign_patrols usr-maclean   pat-mcl-1 pat-mcl-2 pat-mcl-3 pat-mcl-4 pat-mcl-5
 assign_patrols usr-murray    pat-mur-1 pat-mur-2 pat-mur-3 pat-mur-4 pat-mur-5
@@ -184,6 +186,6 @@ echo "  ✓ Development database seeded successfully!"
 echo ""
 echo "  Users:    campchief (admin), morrison, macdonald,"
 echo "            maclean, murray, robertson, stewart,"
-echo "            stacey, ally"
+echo "            stacey, ally, iona"
 echo "  Password: $PASSWORD"
 echo "═══════════════════════════════════════════════"

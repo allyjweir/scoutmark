@@ -933,10 +933,45 @@ func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Reque
 		}
 	})
 
+	type perUserCommentJSON struct {
+		CriterionID string `json:"criterion_id"`
+		UserID      string `json:"user_id"`
+		DisplayName string `json:"display_name"`
+		Comment     string `json:"comment"`
+	}
+
 	type patrolScoresJSON struct {
 		PatrolID   string                `json:"patrol_id"`
 		PatrolName string                `json:"patrol_name"`
 		Scores     []submissionScoreJSON `json:"scores"`
+		Comments   []perUserCommentJSON  `json:"comments"`
+	}
+
+	// Fetch per-user comments from submission_comments table
+	perUserComments, err := h.db.GetSubmissionCommentsBySession(ctx, userID, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		// Non-fatal: continue without comments
+		perUserComments = nil
+	}
+
+	// Group per-user comments by patrol (using submission_id → patrol lookup)
+	// Build a submission_id → patrol_id map from the submissions data
+	subToPatrol := make(map[string]string)
+	for _, s := range submissions {
+		for _, sc := range s.Scores {
+			subToPatrol[sc.SubmissionID] = s.PatrolID
+		}
+	}
+	commentsByPatrol := make(map[string][]perUserCommentJSON)
+	for _, c := range perUserComments {
+		patrolID := subToPatrol[c.DraftID] // DraftID holds submission_id for submission comments
+		commentsByPatrol[patrolID] = append(commentsByPatrol[patrolID], perUserCommentJSON{
+			CriterionID: c.CriterionID,
+			UserID:      c.UserID,
+			DisplayName: c.DisplayName,
+			Comment:     c.Comment,
+		})
 	}
 
 	patrols := lo.Map(submissions, func(s database.AdminUserSubmissionRow, _ int) patrolScoresJSON {
@@ -950,6 +985,7 @@ func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Reque
 					Comment:     sc.Comment,
 				}
 			}),
+			Comments: commentsByPatrol[s.PatrolID],
 		}
 	})
 
@@ -960,6 +996,216 @@ func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Reque
 		"criteria":     criteria,
 		"patrols":      patrols,
 	})
+}
+
+// ─── Per-User Comments ──────────────────────────────────────────────
+
+// CommentBroadcaster extends SessionBroadcaster with per-user comment broadcasts.
+type CommentBroadcaster interface {
+	SessionBroadcaster
+	BroadcastCommentUpdated(sessionID string, payload any, exclude any)
+}
+
+type commentJSON2 struct {
+	CriterionID string `json:"criterion_id"`
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	Comment     string `json:"comment"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+// GetDraftComments handles GET /api/sessions/{session_id}/patrols/{patrol_id}/comments
+func (h *SessionHandler) GetDraftComments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	patrolID := r.PathValue("patrol_id")
+	user := auth.UserFromContext(ctx)
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_draft_comments")
+	defer span.End()
+	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
+
+	// IDOR check
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
+	comments, err := h.db.GetDraftComments(ctx, sessionID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch comments")
+		return
+	}
+
+	result := make([]commentJSON2, 0, len(comments))
+	for _, c := range comments {
+		result = append(result, commentJSON2{
+			CriterionID: c.CriterionID,
+			UserID:      c.UserID,
+			DisplayName: c.DisplayName,
+			Comment:     c.Comment,
+			UpdatedAt:   c.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"comments": result})
+}
+
+// SaveDraftComment handles PUT /api/sessions/{session_id}/patrols/{patrol_id}/comments/{criterion_id}
+func (h *SessionHandler) SaveDraftComment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	patrolID := r.PathValue("patrol_id")
+	criterionID := r.PathValue("criterion_id")
+	user := auth.UserFromContext(ctx)
+
+	_, span := tracing.Tracer().Start(ctx, "handler.save_draft_comment")
+	defer span.End()
+	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
+
+	// IDOR check
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
+	var req struct {
+		Comment string `json:"comment"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	saved, err := h.db.SaveDraftComment(ctx, user.ID, user.DisplayName, sessionID, patrolID, criterionID, req.Comment)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not save comment")
+		return
+	}
+
+	result := commentJSON2{
+		CriterionID: saved.CriterionID,
+		UserID:      saved.UserID,
+		DisplayName: saved.DisplayName,
+		Comment:     saved.Comment,
+		UpdatedAt:   saved.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+
+	writeJSON(w, http.StatusOK, result)
+
+	// Broadcast to WS peers
+	if b, ok := h.broadcaster.(CommentBroadcaster); ok {
+		b.BroadcastCommentUpdated(sessionID, map[string]any{
+			"session_id":   sessionID,
+			"patrol_id":    patrolID,
+			"criterion_id": criterionID,
+			"user_id":      user.ID,
+			"display_name": user.DisplayName,
+			"comment":      req.Comment,
+		}, nil)
+	}
+}
+
+// DeleteDraftComment handles DELETE /api/sessions/{session_id}/patrols/{patrol_id}/comments/{criterion_id}
+func (h *SessionHandler) DeleteDraftComment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	patrolID := r.PathValue("patrol_id")
+	criterionID := r.PathValue("criterion_id")
+	user := auth.UserFromContext(ctx)
+
+	_, span := tracing.Tracer().Start(ctx, "handler.delete_draft_comment")
+	defer span.End()
+	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
+
+	// IDOR check
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
+	if err := h.db.DeleteDraftComment(ctx, user.ID, sessionID, patrolID, criterionID); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not delete comment")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	// Broadcast to WS peers
+	if b, ok := h.broadcaster.(CommentBroadcaster); ok {
+		b.BroadcastCommentUpdated(sessionID, map[string]any{
+			"session_id":   sessionID,
+			"patrol_id":    patrolID,
+			"criterion_id": criterionID,
+			"user_id":      user.ID,
+			"display_name": user.DisplayName,
+			"comment":      "",
+		}, nil)
+	}
+}
+
+// GetSubmittedComments handles GET /api/sessions/{session_id}/patrols/{patrol_id}/submitted-comments
+func (h *SessionHandler) GetSubmittedComments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	patrolID := r.PathValue("patrol_id")
+	user := auth.UserFromContext(ctx)
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_submitted_comments")
+	defer span.End()
+
+	// IDOR check
+	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	if !owns {
+		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+
+	comments, err := h.db.GetSubmissionCommentsByPatrol(ctx, sessionID, patrolID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch comments")
+		return
+	}
+
+	result := make([]commentJSON2, 0, len(comments))
+	for _, c := range comments {
+		result = append(result, commentJSON2{
+			CriterionID: c.CriterionID,
+			UserID:      c.UserID,
+			DisplayName: c.DisplayName,
+			Comment:     c.Comment,
+			UpdatedAt:   c.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"comments": result})
 }
 
 // GetSessionComments handles GET /api/admin/sessions/{session_id}/comments

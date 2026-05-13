@@ -83,6 +83,14 @@ type PatrolSubmittedPayload struct {
 	SubmittedAt     time.Time `json:"submitted_at"`
 }
 
+// SessionFinalisedPayload is broadcast when a user finalises all their scoring.
+type SessionFinalisedPayload struct {
+	SessionID       string `json:"session_id"`
+	UserID          string `json:"user_id"`
+	UserDisplayName string `json:"user_display_name"`
+	EndsAt          string `json:"ends_at"`
+}
+
 type ErrorPayload struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -325,6 +333,19 @@ func (h *Hub) BroadcastCommentUpdated(sessionID string, payload any, exclude any
 		Type:    "comment_updated",
 		Payload: payload,
 	}, nil) // broadcast to everyone including the sender for consistency
+}
+
+// BroadcastSessionFinalised sends a session_finalised message to all session subscribers.
+func (h *Hub) BroadcastSessionFinalised(sessionID, userID, displayName, endsAt string) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type: "session_finalised",
+		Payload: SessionFinalisedPayload{
+			SessionID:       sessionID,
+			UserID:          userID,
+			UserDisplayName: displayName,
+			EndsAt:          endsAt,
+		},
+	}, nil)
 }
 
 // HandleWebSocket handles the WebSocket upgrade and message loop.

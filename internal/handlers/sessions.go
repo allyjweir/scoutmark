@@ -533,6 +533,13 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	if h.broadcaster != nil {
 		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
 	}
+
+	// Broadcast finalised event to all session subscribers (for lock screen)
+	if fb, ok := h.broadcaster.(interface {
+		BroadcastSessionFinalised(sessionID, userID, displayName, endsAt string)
+	}); ok {
+		fb.BroadcastSessionFinalised(sessionID, user.ID, user.DisplayName, session.EndsAt.Format("2006-01-02T15:04:05Z"))
+	}
 }
 
 // ReviseSession handles POST /api/sessions/{session_id}/revise

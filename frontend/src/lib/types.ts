@@ -108,7 +108,7 @@ export interface WSCommentUpdatedPayload {
 
 export interface WSServerMessage {
   request_id?: string;
-  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state' | 'comment_updated';
+  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state' | 'comment_updated' | 'session_finalised';
   payload: unknown;
 }
 
@@ -141,6 +141,13 @@ export interface WSPatrolSubmittedPayload {
   patrol_id: string;
   user_display_name: string;
   submitted_at: string;
+}
+
+export interface WSSessionFinalisedPayload {
+  session_id: string;
+  user_id: string;
+  user_display_name: string;
+  ends_at: string;
 }
 
 export interface WSPresenceUpdatedPayload {

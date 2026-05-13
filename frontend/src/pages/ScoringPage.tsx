@@ -1092,10 +1092,19 @@ export const ScoringPage = () => {
                   </Button>
                 </>
               ) : (
-                <Box textAlign="center" p={2} sx={{ flex: 1 }}>
+                <Box textAlign="center" p={2} sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                   <Text sx={{ color: 'fg.muted', fontSize: 1 }}>
                     This session is closed.
                   </Text>
+                  <Button
+                    as="a"
+                    href={`/api/sessions/${sessionId}/report-card`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    size="small"
+                  >
+                    🖨️ View Printable Summary
+                  </Button>
                 </Box>
               )}
             </Box>

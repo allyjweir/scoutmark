@@ -240,3 +240,53 @@ export const getSubmittedComments = async (
   patrolId: string,
 ): Promise<{ comments: DraftCommentAPI[] }> =>
   request(`/sessions/${sessionId}/patrols/${patrolId}/submitted-comments`);
+
+// ─── Camp Chief ─────────────────────────────────────────────────────
+
+export interface ChiefPatrol {
+  patrol_id: string;
+  patrol_name: string;
+  scorer_name: string;
+  total_score: number;
+}
+
+export interface ChiefRound {
+  id: string;
+  session_id: string;
+  status: 'pending' | 'scoring' | 'completed';
+  winner_patrol_id: string | null;
+  created_at: string;
+  completed_at?: string;
+  patrols?: ChiefPatrol[];
+  scores?: Record<string, { criterion_id: string; value: number }[]>;
+}
+
+export const getChiefRound = async (
+  sessionId: string,
+): Promise<{ chief_round: ChiefRound | null; message?: string }> =>
+  request(`/sessions/${sessionId}/chief-round`);
+
+export const getChiefPatrolOriginalScores = async (
+  sessionId: string,
+  patrolId: string,
+): Promise<{ scores: { criterion_id: string; value: number; comment: string }[] }> =>
+  request(`/sessions/${sessionId}/chief-round/patrols/${patrolId}/scores`);
+
+export const saveChiefScores = async (
+  sessionId: string,
+  patrolId: string,
+  scores: Record<string, number>,
+): Promise<{ ok: boolean }> =>
+  request(`/sessions/${sessionId}/chief-round/scores`, {
+    method: 'POST',
+    body: JSON.stringify({ patrol_id: patrolId, scores }),
+  });
+
+export const completeChiefRound = async (
+  sessionId: string,
+  winnerPatrolId: string,
+): Promise<{ ok: boolean; winner_patrol_id: string }> =>
+  request(`/sessions/${sessionId}/chief-round/complete`, {
+    method: 'POST',
+    body: JSON.stringify({ winner_patrol_id: winnerPatrolId }),
+  });

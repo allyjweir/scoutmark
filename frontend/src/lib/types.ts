@@ -4,7 +4,7 @@ export interface User {
   id: string;
   username: string;
   display_name: string;
-  is_admin: boolean;
+  role: 'scorer' | 'camp_chief' | 'admin';
 }
 
 export interface Session {

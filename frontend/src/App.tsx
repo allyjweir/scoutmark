@@ -5,6 +5,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
+import { ChiefScoringPage } from './pages/ChiefScoringPage';
 import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
 import type { ReactNode } from 'react';
@@ -68,6 +69,14 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <AdminScorerPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/sessions/:sessionId/chief-round"
+        element={
+          <ProtectedRoute>
+            <ChiefScoringPage />
           </ProtectedRoute>
         }
       />

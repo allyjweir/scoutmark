@@ -77,7 +77,7 @@ echo
 # ─── Users ───────────────────────────────────────────────────────────
 
 echo "Creating users..."
-$ADMIN create-user -id usr-campchief -username campchief -password "$PASSWORD" -display-name "Camp Chief" -admin
+$ADMIN create-user -id usr-campchief -username campchief -password "$PASSWORD" -display-name "Camp Chief" -role camp_chief
 $ADMIN create-user -id usr-morrison  -username morrison  -password "$PASSWORD" -display-name "Morrison"
 $ADMIN create-user -id usr-macdonald -username macdonald -password "$PASSWORD" -display-name "MacDonald"
 $ADMIN create-user -id usr-maclean   -username maclean   -password "$PASSWORD" -display-name "MacLean"

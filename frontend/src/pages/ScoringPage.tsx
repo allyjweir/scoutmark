@@ -5,7 +5,7 @@ import {
   Label, CounterLabel,
 } from '@primer/react';
 import { keyBy, mapValues, every, debounce } from 'lodash';
-import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSServerMessage } from '../lib/types';
+import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSSessionFinalisedPayload, WSServerMessage } from '../lib/types';
 import * as api from '../lib/api';
 import { useDraftSync, useSessionSubscription, usePresence } from '../hooks/useWebSocket';
 import { useAuth } from '../hooks/useAuth';
@@ -47,6 +47,9 @@ export const ScoringPage = () => {
 
   // Track total score per patrol (patrol_id → total)
   const [patrolTotals, setPatrolTotals] = useState<Record<string, number | null>>({});
+
+  // Lock screen state: set when another user finalises the session
+  const [lockedBy, setLockedBy] = useState<{ displayName: string; endsAt: string } | null>(null);
 
   // Track which patrols have had all criteria touched (keyed by patrol_id)
   const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
@@ -220,6 +223,15 @@ export const ScoringPage = () => {
           return next;
         });
       }
+    }
+
+    // Handle session finalised by another user — show lock screen
+    if (msg.type === 'session_finalised') {
+      const payload = msg.payload as WSSessionFinalisedPayload;
+      setLockedBy({
+        displayName: payload.user_display_name,
+        endsAt: payload.ends_at,
+      });
     }
   }, []);
 
@@ -713,13 +725,26 @@ export const ScoringPage = () => {
     });
   }, [patrols, criteria, submittedPatrolIds, isPatrolComplete]);
 
-  const requestFinalise = useCallback(() => {
-    if (incompletePatrols.length > 0) {
-      setShowConfirmFinalise(true);
-    } else {
-      handleFinalise();
+  // Active editors across all patrols (other users currently editing, not just viewing)
+  const activeEditors = useMemo(() => {
+    const editors: { user_name: string; patrol_name: string }[] = [];
+    for (const patrol of patrols) {
+      const patrolPresence = presenceMap[patrol.patrol_id] ?? {};
+      for (const [uid, entry] of Object.entries(patrolPresence)) {
+        if (uid === user?.id) continue; // exclude self
+        if ((Date.now() - entry.at) > 30000) continue; // stale
+        if (entry.mode === 'editing') {
+          editors.push({ user_name: entry.user_name, patrol_name: patrol.name });
+        }
+      }
     }
-  }, [incompletePatrols, handleFinalise]);
+    return editors;
+  }, [patrols, presenceMap, user?.id]);
+
+  const requestFinalise = useCallback(() => {
+    // Always show confirmation dialog — it will show relevant warnings
+    setShowConfirmFinalise(true);
+  }, []);
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
 
@@ -735,6 +760,71 @@ export const ScoringPage = () => {
     return (
       <Box p={4} textAlign="center">
         <Flash variant="danger">Session not found</Flash>
+      </Box>
+    );
+  }
+
+  // ─── Lock screen: another user has finalised the session ───
+  if (lockedBy) {
+    const deadlineDate = new Date(lockedBy.endsAt);
+    const formattedDeadline = deadlineDate.toLocaleString(undefined, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    return (
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        bg="canvas.default"
+        p={4}
+      >
+        <Box
+          bg="canvas.subtle"
+          borderRadius={2}
+          borderWidth={1}
+          borderStyle="solid"
+          borderColor="border.default"
+          p={5}
+          maxWidth="480px"
+          sx={{ width: '100%', textAlign: 'center' }}
+        >
+          <Text sx={{ fontSize: 4, display: 'block', mb: 3 }}>🔒</Text>
+          <Heading sx={{ fontSize: 3, mb: 2 }}>Session Finalised</Heading>
+          <Text as="p" sx={{ fontSize: 1, color: 'fg.muted', mb: 3 }}>
+            <Text sx={{ fontWeight: 'bold' }}>{lockedBy.displayName}</Text> has submitted the final
+            scores for this session. No further edits can be made.
+          </Text>
+
+          <Box
+            borderRadius={2}
+            p={3}
+            mb={3}
+            sx={{ bg: 'neutral.subtle', borderWidth: 1, borderStyle: 'solid', borderColor: 'border.muted' }}
+          >
+            <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 1, fontWeight: 'bold' }}>
+              Scores deadline
+            </Text>
+            <Text sx={{ fontSize: 1 }}>{formattedDeadline}</Text>
+          </Box>
+
+          <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 4 }}>
+            If you believe this was done in error, contact{' '}
+            <Text sx={{ fontWeight: 'bold' }}>{lockedBy.displayName}</Text> or a session
+            administrator. An admin can reopen the session to allow further changes.
+          </Text>
+
+          <Button onClick={() => navigate('/')} size="large" sx={{ width: '100%' }}>
+            Back to Dashboard
+          </Button>
+        </Box>
       </Box>
     );
   }
@@ -1031,27 +1121,67 @@ export const ScoringPage = () => {
                 borderRadius={2}
                 borderWidth={1}
                 borderStyle="solid"
-                borderColor="attention.emphasis"
+                borderColor={activeEditors.length > 0 || incompletePatrols.length > 0 ? 'attention.emphasis' : 'border.default'}
                 p={4}
                 mx={3}
                 maxWidth="400px"
                 sx={{ width: '100%' }}
                 onClick={(e: React.MouseEvent) => e.stopPropagation()}
               >
-                <Heading sx={{ fontSize: 2, mb: 2 }}>⚠️ Incomplete Scores</Heading>
-                <Text as="p" sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>
-                  The following patrols have unset criteria that will be submitted as <strong>zero</strong>:
-                </Text>
-                <Box as="ul" sx={{ pl: 3, mb: 3 }}>
-                  {incompletePatrols.map((p) => (
-                    <Box as="li" key={p.patrol_id} sx={{ fontSize: 1, mb: 1 }}>
-                      <Text sx={{ fontWeight: 'bold' }}>{p.name}</Text>
-                      <Text sx={{ color: 'fg.muted' }}>
-                        {' '}— {(touchedMap[p.patrol_id]?.size ?? 0)}/{criteria.length} criteria set
-                      </Text>
+                <Heading sx={{ fontSize: 2, mb: 2 }}>
+                  {incompletePatrols.length > 0 || activeEditors.length > 0
+                    ? '⚠️ Confirm Submission'
+                    : 'Confirm Submission'}
+                </Heading>
+
+                {activeEditors.length > 0 && (
+                  <Box
+                    borderRadius={2}
+                    p={3}
+                    mb={3}
+                    sx={{ bg: 'attention.subtle', borderWidth: 1, borderStyle: 'solid', borderColor: 'attention.muted' }}
+                  >
+                    <Text as="p" sx={{ fontSize: 1, fontWeight: 'bold', mb: 1 }}>
+                      Other users are still editing:
+                    </Text>
+                    <Box as="ul" sx={{ pl: 3, mb: 0 }}>
+                      {activeEditors.map((e, i) => (
+                        <Box as="li" key={i} sx={{ fontSize: 1 }}>
+                          <Text sx={{ fontWeight: 'bold' }}>{e.user_name}</Text>
+                          <Text sx={{ color: 'fg.muted' }}> — {e.patrol_name}</Text>
+                        </Box>
+                      ))}
                     </Box>
-                  ))}
-                </Box>
+                    <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mt: 2, mb: 0 }}>
+                      Submitting now will lock all editors out. Their unsaved changes may be lost.
+                    </Text>
+                  </Box>
+                )}
+
+                {incompletePatrols.length > 0 && (
+                  <>
+                    <Text as="p" sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>
+                      The following patrols have unset criteria that will be submitted as <strong>zero</strong>:
+                    </Text>
+                    <Box as="ul" sx={{ pl: 3, mb: 3 }}>
+                      {incompletePatrols.map((p) => (
+                        <Box as="li" key={p.patrol_id} sx={{ fontSize: 1, mb: 1 }}>
+                          <Text sx={{ fontWeight: 'bold' }}>{p.name}</Text>
+                          <Text sx={{ color: 'fg.muted' }}>
+                            {' '}— {(touchedMap[p.patrol_id]?.size ?? 0)}/{criteria.length} criteria set
+                          </Text>
+                        </Box>
+                      ))}
+                    </Box>
+                  </>
+                )}
+
+                {incompletePatrols.length === 0 && activeEditors.length === 0 && (
+                  <Text as="p" sx={{ fontSize: 1, mb: 3, color: 'fg.muted' }}>
+                    All patrols have been scored. Ready to submit final scores.
+                  </Text>
+                )}
+
                 <Box display="flex" sx={{ gap: 2 }}>
                   <Button
                     onClick={() => setShowConfirmFinalise(false)}
@@ -1067,7 +1197,7 @@ export const ScoringPage = () => {
                     size="large"
                     disabled={submitting}
                   >
-                    {submitting ? 'Submitting…' : 'Submit Anyway'}
+                    {submitting ? 'Submitting…' : incompletePatrols.length > 0 || activeEditors.length > 0 ? 'Submit Anyway' : 'Submit'}
                   </Button>
                 </Box>
               </Box>

@@ -157,7 +157,7 @@ echo "Creating sessions..."
 
 $ADMIN create-session \
   -id ses-sun -event evt-ba-2026 -template tpl-camp \
-  -name "Sunday" -start now -duration 3h \
+  -name "Sunday" -start now -duration 24h \
   -award-best-patrol
 
 $ADMIN create-session \

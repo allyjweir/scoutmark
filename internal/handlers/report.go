@@ -15,8 +15,8 @@ import (
 
 // ReportHandler handles report generation endpoints.
 type ReportHandler struct {
-	db       *database.DB
-	logoPNG  []byte // optional embedded logo; nil means no logo
+	db      *database.DB
+	logoPNG []byte // optional embedded logo; nil means no logo
 }
 
 // NewReportHandler creates a new ReportHandler.

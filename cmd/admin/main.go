@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -40,6 +41,7 @@ Commands:
   create-session    Create a scoring session
   update-session    Update session settings (awards, previous session)
   list-sessions     List all sessions with status
+  seed-scores       Seed random submission scores for all patrols in a session
 
 Environment:
   DATABASE_URL      PostgreSQL connection string (default: postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable)
@@ -75,6 +77,8 @@ func main() {
 		err = updateSession()
 	case "list-sessions":
 		err = listSessions()
+	case "seed-scores":
+		err = seedScores()
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -868,6 +872,145 @@ func listAvailable(db *sql.DB, query string) string {
 		return "  (none)"
 	}
 	return sb.String()
+}
+
+// ─── Seed Scores ────────────────────────────────────────────────────
+
+func seedScores() error {
+	fs := flag.NewFlagSet("seed-scores", flag.ExitOnError)
+
+	sessionID := fs.String("session", "", "Session ID (required)")
+	userID := fs.String("user", "", "User ID to attribute submissions to (required)")
+	minScore := fs.Int("min", 3, "Minimum random score")
+	maxScore := fs.Int("max", 10, "Maximum random score")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Seed random scores for all patrols in a session
+
+Creates submissions with randomised scores for every patrol assigned to a user.
+Useful for populating test data.
+
+Usage:
+  admin seed-scores -session ses-thu -user usr-morrison -min 3 -max 10
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+
+	if *sessionID == "" || *userID == "" {
+		fs.Usage()
+		return fmt.Errorf("required flags: -session, -user")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Get the session's template
+	var templateID string
+	if err := db.QueryRow("SELECT template_id FROM sessions WHERE id = $1", *sessionID).Scan(&templateID); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("session %q not found", *sessionID)
+		}
+		return fmt.Errorf("looking up session: %w", err)
+	}
+
+	// Get criteria for the template
+	rows, err := db.Query("SELECT id FROM criteria WHERE template_id = $1 ORDER BY sort_order", templateID)
+	if err != nil {
+		return fmt.Errorf("querying criteria: %w", err)
+	}
+	var criterionIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning criterion: %w", err)
+		}
+		criterionIDs = append(criterionIDs, id)
+	}
+	rows.Close()
+	if len(criterionIDs) == 0 {
+		return fmt.Errorf("no criteria found for template %q", templateID)
+	}
+
+	// Get patrols assigned to the user
+	patrolRows, err := db.Query(
+		"SELECT patrol_id FROM user_patrols WHERE user_id = $1 ORDER BY sort_order", *userID)
+	if err != nil {
+		return fmt.Errorf("querying user patrols: %w", err)
+	}
+	var patrolIDs []string
+	for patrolRows.Next() {
+		var id string
+		if err := patrolRows.Scan(&id); err != nil {
+			patrolRows.Close()
+			return fmt.Errorf("scanning patrol: %w", err)
+		}
+		patrolIDs = append(patrolIDs, id)
+	}
+	patrolRows.Close()
+	if len(patrolIDs) == 0 {
+		return fmt.Errorf("user %q has no assigned patrols", *userID)
+	}
+
+	// Create submissions with random scores for each patrol
+	scoreRange := *maxScore - *minScore + 1
+	for _, patrolID := range patrolIDs {
+		submissionID := uuid.New().String()
+
+		// Upsert submission
+		_, err := db.Exec(
+			`INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked)
+			 VALUES ($1, $2, $3, $4, TRUE)
+			 ON CONFLICT (session_id, patrol_id) DO UPDATE SET locked = TRUE, submitted_at = NOW(), submitted_by = $2`,
+			submissionID, *userID, *sessionID, patrolID,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting submission for patrol %s: %w", patrolID, err)
+		}
+
+		// Get actual submission ID (in case of conflict)
+		if err := db.QueryRow(
+			"SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2",
+			*sessionID, patrolID,
+		).Scan(&submissionID); err != nil {
+			return fmt.Errorf("getting submission ID: %w", err)
+		}
+
+		// Clear old scores if re-seeding
+		_, err = db.Exec("DELETE FROM submission_scores WHERE submission_id = $1", submissionID)
+		if err != nil {
+			return fmt.Errorf("clearing old scores: %w", err)
+		}
+
+		// Insert random scores
+		for _, criterionID := range criterionIDs {
+			value := *minScore + rand.Intn(scoreRange)
+			scoreID := uuid.New().String()
+			_, err := db.Exec(
+				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
+				 VALUES ($1, $2, $3, $4, '', $5)`,
+				scoreID, submissionID, criterionID, value, *userID,
+			)
+			if err != nil {
+				return fmt.Errorf("inserting score for criterion %s: %w", criterionID, err)
+			}
+		}
+
+		fmt.Printf("  ✓ Seeded scores for patrol %s\n", patrolID)
+	}
+
+	fmt.Printf("\nSeeded %d patrols × %d criteria with random scores [%d-%d]\n",
+		len(patrolIDs), len(criterionIDs), *minScore, *maxScore)
+	return nil
 }
 
 // ─── Input Helpers ──────────────────────────────────────────────────

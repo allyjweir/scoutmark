@@ -109,13 +109,10 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 
 	pdf.SetXY(titleX, headerY)
 	pdf.SetFont("Arial", "B", 16)
-	pdf.CellFormat(0, 8, session.Name+" — Score Report", "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 8, session.Name+" - Score Report", "", 1, "L", false, 0, "")
 
 	pdf.SetX(titleX)
 	pdf.SetFont("Arial", "", 10)
-	pdf.CellFormat(0, 5, fmt.Sprintf("Scorer: %s", user.DisplayName), "", 1, "L", false, 0, "")
-
-	pdf.SetX(titleX)
 	pdf.CellFormat(0, 5, fmt.Sprintf("Date: %s", session.StartsAt.Format("Monday 2 January 2006")), "", 1, "L", false, 0, "")
 
 	pdf.SetX(titleX)

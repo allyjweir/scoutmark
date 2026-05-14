@@ -137,12 +137,26 @@ export const DashboardPage = () => {
             Closed
           </Heading>
           {closedSessions.slice(0, 5).map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              onClick={() => handleSessionClick(session)}
-              recentlyFinalised={session.user_finalised}
-            />
+            <Box key={session.id}>
+              <SessionCard
+                session={session}
+                onClick={() => handleSessionClick(session)}
+                recentlyFinalised={session.user_finalised}
+              />
+              <Box display="flex" justifyContent="flex-end" mt={-1} mb={2} px={1}>
+                <Button
+                  as="a"
+                  href={`/api/sessions/${session.id}/report-card`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="invisible"
+                  size="small"
+                  sx={{ fontSize: 0, color: 'fg.muted' }}
+                >
+                  🖨️ Printable Summary
+                </Button>
+              </Box>
+            </Box>
           ))}
         </Box>
       )}

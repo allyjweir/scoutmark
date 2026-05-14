@@ -65,6 +65,7 @@ func run(ctx context.Context) error {
 	// ─── Handlers ───────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(db)
 	sessionHandler := handlers.NewSessionHandler(db, hub)
+	reportHandler := handlers.NewReportHandler(db, handlers.LoadLogoPNG())
 	authMiddleware := auth.Middleware(db)
 
 	// ─── Routes ─────────────────────────────────────────────────
@@ -106,6 +107,9 @@ func run(ctx context.Context) error {
 	mux.Handle("PUT /api/sessions/{session_id}/patrols/{patrol_id}/comments/{criterion_id}", authMiddleware(http.HandlerFunc(sessionHandler.SaveDraftComment)))
 	mux.Handle("DELETE /api/sessions/{session_id}/patrols/{patrol_id}/comments/{criterion_id}", authMiddleware(http.HandlerFunc(sessionHandler.DeleteDraftComment)))
 	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/submitted-comments", authMiddleware(http.HandlerFunc(sessionHandler.GetSubmittedComments)))
+
+	// Report routes (authenticated)
+	mux.Handle("GET /api/sessions/{session_id}/report-card", authMiddleware(http.HandlerFunc(reportHandler.GetReportCard)))
 
 	// Admin routes
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))

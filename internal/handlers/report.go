@@ -127,10 +127,11 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	usableWidth := pageWidth - marginL - marginR
 
 	// Columns: Patrol name | criteria... | Total
-	numCols := len(criteria) + 2 // patrol + criteria + total
+	numCols := len(criteria) + 3 // rank + patrol + criteria + total
+	rankColW := 10.0
 	patrolColW := 40.0
-	totalColW := 24.0
-	remainingW := usableWidth - patrolColW - totalColW
+	totalColW := 18.0
+	remainingW := usableWidth - rankColW - patrolColW - totalColW
 	criteriaColW := remainingW / float64(len(criteria))
 	if criteriaColW < 12 {
 		criteriaColW = 12
@@ -140,6 +141,7 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	pdf.SetFont("Arial", "B", 8)
 	pdf.SetFillColor(230, 230, 230)
 
+	pdf.CellFormat(rankColW, 7, "#", "1", 0, "C", true, 0, "")
 	pdf.CellFormat(patrolColW, 7, "Patrol", "1", 0, "C", true, 0, "")
 	for _, c := range criteria {
 		title := truncate(c.Title, int(criteriaColW/2))
@@ -148,7 +150,7 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	pdf.CellFormat(totalColW, 7, "Total", "1", 1, "C", true, 0, "")
 	_ = numCols
 
-	// Determine top 3 patrols by total score
+	// Determine ranking by total score
 	type rankedPatrol struct {
 		id    string
 		total int
@@ -165,30 +167,30 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// Map patrol ID → rank label (only top 3)
-	rankLabels := map[string]string{}
-	medals := []string{"#1", "#2", "#3"}
+	// Map patrol ID → position (top 5 only)
+	rankPosition := map[string]int{}
 	for i, rp := range ranked {
-		if i >= 3 {
+		if i >= 5 {
 			break
 		}
-		rankLabels[rp.id] = medals[i]
+		rankPosition[rp.id] = i + 1
 	}
 
 	// Data rows
 	pdf.SetFont("Arial", "", 9)
 	for _, pid := range patrolOrder {
 		pe := patrolMap[pid]
+		posStr := ""
+		if pos, ok := rankPosition[pid]; ok {
+			posStr = fmt.Sprintf("%d", pos)
+		}
+		pdf.CellFormat(rankColW, 6, posStr, "1", 0, "C", false, 0, "")
 		pdf.CellFormat(patrolColW, 6, pe.name, "1", 0, "L", false, 0, "")
 		for _, c := range criteria {
 			val := pe.scores[c.ID]
 			pdf.CellFormat(criteriaColW, 6, fmt.Sprintf("%d", val), "1", 0, "C", false, 0, "")
 		}
-		totalStr := fmt.Sprintf("%d", pe.total)
-		if label, ok := rankLabels[pid]; ok {
-			totalStr = fmt.Sprintf("%d  %s", pe.total, label)
-		}
-		pdf.CellFormat(totalColW, 6, totalStr, "1", 1, "C", false, 0, "")
+		pdf.CellFormat(totalColW, 6, fmt.Sprintf("%d", pe.total), "1", 1, "C", false, 0, "")
 	}
 
 	// ─── Footer with generation timestamp ───────────────────────

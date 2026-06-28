@@ -21,6 +21,9 @@ echo "  Scoutmark — Seeding development database"
 echo "═══════════════════════════════════════════════"
 echo
 
+echo "Running migrations"
+go run ./cmd/migrate
+
 # ─── Event ───────────────────────────────────────────────────────────
 
 echo "Creating event..."
@@ -181,6 +184,20 @@ $ADMIN create-session \
   -award-best-patrol -award-most-improved -previous-session ses-wed
 
 echo
+
+# ─── Seed Scores for Thursday (closed session) ──────────────────────
+
+echo "Seeding scores for Thursday session (for report card testing)..."
+
+$ADMIN seed-scores -session ses-thu -user usr-morrison
+$ADMIN seed-scores -session ses-thu -user usr-macdonald
+$ADMIN seed-scores -session ses-thu -user usr-maclean
+$ADMIN seed-scores -session ses-thu -user usr-murray
+$ADMIN seed-scores -session ses-thu -user usr-robertson
+$ADMIN seed-scores -session ses-thu -user usr-stewart
+
+echo
+
 echo "═══════════════════════════════════════════════"
 echo "  ✓ Development database seeded successfully!"
 echo ""

@@ -1070,32 +1070,46 @@ export const ScoringPage = () => {
                   )}
                 </Box>
               ) : session.status === 'ACTIVE' ? (
-                <>
-                  <Button
-                    onClick={() => {
-                      setView('scoring');
-                      setCurrentPatrolIndex(patrols.length - 1);
-                    }}
-                    sx={{ flex: 1 }}
-                    size="large"
-                  >
-                    ← Prev
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={requestFinalise}
-                    sx={{ flex: 2 }}
-                    size="large"
-                    disabled={submitting}
-                  >
-                    {submitting ? 'Submitting…' : 'Finalise Scores'}
-                  </Button>
-                </>
+                <Box display="flex" flexDirection="column" sx={{ flex: 1, gap: 2 }}>
+                  <Box display="flex" sx={{ gap: 2 }}>
+                    <Button
+                      onClick={() => {
+                        setView('scoring');
+                        setCurrentPatrolIndex(patrols.length - 1);
+                      }}
+                      sx={{ flex: 1 }}
+                      size="large"
+                    >
+                      ← Prev
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={requestFinalise}
+                      sx={{ flex: 2 }}
+                      size="large"
+                      disabled={submitting}
+                    >
+                      {submitting ? 'Submitting…' : 'Finalise Scores'}
+                    </Button>
+                  </Box>
+                  <Text sx={{ color: 'fg.subtle', fontSize: 0, textAlign: 'center' }}>
+                    🖨️ Printable summary available when session ends
+                  </Text>
+                </Box>
               ) : (
-                <Box textAlign="center" p={2} sx={{ flex: 1 }}>
+                <Box textAlign="center" p={2} sx={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                   <Text sx={{ color: 'fg.muted', fontSize: 1 }}>
                     This session is closed.
                   </Text>
+                  <Button
+                    as="a"
+                    href={`/api/sessions/${sessionId}/report-card`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    size="small"
+                  >
+                    🖨️ View Printable Summary
+                  </Button>
                 </Box>
               )}
             </Box>

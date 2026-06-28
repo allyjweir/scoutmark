@@ -1039,3 +1039,43 @@ func (d *DB) GetAllSessionComments(ctx context.Context, sessionID string) ([]Ses
 	}
 	return comments, rows.Err()
 }
+
+// ─── Report Card Queries ────────────────────────────────────────────
+
+// ReportCardRow represents a single score for the report card table.
+type ReportCardRow struct {
+	PatrolID    string
+	PatrolName  string
+	SortOrder   int
+	CriterionID string
+	Value       int
+}
+
+// GetReportCardData returns all submission scores for a session, ordered by
+// the requesting user's patrol sort_order. Each row is one (patrol, criterion) score.
+func (d *DB) GetReportCardData(ctx context.Context, userID, sessionID string) ([]ReportCardRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT p.id, p.name, up.sort_order, ss.criterion_id, ss.value
+		 FROM user_patrols up
+		 JOIN patrols p ON p.id = up.patrol_id
+		 JOIN submissions s ON s.session_id = $2 AND s.patrol_id = p.id
+		 JOIN submission_scores ss ON ss.submission_id = s.id
+		 WHERE up.user_id = $1
+		 ORDER BY up.sort_order ASC, ss.criterion_id ASC`,
+		userID, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying report card data: %w", err)
+	}
+	defer rows.Close()
+
+	var results []ReportCardRow
+	for rows.Next() {
+		var r ReportCardRow
+		if err := rows.Scan(&r.PatrolID, &r.PatrolName, &r.SortOrder, &r.CriterionID, &r.Value); err != nil {
+			return nil, fmt.Errorf("scanning report card row: %w", err)
+		}
+		results = append(results, r)
+	}
+	return results, rows.Err()
+}

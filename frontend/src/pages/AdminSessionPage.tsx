@@ -190,8 +190,8 @@ export const AdminSessionPage = () => {
         bg="canvas.subtle"
       >
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <Button variant="invisible" onClick={() => navigate('/')} size="small">
-            ← Dashboard
+          <Button variant="invisible" onClick={() => navigate('/admin')} size="small">
+            ← Admin workspace
           </Button>
           <Label variant={
             session.status === 'ACTIVE' ? 'success'
@@ -326,10 +326,15 @@ export const AdminSessionPage = () => {
                   alignItems="center"
                 >
                   <Box>
-                    <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
-                      {user.display_name}
-                    </Text>
-                  </Box>
+                      <Button
+                        variant="invisible"
+                        onClick={() => navigate(`/admin/sessions/${sessionId}/scorer/${user.user_id}`)}
+                        size="small"
+                        sx={{ p: 0, fontWeight: 'bold', fontSize: 2 }}
+                      >
+                        {user.display_name}
+                      </Button>
+                    </Box>
                   <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
                     <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
                       {userSubmitted}/{userTotal}

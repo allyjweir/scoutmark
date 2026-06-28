@@ -60,10 +60,10 @@ export const AdminScorerPage = () => {
         <Box mb={2}>
           <Button
             variant="invisible"
-            onClick={() => navigate(`/admin/sessions/${sessionId}`)}
+            onClick={() => navigate('/admin')}
             size="small"
           >
-            ← Back to {sessionName}
+            ← Admin workspace
           </Button>
         </Box>
         <Heading sx={{ fontSize: 3, mb: 1 }}>{displayName}</Heading>

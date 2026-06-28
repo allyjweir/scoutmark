@@ -11,12 +11,13 @@ import (
 
 // UserRow represents a user record from the database.
 type UserRow struct {
-	ID           string
-	Username     string
-	PasswordHash string
-	DisplayName  string
-	IsAdmin      bool
-	CreatedAt    time.Time
+	ID                      string
+	Username                string
+	PasswordHash            string
+	DisplayName             string
+	IsAdmin                 bool
+	PasswordChangeRequired  bool
+	CreatedAt               time.Time
 }
 
 // SessionRow represents a user session (auth token) record.
@@ -30,12 +31,12 @@ type SessionRow struct {
 // GetUserByUsername fetches a user by their username.
 func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE username = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, password_change_required, created_at FROM users WHERE username = $1",
 		username,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -48,12 +49,12 @@ func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, 
 // GetUserByID fetches a user by their ID.
 func (d *DB) GetUserByID(ctx context.Context, id string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE id = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, password_change_required, created_at FROM users WHERE id = $1",
 		id,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -133,4 +134,16 @@ func (d *DB) UserOwnsPatrol(ctx context.Context, userID, patrolID string) (bool,
 		return false, fmt.Errorf("checking patrol ownership: %w", err)
 	}
 	return count > 0, nil
+}
+
+// UpdateUserPassword updates a user's password hash and clears the password_change_required flag.
+func (d *DB) UpdateUserPassword(ctx context.Context, userID, passwordHash string) error {
+	_, err := d.ExecContext(ctx,
+		"UPDATE users SET password_hash = $1, password_change_required = FALSE WHERE id = $2",
+		passwordHash, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("updating password: %w", err)
+	}
+	return nil
 }

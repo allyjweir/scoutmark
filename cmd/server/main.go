@@ -89,6 +89,7 @@ func run(ctx context.Context) error {
 	// Auth routes (authenticated)
 	mux.Handle("POST /api/auth/logout", authMiddleware(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/auth/me", authMiddleware(http.HandlerFunc(authHandler.GetCurrentUser)))
+	mux.Handle("POST /api/auth/change-password", authMiddleware(http.HandlerFunc(authHandler.ChangePassword)))
 
 	// Session routes (authenticated)
 	mux.Handle("GET /api/sessions", authMiddleware(http.HandlerFunc(sessionHandler.ListSessions)))

@@ -9,7 +9,9 @@ package main
 
 import (
 	"bufio"
+	crand "crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -883,6 +885,11 @@ func listAvailable(db *sql.DB, query string) string {
 
 func seedScores() error {
 	fs := flag.NewFlagSet("seed-scores", flag.ExitOnError)
+	seed := time.Now().UnixNano()
+	if err := binary.Read(crand.Reader, binary.LittleEndian, &seed); err != nil {
+		seed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(seed))
 
 	sessionID := fs.String("session", "", "Session ID (required)")
 	userID := fs.String("user", "", "User ID to attribute submissions to (required)")
@@ -998,7 +1005,7 @@ Flags:
 
 		// Insert random scores
 		for _, criterionID := range criterionIDs {
-			value := *minScore + rand.Intn(scoreRange)
+			value := *minScore + rng.Intn(scoreRange)
 			scoreID := uuid.New().String()
 			_, err := db.Exec(
 				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)

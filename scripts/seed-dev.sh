@@ -21,6 +21,9 @@ echo "  Scoutmark — Seeding development database"
 echo "═══════════════════════════════════════════════"
 echo
 
+echo "Running migrations"
+go run ./cmd/migrate
+
 # ─── Event ───────────────────────────────────────────────────────────
 
 echo "Creating event..."

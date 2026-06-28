@@ -32,8 +32,8 @@ A mobile-first web application for scoring scout patrols across configurable cri
 ## Quick Start
 
 ```bash
-# 1. Start MySQL (or use docker-compose)
-docker-compose up -d mysql
+# 1. Start dependencies
+docker-compose up -d
 
 # 2. Run migrations
 go run ./cmd/migrate
@@ -45,7 +45,7 @@ buf generate
 HONEYCOMB_API_KEY=your-key go run ./cmd/server
 
 # 5. Start the frontend dev server
-cd frontend && npm install && npm run dev
+cd frontend && npm ci && npm run dev
 ```
 
 ## Environment Variables

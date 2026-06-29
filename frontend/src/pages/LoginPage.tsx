@@ -26,6 +26,12 @@ export const LoginPage = () => {
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && username && password && !loading) {
+      handleSubmit(e);
+    }
+  };
+
   return (
     <Box
       display="flex"
@@ -66,6 +72,7 @@ export const LoginPage = () => {
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={handleKeyDown}
             block
             size="large"
             autoFocus
@@ -80,6 +87,7 @@ export const LoginPage = () => {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={handleKeyDown}
             block
             size="large"
             autoComplete="current-password"

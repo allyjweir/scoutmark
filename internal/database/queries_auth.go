@@ -125,7 +125,9 @@ func (d *DB) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 // UserOwnsPatrol checks whether a user is assigned to the given patrol.
 func (d *DB) UserOwnsPatrol(ctx context.Context, userID, patrolID string) (bool, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM user_patrols WHERE user_id = $1 AND patrol_id = $2",
+		`SELECT COUNT(*) FROM user_subcamps us
+		 JOIN patrols p ON p.subcamp_id = us.subcamp_id
+		 WHERE us.user_id = $1 AND p.id = $2`,
 		userID, patrolID,
 	)
 	var count int

@@ -625,6 +625,25 @@ export const ScoringPage = () => {
     }
   }, [sessionId]);
 
+  const canOverride = user?.role === 'camp_chief' || user?.role === 'admin';
+  const [overriding, setOverriding] = useState(false);
+  const handleToggleOpen = useCallback(async () => {
+    if (!sessionId || !session) return;
+    const closing = session.status === 'ACTIVE' || session.status === 'REOPENED';
+    setOverriding(true);
+    setError('');
+    try {
+      const res = closing
+        ? await api.closeSession(sessionId)
+        : await api.reopenSession(sessionId);
+      setSession((s) => (s ? { ...s, status: res.status as Session['status'] } : s));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update session');
+    } finally {
+      setOverriding(false);
+    }
+  }, [sessionId, session]);
+
   // ─── Award logic ───────────────────────────────────────────────
 
   const hasAwards = session?.award_best_patrol || session?.award_most_improved;
@@ -849,6 +868,21 @@ export const ScoringPage = () => {
         </Box>
         <Heading sx={{ fontSize: 2, mb: 1 }}>{session.name}</Heading>
 
+        {canOverride && session.status !== 'UPCOMING' && (
+          <Box display="flex" justifyContent="flex-end" mb={2}>
+            <Button
+              size="small"
+              variant={session.status === 'ACTIVE' || session.status === 'REOPENED' ? 'danger' : 'primary'}
+              disabled={overriding}
+              onClick={handleToggleOpen}
+            >
+              {session.status === 'ACTIVE' || session.status === 'REOPENED'
+                ? (overriding ? 'Closing…' : 'Close scoring')
+                : (overriding ? 'Reopening…' : 'Reopen scoring')}
+            </Button>
+          </Box>
+        )}
+
         {/* Progress bar — tracks patrols that are scored or submitted */}
         {(() => {
           const readyCount = patrols.filter(
@@ -1058,7 +1092,7 @@ export const ScoringPage = () => {
                       🎉 All patrols scored! Great work.
                     </Text>
                   </Box>
-                  {session.status === 'ACTIVE' && (
+                  {(session.status === 'ACTIVE' || session.status === 'REOPENED') && (
                     <Button
                       onClick={handleRevise}
                       disabled={revising}
@@ -1069,7 +1103,7 @@ export const ScoringPage = () => {
                     </Button>
                   )}
                 </Box>
-              ) : session.status === 'ACTIVE' ? (
+              ) : session.status === 'ACTIVE' || session.status === 'REOPENED' ? (
                 <Box display="flex" flexDirection="column" sx={{ flex: 1, gap: 2 }}>
                   <Box display="flex" sx={{ gap: 2 }}>
                     <Button
@@ -1374,7 +1408,7 @@ export const ScoringPage = () => {
                       onCommentDelete={() => handleCommentDelete(criterion.id)}
                       onCommentFocus={() => handleCommentFocus(criterion.id)}
                       onCommentBlur={handleCommentBlur}
-                      disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
+                      disabled={isCurrentSubmitted || (session.status !== 'ACTIVE' && session.status !== 'REOPENED')}
                     />
                   );
                 })}

@@ -11,7 +11,9 @@ interface SessionCardProps {
 const STATUS_LABELS: Record<string, { variant: 'default' | 'primary' | 'secondary' | 'accent' | 'success' | 'attention' | 'severe' | 'danger' | 'done' | 'sponsors'; text: string }> = {
   ACTIVE: { variant: 'success', text: 'Active' },
   UPCOMING: { variant: 'accent', text: 'Upcoming' },
-  CLOSED: { variant: 'default', text: 'Closed' },
+  REOPENED: { variant: 'success', text: 'Reopened' },
+  ENDED: { variant: 'default', text: 'Ended' },
+  CLOSED: { variant: 'attention', text: 'Closed' },
 };
 
 const formatTime = (iso: string): string => {

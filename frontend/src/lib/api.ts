@@ -112,6 +112,18 @@ export const getSubmissionScores = async (
 export const unlockSubmission = async (submissionId: string): Promise<Submission> =>
   request(`/submissions/${submissionId}/unlock`, { method: 'POST' });
 
+// ─── Session open/close override ────────────────────────────────────
+
+export const closeSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean; status: string }> =>
+  request(`/sessions/${sessionId}/close`, { method: 'POST' });
+
+export const reopenSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean; status: string }> =>
+  request(`/sessions/${sessionId}/reopen`, { method: 'POST' });
+
 // ─── Awards ─────────────────────────────────────────────────────────
 
 export const saveAward = async (
@@ -246,7 +258,7 @@ export const getSubmittedComments = async (
 export interface ChiefPatrol {
   patrol_id: string;
   patrol_name: string;
-  scorer_name: string;
+  subcamp_name: string;
   total_score: number;
 }
 

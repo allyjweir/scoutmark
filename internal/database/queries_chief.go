@@ -26,8 +26,8 @@ type ChiefRoundPatrolRow struct {
 	ChiefRoundID string
 	PatrolID     string
 	PatrolName   string
-	ScorerUserID string
-	ScorerName   string
+	SubcampID    string
+	SubcampName  string
 	TotalScore   int
 }
 
@@ -63,7 +63,7 @@ func (d *DB) GetChiefRound(ctx context.Context, sessionID string) (*ChiefRoundRo
 }
 
 // CreateChiefRound creates a chief round for a session by finding the top-scoring
-// patrol per scorer (user). Returns the created chief round.
+// patrol per subcamp. Returns the created chief round.
 func (d *DB) CreateChiefRound(ctx context.Context, sessionID string) (*ChiefRoundRow, error) {
 	roundID := uuid.New().String()
 
@@ -75,22 +75,24 @@ func (d *DB) CreateChiefRound(ctx context.Context, sessionID string) (*ChiefRoun
 		return nil, fmt.Errorf("inserting chief round: %w", err)
 	}
 
-	// Find the top-scoring patrol per scorer for this session.
-	// Each scorer's highest-total-score patrol enters the chief round.
+	// Find the top-scoring patrol per subcamp for this session. Patrol totals
+	// aggregate across all scorers; the highest-total patrol in each subcamp
+	// enters the chief round.
 	rows, err := d.QueryContext(ctx,
 		`WITH patrol_totals AS (
-			SELECT s.user_id, s.patrol_id, SUM(ss.value) AS total
+			SELECT p.subcamp_id, s.patrol_id, SUM(ss.value) AS total
 			FROM submissions s
 			JOIN submission_scores ss ON ss.submission_id = s.id
+			JOIN patrols p ON p.id = s.patrol_id
 			WHERE s.session_id = $1
-			GROUP BY s.user_id, s.patrol_id
+			GROUP BY p.subcamp_id, s.patrol_id
 		),
 		ranked AS (
-			SELECT user_id, patrol_id, total,
-			       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total DESC, patrol_id ASC) AS rn
+			SELECT subcamp_id, patrol_id, total,
+			       ROW_NUMBER() OVER (PARTITION BY subcamp_id ORDER BY total DESC, patrol_id ASC) AS rn
 			FROM patrol_totals
 		)
-		SELECT user_id, patrol_id, total
+		SELECT subcamp_id, patrol_id, total
 		FROM ranked
 		WHERE rn = 1`,
 		sessionID,
@@ -101,16 +103,16 @@ func (d *DB) CreateChiefRound(ctx context.Context, sessionID string) (*ChiefRoun
 	defer rows.Close()
 
 	for rows.Next() {
-		var userID, patrolID string
+		var subcampID, patrolID string
 		var total int
-		if err := rows.Scan(&userID, &patrolID, &total); err != nil {
+		if err := rows.Scan(&subcampID, &patrolID, &total); err != nil {
 			return nil, fmt.Errorf("scanning top patrol: %w", err)
 		}
 
 		_, err := d.ExecContext(ctx,
-			`INSERT INTO chief_round_patrols (id, chief_round_id, patrol_id, scorer_user_id, total_score)
+			`INSERT INTO chief_round_patrols (id, chief_round_id, patrol_id, subcamp_id, total_score)
 			 VALUES ($1, $2, $3, $4, $5)`,
-			uuid.New().String(), roundID, patrolID, userID, total,
+			uuid.New().String(), roundID, patrolID, subcampID, total,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("inserting chief round patrol: %w", err)
@@ -131,11 +133,12 @@ func (d *DB) CreateChiefRound(ctx context.Context, sessionID string) (*ChiefRoun
 // GetChiefRoundPatrols returns the patrols in a chief round with names.
 func (d *DB) GetChiefRoundPatrols(ctx context.Context, chiefRoundID string) ([]ChiefRoundPatrolRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT crp.id, crp.chief_round_id, crp.patrol_id, p.name, crp.scorer_user_id, u.display_name, crp.total_score
+		`SELECT crp.id, crp.chief_round_id, crp.patrol_id, p.name, crp.subcamp_id, sc.name, crp.total_score
 		 FROM chief_round_patrols crp
 		 JOIN patrols p ON p.id = crp.patrol_id
-		 JOIN users u ON u.id = crp.scorer_user_id
-		 ORDER BY u.display_name ASC`,
+		 JOIN subcamps sc ON sc.id = crp.subcamp_id
+		 WHERE crp.chief_round_id = $1
+		 ORDER BY sc.name ASC`,
 		chiefRoundID,
 	)
 	if err != nil {
@@ -146,7 +149,7 @@ func (d *DB) GetChiefRoundPatrols(ctx context.Context, chiefRoundID string) ([]C
 	var patrols []ChiefRoundPatrolRow
 	for rows.Next() {
 		var p ChiefRoundPatrolRow
-		if err := rows.Scan(&p.ID, &p.ChiefRoundID, &p.PatrolID, &p.PatrolName, &p.ScorerUserID, &p.ScorerName, &p.TotalScore); err != nil {
+		if err := rows.Scan(&p.ID, &p.ChiefRoundID, &p.PatrolID, &p.PatrolName, &p.SubcampID, &p.SubcampName, &p.TotalScore); err != nil {
 			return nil, fmt.Errorf("scanning chief round patrol: %w", err)
 		}
 		patrols = append(patrols, p)
@@ -224,15 +227,13 @@ func (d *DB) CompleteChiefRound(ctx context.Context, chiefRoundID, winnerPatrolI
 func (d *DB) IsSessionFullySubmitted(ctx context.Context, sessionID string) (bool, error) {
 	var total, submitted int
 	err := d.QueryRowContext(ctx,
-		`SELECT COUNT(*) AS total,
-		        COUNT(sub.id) AS submitted
-		 FROM user_patrols up
-		 JOIN users u ON u.id = up.user_id
-		 CROSS JOIN (SELECT $1::varchar AS sid) params
+		`SELECT COUNT(DISTINCT p.id) AS total,
+		        COUNT(DISTINCT sub.patrol_id) AS submitted
+		 FROM user_subcamps us
+		 JOIN users u ON u.id = us.user_id
+		 JOIN patrols p ON p.subcamp_id = us.subcamp_id
 		 LEFT JOIN submissions sub
-		   ON sub.session_id = params.sid
-		  AND sub.patrol_id = up.patrol_id
-		  AND sub.user_id = up.user_id
+		   ON sub.session_id = $1 AND sub.patrol_id = p.id
 		 WHERE u.role = 'scorer'`,
 		sessionID,
 	).Scan(&total, &submitted)

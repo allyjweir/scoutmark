@@ -38,8 +38,9 @@ Commands:
   create-event      Create an event
   create-template   Create a criteria template
   add-criterion     Add a criterion to a template
-  create-patrol     Create a patrol
-  assign-patrol     Assign a patrol to a user
+  create-subcamp    Create a subcamp
+  create-patrol     Create a patrol (within a subcamp)
+  assign-subcamp    Assign a subcamp to a user
   create-session    Create a scoring session
   update-session    Update session settings (awards, previous session)
   list-sessions     List all sessions with status
@@ -69,10 +70,12 @@ func main() {
 		err = createTemplate()
 	case "add-criterion":
 		err = addCriterion()
+	case "create-subcamp":
+		err = createSubcamp()
 	case "create-patrol":
 		err = createPatrol()
-	case "assign-patrol":
-		err = assignPatrol()
+	case "assign-subcamp":
+		err = assignSubcamp()
 	case "create-session":
 		err = createSession()
 	case "update-session":
@@ -753,17 +756,18 @@ Flags:
 	return nil
 }
 
-func createPatrol() error {
-	fs := flag.NewFlagSet("create-patrol", flag.ExitOnError)
+func createSubcamp() error {
+	fs := flag.NewFlagSet("create-subcamp", flag.ExitOnError)
 
-	id := fs.String("id", "", "Patrol ID (default: auto-generated UUID)")
-	name := fs.String("name", "", "Patrol name (required)")
+	id := fs.String("id", "", "Subcamp ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Subcamp name (required)")
+	eventID := fs.String("event", "", "Event ID (required)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Create a patrol
+		fmt.Fprintf(os.Stderr, `Create a subcamp
 
 Usage:
-  admin create-patrol -name "France" [-id pat-mor-1]
+  admin create-subcamp -event evt-min -name "Morrison" [-id sub-mor]
 
 Flags:
 `)
@@ -773,9 +777,61 @@ Flags:
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if *name == "" {
+	if *name == "" || *eventID == "" {
 		fs.Usage()
-		return fmt.Errorf("required flag: -name")
+		return fmt.Errorf("required flags: -name, -event")
+	}
+
+	subcampID := *id
+	if subcampID == "" {
+		subcampID = uuid.New().String()
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec(
+		"INSERT INTO subcamps (id, event_id, name) VALUES ($1, $2, $3)",
+		subcampID, *eventID, *name,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting subcamp: %w", err)
+	}
+
+	fmt.Println("✓ Subcamp created")
+	fmt.Printf("  ID:    %s\n", subcampID)
+	fmt.Printf("  Name:  %s\n", *name)
+	fmt.Printf("  Event: %s\n", *eventID)
+	return nil
+}
+
+func createPatrol() error {
+	fs := flag.NewFlagSet("create-patrol", flag.ExitOnError)
+
+	id := fs.String("id", "", "Patrol ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Patrol name (required)")
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Create a patrol
+
+Usage:
+  admin create-patrol -subcamp sub-mor -name "France" [-id pat-mor-1]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *name == "" || *subcampID == "" {
+		fs.Usage()
+		return fmt.Errorf("required flags: -name, -subcamp")
 	}
 
 	patrolID := *id
@@ -790,31 +846,32 @@ Flags:
 	defer db.Close()
 
 	_, err = db.Exec(
-		"INSERT INTO patrols (id, name) VALUES ($1, $2)",
-		patrolID, *name,
+		"INSERT INTO patrols (id, name, subcamp_id) VALUES ($1, $2, $3)",
+		patrolID, *name, *subcampID,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting patrol: %w", err)
 	}
 
 	fmt.Println("✓ Patrol created")
-	fmt.Printf("  ID:   %s\n", patrolID)
-	fmt.Printf("  Name: %s\n", *name)
+	fmt.Printf("  ID:      %s\n", patrolID)
+	fmt.Printf("  Name:    %s\n", *name)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
 	return nil
 }
 
-func assignPatrol() error {
-	fs := flag.NewFlagSet("assign-patrol", flag.ExitOnError)
+func assignSubcamp() error {
+	fs := flag.NewFlagSet("assign-subcamp", flag.ExitOnError)
 
 	userID := fs.String("user", "", "User ID (required)")
-	patrolID := fs.String("patrol", "", "Patrol ID (required)")
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
 	sortOrder := fs.Int("order", 0, "Sort order (default: auto-increment)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Assign a patrol to a user
+		fmt.Fprintf(os.Stderr, `Assign a subcamp to a user
 
 Usage:
-  admin assign-patrol -user usr-morrison -patrol pat-mor-1 [-order 1]
+  admin assign-subcamp -user usr-morrison -subcamp sub-mor [-order 1]
 
 Flags:
 `)
@@ -824,9 +881,9 @@ Flags:
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if *userID == "" || *patrolID == "" {
+	if *userID == "" || *subcampID == "" {
 		fs.Usage()
-		return fmt.Errorf("required flags: -user, -patrol")
+		return fmt.Errorf("required flags: -user, -subcamp")
 	}
 
 	db, err := connectDB()
@@ -838,7 +895,7 @@ Flags:
 	// Auto-increment sort order if not specified
 	if *sortOrder == 0 {
 		var maxOrder int
-		err := db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM user_patrols WHERE user_id = $1", *userID).Scan(&maxOrder)
+		err := db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM user_subcamps WHERE user_id = $1", *userID).Scan(&maxOrder)
 		if err != nil {
 			return fmt.Errorf("querying max sort order: %w", err)
 		}
@@ -846,17 +903,17 @@ Flags:
 	}
 
 	_, err = db.Exec(
-		"INSERT INTO user_patrols (user_id, patrol_id, sort_order) VALUES ($1, $2, $3)",
-		*userID, *patrolID, *sortOrder,
+		"INSERT INTO user_subcamps (user_id, subcamp_id, sort_order) VALUES ($1, $2, $3)",
+		*userID, *subcampID, *sortOrder,
 	)
 	if err != nil {
-		return fmt.Errorf("assigning patrol: %w", err)
+		return fmt.Errorf("assigning subcamp: %w", err)
 	}
 
-	fmt.Println("✓ Patrol assigned")
-	fmt.Printf("  User:   %s\n", *userID)
-	fmt.Printf("  Patrol: %s\n", *patrolID)
-	fmt.Printf("  Order:  %d\n", *sortOrder)
+	fmt.Println("✓ Subcamp assigned")
+	fmt.Printf("  User:    %s\n", *userID)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
+	fmt.Printf("  Order:   %d\n", *sortOrder)
 	return nil
 }
 
@@ -953,9 +1010,11 @@ Flags:
 		return fmt.Errorf("no criteria found for template %q", templateID)
 	}
 
-	// Get patrols assigned to the user
+	// Get patrols assigned to the user (via subcamps)
 	patrolRows, err := db.Query(
-		"SELECT patrol_id FROM user_patrols WHERE user_id = $1 ORDER BY sort_order", *userID)
+		`SELECT p.id FROM user_subcamps us
+		 JOIN patrols p ON p.subcamp_id = us.subcamp_id
+		 WHERE us.user_id = $1 ORDER BY us.sort_order, p.name`, *userID)
 	if err != nil {
 		return fmt.Errorf("querying user patrols: %w", err)
 	}

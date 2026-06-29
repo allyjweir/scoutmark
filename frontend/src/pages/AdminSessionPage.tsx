@@ -36,6 +36,25 @@ export const AdminSessionPage = () => {
   // Per-scorer expanded comments toggle
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
 
+  // Override (manual open/close) busy flag
+  const [overriding, setOverriding] = useState(false);
+
+  const handleToggleOpen = useCallback(async () => {
+    if (!sessionId || !session) return;
+    const closing = session.status === 'ACTIVE' || session.status === 'REOPENED';
+    setOverriding(true);
+    try {
+      const res = closing
+        ? await api.closeSession(sessionId)
+        : await api.reopenSession(sessionId);
+      setSession((s) => (s ? { ...s, status: res.status as Session['status'] } : s));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'could not update session');
+    } finally {
+      setOverriding(false);
+    }
+  }, [sessionId, session]);
+
   // Track which users changed on the last refresh
   const [changedUserIds, setChangedUserIds] = useState<Set<string>>(new Set());
   const prevSnapshotRef = useRef<Record<string, string>>({});
@@ -193,13 +212,26 @@ export const AdminSessionPage = () => {
           <Button variant="invisible" onClick={() => navigate('/')} size="small">
             ← Dashboard
           </Button>
-          <Label variant={
-            session.status === 'ACTIVE' ? 'success'
-            : session.status === 'UPCOMING' ? 'accent'
-            : 'default'
-          }>
-            {session.status}
-          </Label>
+          <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+            <Button
+              size="small"
+              variant={session.status === 'ACTIVE' || session.status === 'REOPENED' ? 'danger' : 'primary'}
+              disabled={overriding || session.status === 'UPCOMING'}
+              onClick={handleToggleOpen}
+            >
+              {session.status === 'ACTIVE' || session.status === 'REOPENED'
+                ? (overriding ? 'Closing…' : 'Close scoring')
+                : (overriding ? 'Reopening…' : 'Reopen scoring')}
+            </Button>
+            <Label variant={
+              session.status === 'ACTIVE' || session.status === 'REOPENED' ? 'success'
+              : session.status === 'UPCOMING' ? 'accent'
+              : session.status === 'CLOSED' ? 'attention'
+              : 'default'
+            }>
+              {session.status}
+            </Label>
+          </Box>
         </Box>
         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{session.event_name}</Text>
         <Heading sx={{ fontSize: 3, mb: 1 }}>{session.name}</Heading>

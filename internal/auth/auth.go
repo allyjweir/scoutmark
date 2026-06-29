@@ -121,6 +121,18 @@ func RequireCampChief(next http.Handler) http.Handler {
 	})
 }
 
+// RequireCampChiefOrAdmin returns middleware allowing camp chiefs or admins.
+func RequireCampChiefOrAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := UserFromContext(r.Context())
+		if user == nil || (!user.IsCampChief() && !user.IsAdmin()) {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // HashPassword generates a bcrypt hash for a password.
 func HashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)

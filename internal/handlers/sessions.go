@@ -328,9 +328,9 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
-	if session.ComputeStatus() != "ACTIVE" {
+	if !session.AcceptsSubmissions() {
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
-		writeError(w, r, http.StatusBadRequest, "session is not active")
+		writeError(w, r, http.StatusBadRequest, "session is not open for scoring")
 		return
 	}
 
@@ -480,9 +480,9 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
-	if session.ComputeStatus() != "ACTIVE" {
+	if !session.AcceptsSubmissions() {
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
-		writeError(w, r, http.StatusBadRequest, "session is not active")
+		writeError(w, r, http.StatusBadRequest, "session is not open for scoring")
 		return
 	}
 
@@ -560,9 +560,9 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
-	if session.ComputeStatus() != "ACTIVE" {
+	if !session.AcceptsSubmissions() {
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
-		writeError(w, r, http.StatusBadRequest, "session is not active")
+		writeError(w, r, http.StatusBadRequest, "session is not open for scoring")
 		return
 	}
 
@@ -573,6 +573,43 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// SetSessionOverride records a manual close/reopen action for a session and
+// returns the resulting status. action is "close" or "reopen".
+func (h *SessionHandler) SetSessionOverride(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		sessionID := r.PathValue("session_id")
+
+		_, span := tracing.Tracer().Start(ctx, "handler.set_session_override")
+		defer span.End()
+		span.SetAttributes(
+			attribute.String("session.id", sessionID),
+			attribute.String("override.action", action),
+		)
+
+		user := auth.UserFromContext(ctx)
+
+		session, err := h.db.GetSession(ctx, sessionID)
+		if err != nil {
+			writeError(w, r, http.StatusNotFound, "session not found")
+			return
+		}
+
+		if err := h.db.CreateSessionOverride(ctx, sessionID, action, user.ID); err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not update session")
+			return
+		}
+
+		if h.broadcaster != nil {
+			h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+		}
+
+		session.LatestOverride = &action
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": session.ComputeStatus()})
+	}
 }
 
 // GetSubmissionScores handles GET /api/sessions/{session_id}/patrols/{patrol_id}/scores

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 )
 
@@ -17,14 +18,15 @@ type UserPatrolRow struct {
 	SortOrder int
 }
 
-// GetUserPatrols returns the ordered list of patrols for a user.
+// GetUserPatrols returns the ordered list of patrols for a user, derived from
+// the subcamps the user is assigned to.
 func (d *DB) GetUserPatrols(ctx context.Context, userID string) ([]UserPatrolRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT p.id, p.name, up.sort_order
-		 FROM user_patrols up
-		 JOIN patrols p ON p.id = up.patrol_id
-		 WHERE up.user_id = $1
-		 ORDER BY up.sort_order ASC`,
+		`SELECT p.id, p.name, us.sort_order
+		 FROM user_subcamps us
+		 JOIN patrols p ON p.subcamp_id = us.subcamp_id
+		 WHERE us.user_id = $1
+		 ORDER BY us.sort_order ASC, p.name ASC`,
 		userID,
 	)
 	if err != nil {
@@ -58,26 +60,46 @@ type SessionDetailRow struct {
 	PreviousSessionID *string
 	AwardBestPatrol   bool
 	AwardMostImproved bool
+	// LatestOverride is the most recent manual override action ("close" or
+	// "reopen"), or nil if no override has been applied.
+	LatestOverride *string
 }
 
-// ComputeStatus derives the session status from time boundaries.
+// ComputeStatus derives the session status. A manual override (close/reopen)
+// always wins over the time window; otherwise status is derived from the
+// start/end boundaries.
 func (s *SessionDetailRow) ComputeStatus() string {
+	if s.LatestOverride != nil {
+		switch *s.LatestOverride {
+		case "close":
+			return "CLOSED"
+		case "reopen":
+			return "REOPENED"
+		}
+	}
 	now := time.Now()
 	switch {
 	case now.Before(s.StartsAt):
 		return "UPCOMING"
 	case now.After(s.EndsAt):
-		return "CLOSED"
+		return "ENDED"
 	default:
 		return "ACTIVE"
 	}
+}
+
+// AcceptsSubmissions reports whether scorers may submit/revise for this session.
+func (s *SessionDetailRow) AcceptsSubmissions() bool {
+	st := s.ComputeStatus()
+	return st == "ACTIVE" || st == "REOPENED"
 }
 
 // ListSessions returns sessions, optionally filtered by status.
 func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDetailRow, error) {
 	rows, err := d.QueryContext(ctx,
 		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
-		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
+		        s.previous_session_id, s.award_best_patrol, s.award_most_improved,
+		        (SELECT o.action FROM session_overrides o WHERE o.session_id = s.id ORDER BY o.created_at DESC LIMIT 1)
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
 		 ORDER BY s.starts_at ASC`,
@@ -91,7 +113,7 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 	for rows.Next() {
 		var s SessionDetailRow
 		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
-			&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
+			&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved, &s.LatestOverride); err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
 		}
 		sessions = append(sessions, s)
@@ -115,7 +137,8 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRow, error) {
 	row := d.QueryRowContext(ctx,
 		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
-		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
+		        s.previous_session_id, s.award_best_patrol, s.award_most_improved,
+		        (SELECT o.action FROM session_overrides o WHERE o.session_id = s.id ORDER BY o.created_at DESC LIMIT 1)
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
 		 WHERE s.id = $1`,
@@ -124,10 +147,23 @@ func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRo
 
 	s := &SessionDetailRow{}
 	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
-		&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
+		&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved, &s.LatestOverride); err != nil {
 		return nil, fmt.Errorf("scanning session: %w", err)
 	}
 	return s, nil
+}
+
+// CreateSessionOverride records a manual close/reopen action for a session.
+func (d *DB) CreateSessionOverride(ctx context.Context, sessionID, action, actorID string) error {
+	_, err := d.ExecContext(ctx,
+		`INSERT INTO session_overrides (id, session_id, action, actor_id)
+		 VALUES ($1, $2, $3, $4)`,
+		uuid.NewString(), sessionID, action, actorID,
+	)
+	if err != nil {
+		return fmt.Errorf("inserting session override: %w", err)
+	}
+	return nil
 }
 
 // ─── Criteria Template Queries ──────────────────────────────────────
@@ -177,7 +213,8 @@ func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map
 		`SELECT s.id AS session_id,
 		        COUNT(up.patrol_id) AS total_patrols,
 		        COUNT(sub.id) AS submitted_patrols
-		 FROM user_patrols up
+		 FROM (SELECT us.user_id, p.id AS patrol_id, us.sort_order
+		       FROM user_subcamps us JOIN patrols p ON p.subcamp_id = us.subcamp_id) up
 		 CROSS JOIN sessions s
 		 LEFT JOIN submissions sub
 		   ON sub.session_id = s.id
@@ -226,7 +263,8 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 		          ELSE 'not_started'
 		        END AS status
 		 FROM users u
-		 JOIN user_patrols up ON up.user_id = u.id
+		 JOIN (SELECT us.user_id, p.id AS patrol_id, us.sort_order
+		       FROM user_subcamps us JOIN patrols p ON p.subcamp_id = us.subcamp_id) up ON up.user_id = u.id
 		 JOIN patrols p ON p.id = up.patrol_id
 		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = up.patrol_id
 		 LEFT JOIN drafts dr ON dr.session_id = $2 AND dr.patrol_id = up.patrol_id

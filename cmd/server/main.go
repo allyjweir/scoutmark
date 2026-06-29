@@ -124,6 +124,10 @@ func run(ctx context.Context) error {
 	mux.Handle("POST /api/sessions/{session_id}/chief-round/scores", authMiddleware(auth.RequireCampChief(http.HandlerFunc(chiefHandler.SaveChiefScores))))
 	mux.Handle("POST /api/sessions/{session_id}/chief-round/complete", authMiddleware(auth.RequireCampChief(http.HandlerFunc(chiefHandler.CompleteChiefRound))))
 
+	// Session open/close override routes (camp chief or admin)
+	mux.Handle("POST /api/sessions/{session_id}/close", authMiddleware(auth.RequireCampChiefOrAdmin(sessionHandler.SetSessionOverride("close"))))
+	mux.Handle("POST /api/sessions/{session_id}/reopen", authMiddleware(auth.RequireCampChiefOrAdmin(sessionHandler.SetSessionOverride("reopen"))))
+
 	// WebSocket
 	mux.Handle("GET /api/ws", authMiddleware(http.HandlerFunc(hub.HandleWebSocket)))
 

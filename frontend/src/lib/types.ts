@@ -15,7 +15,7 @@ export interface Session {
   name: string;
   starts_at: string;
   ends_at: string;
-  status: 'UPCOMING' | 'ACTIVE' | 'CLOSED';
+  status: 'UPCOMING' | 'ACTIVE' | 'ENDED' | 'CLOSED' | 'REOPENED';
   created_at: string;
   criteria?: Criterion[];
   user_finalised: boolean;

@@ -427,9 +427,9 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 
 		// Get all patrols assigned to this user
 		patrolRows, err := tx.QueryContext(ctx,
-			`SELECT p.id, p.name FROM user_patrols up
-			 JOIN patrols p ON p.id = up.patrol_id
-			 WHERE up.user_id = $1`,
+			`SELECT p.id, p.name FROM user_subcamps us
+			 JOIN patrols p ON p.subcamp_id = us.subcamp_id
+			 WHERE us.user_id = $1`,
 			userID,
 		)
 		if err != nil {
@@ -577,7 +577,7 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 	return d.InTx(ctx, func(tx *sql.Tx) error {
 		// Get the user's assigned patrols
 		patrolRows, err := tx.QueryContext(ctx,
-			"SELECT patrol_id FROM user_patrols WHERE user_id = $1", userID,
+			`SELECT p.id FROM user_subcamps us JOIN patrols p ON p.subcamp_id = us.subcamp_id WHERE us.user_id = $1`, userID,
 		)
 		if err != nil {
 			return fmt.Errorf("querying user patrols: %w", err)
@@ -957,7 +957,8 @@ func (d *DB) GetAdminUserSubmissions(ctx context.Context, userID, sessionID stri
 		 JOIN patrols p ON p.id = s.patrol_id
 		 JOIN submission_scores ss ON ss.submission_id = s.id
 		 JOIN criteria c ON c.id = ss.criterion_id
-		 JOIN user_patrols up ON up.patrol_id = s.patrol_id AND up.user_id = $1
+		 JOIN user_subcamps us ON us.user_id = $1
+		 JOIN patrols up ON up.subcamp_id = us.subcamp_id AND up.id = s.patrol_id
 		 WHERE s.session_id = $2
 		 ORDER BY p.name, c.sort_order`,
 		userID, sessionID,
@@ -1055,13 +1056,13 @@ type ReportCardRow struct {
 // the requesting user's patrol sort_order. Each row is one (patrol, criterion) score.
 func (d *DB) GetReportCardData(ctx context.Context, userID, sessionID string) ([]ReportCardRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT p.id, p.name, up.sort_order, ss.criterion_id, ss.value
-		 FROM user_patrols up
-		 JOIN patrols p ON p.id = up.patrol_id
+		`SELECT p.id, p.name, us.sort_order, ss.criterion_id, ss.value
+		 FROM user_subcamps us
+		 JOIN patrols p ON p.subcamp_id = us.subcamp_id
 		 JOIN submissions s ON s.session_id = $2 AND s.patrol_id = p.id
 		 JOIN submission_scores ss ON ss.submission_id = s.id
-		 WHERE up.user_id = $1
-		 ORDER BY up.sort_order ASC, ss.criterion_id ASC`,
+		 WHERE us.user_id = $1
+		 ORDER BY us.sort_order ASC, ss.criterion_id ASC`,
 		userID, sessionID,
 	)
 	if err != nil {

@@ -1,4 +1,4 @@
-.PHONY: dev server frontend proto migrate seed reseed clean
+.PHONY: dev server frontend proto migrate seed seed-min reseed reseed-min clean
 
 # Start everything for development
 dev: 
@@ -29,6 +29,10 @@ migrate:
 seed:
 	./scripts/seed-dev.sh
 
+# Seed minimal smoke-test data (uses admin CLI)
+seed-min:
+	./scripts/seed-min.sh
+
 # Reset dev database and re-seed
 reseed:
 	@echo "Dropping and recreating database..."
@@ -37,6 +41,15 @@ reseed:
 	@go run ./cmd/migrate
 	@echo "Seeding..."
 	@./scripts/seed-dev.sh
+
+# Reset dev database and re-seed with minimal data
+reseed-min:
+	@echo "Dropping and recreating database..."
+	PGPASSWORD=scoutmark psql -h localhost -p 5432 -U scoutmark -d scoutmark -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+	@echo "Running migrations..."
+	@go run ./cmd/migrate
+	@echo "Seeding..."
+	@./scripts/seed-min.sh
 
 # Create a new user interactively
 create-user:

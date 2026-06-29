@@ -161,7 +161,7 @@ export const ChiefScoringPage = () => {
         <Heading sx={{ mb: 3 }}>{session?.name} — Chief Round Complete</Heading>
         <Flash variant="success" sx={{ mb: 3 }}>
           🏆 Best Patrol: <strong>{winnerPatrol?.patrol_name ?? 'Unknown'}</strong>
-          {winnerPatrol && <> (from {winnerPatrol.scorer_name})</>}
+          {winnerPatrol && <> (from {winnerPatrol.subcamp_name})</>}
         </Flash>
         <Button onClick={() => navigate('/')}>Back to Dashboard</Button>
       </Box>
@@ -181,7 +181,7 @@ export const ChiefScoringPage = () => {
 
         <Heading sx={{ mb: 2 }}>{patrol?.patrol_name}</Heading>
         <Text as="p" sx={{ mb: 3, color: 'fg.muted' }}>
-          Scorer: {patrol?.scorer_name} · Original total: {patrol?.total_score}
+          Subcamp: {patrol?.subcamp_name} · Original total: {patrol?.total_score}
         </Text>
 
         {/* Original scores & comments */}
@@ -236,7 +236,7 @@ export const ChiefScoringPage = () => {
     <Box p={4}>
       <Heading sx={{ mb: 2 }}>{session?.name} — Chief Round</Heading>
       <Text as="p" sx={{ mb: 3, color: 'fg.muted' }}>
-        Score the winning patrol from each scorer, then declare the overall best patrol.
+        Score the winning patrol from each subcamp, then declare the overall best patrol.
       </Text>
 
       {chiefRound.patrols?.map(patrol => {
@@ -257,7 +257,7 @@ export const ChiefScoringPage = () => {
               <Box>
                 <Text sx={{ fontWeight: 'bold' }}>{patrol.patrol_name}</Text>
                 <Text as="p" sx={{ fontSize: 1, color: 'fg.muted' }}>
-                  From: {patrol.scorer_name} · Score: {patrol.total_score}
+                  From: {patrol.subcamp_name} · Score: {patrol.total_score}
                 </Text>
               </Box>
               {scored && <Label variant="success">Scored</Label>}

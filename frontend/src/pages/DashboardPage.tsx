@@ -36,12 +36,12 @@ export const DashboardPage = () => {
   }, []);
 
   const grouped = groupBy(sessions, 'status');
-  const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
+  const activeSessions = sortBy([...(grouped['ACTIVE'] ?? []), ...(grouped['REOPENED'] ?? [])], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
-  const closedSessions = sortBy(grouped['CLOSED'] ?? [], 'ends_at').reverse();
+  const closedSessions = sortBy([...(grouped['ENDED'] ?? []), ...(grouped['CLOSED'] ?? [])], 'ends_at').reverse();
 
   const handleSessionClick = (session: Session) => {
-    if (session.status === 'ACTIVE' || session.status === 'CLOSED') {
+    if (session.status !== 'UPCOMING') {
       navigate(`/sessions/${session.id}`);
     }
   };

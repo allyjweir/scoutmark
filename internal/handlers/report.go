@@ -42,8 +42,9 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only allow report generation for closed sessions
-	if session.ComputeStatus() != "CLOSED" {
+	// Only allow report generation once the session is no longer accepting scores
+	status := session.ComputeStatus()
+	if status != "ENDED" && status != "CLOSED" {
 		writeError(w, r, http.StatusBadRequest, "report card is only available after the session has ended")
 		return
 	}

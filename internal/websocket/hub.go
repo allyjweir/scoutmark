@@ -469,14 +469,14 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 
 	tracing.AddSessionAttrs(ctx, payload.SessionID, payload.PatrolID)
 
-	// Verify the session is active
+	// Verify the session is open for scoring
 	session, err := c.hub.db.GetSession(ctx, payload.SessionID)
 	if err != nil {
 		c.sendError(msg.RequestID, "SESSION_NOT_FOUND", "session not found")
 		return
 	}
-	if session.ComputeStatus() != "ACTIVE" {
-		c.sendError(msg.RequestID, "SESSION_NOT_ACTIVE", "session is not active")
+	if !session.AcceptsSubmissions() {
+		c.sendError(msg.RequestID, "SESSION_NOT_ACTIVE", "session is not open for scoring")
 		return
 	}
 

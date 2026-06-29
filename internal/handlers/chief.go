@@ -34,10 +34,10 @@ type chiefRoundJSON struct {
 }
 
 type chiefPatrolJSON struct {
-	PatrolID   string `json:"patrol_id"`
-	PatrolName string `json:"patrol_name"`
-	ScorerName string `json:"scorer_name"`
-	TotalScore int    `json:"total_score"`
+	PatrolID    string `json:"patrol_id"`
+	PatrolName  string `json:"patrol_name"`
+	SubcampName string `json:"subcamp_name"`
+	TotalScore  int    `json:"total_score"`
 }
 
 type scoreVal struct {
@@ -145,10 +145,10 @@ func (h *ChiefHandler) GetChiefRound(w http.ResponseWriter, r *http.Request) {
 		CompletedAt:    completedAt,
 		Patrols: lo.Map(patrols, func(p database.ChiefRoundPatrolRow, _ int) chiefPatrolJSON {
 			return chiefPatrolJSON{
-				PatrolID:   p.PatrolID,
-				PatrolName: p.PatrolName,
-				ScorerName: p.ScorerName,
-				TotalScore: p.TotalScore,
+				PatrolID:    p.PatrolID,
+				PatrolName:  p.PatrolName,
+				SubcampName: p.SubcampName,
+				TotalScore:  p.TotalScore,
 			}
 		}),
 		Scores: scoresByPatrol,

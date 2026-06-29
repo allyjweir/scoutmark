@@ -144,25 +144,38 @@ func (d *DB) CopyDraftCommentsToSubmission(ctx context.Context, tx *sql.Tx, sess
 	if err != nil {
 		return fmt.Errorf("querying draft comments for copy: %w", err)
 	}
-	defer rows.Close()
 
+	type draftComment struct {
+		criterionID, userID, displayName, comment string
+		createdAt                                 time.Time
+	}
+	var pending []draftComment
 	for rows.Next() {
-		var criterionID, userID, displayName, comment string
-		var createdAt time.Time
-		if err := rows.Scan(&criterionID, &userID, &displayName, &comment, &createdAt); err != nil {
+		var c draftComment
+		if err := rows.Scan(&c.criterionID, &c.userID, &c.displayName, &c.comment, &c.createdAt); err != nil {
+			rows.Close()
 			return fmt.Errorf("scanning draft comment for copy: %w", err)
 		}
+		pending = append(pending, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	for _, c := range pending {
 		id := uuid.New().String()
 		_, err := tx.ExecContext(ctx,
 			`INSERT INTO submission_comments (id, submission_id, criterion_id, user_id, display_name, comment, created_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, submissionID, criterionID, userID, displayName, comment, createdAt,
+			id, submissionID, c.criterionID, c.userID, c.displayName, c.comment, c.createdAt,
 		)
 		if err != nil {
 			return fmt.Errorf("inserting submission comment: %w", err)
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // GetSubmissionComments returns all per-user comments for a submission.
@@ -225,7 +238,8 @@ func (d *DB) GetSubmissionCommentsBySession(ctx context.Context, userID, session
 		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.created_at
 		 FROM submission_comments sc
 		 JOIN submissions s ON s.id = sc.submission_id
-		 JOIN user_patrols up ON up.patrol_id = s.patrol_id AND up.user_id = $1
+		 JOIN user_subcamps us ON us.user_id = $1
+		 JOIN patrols up ON up.subcamp_id = us.subcamp_id AND up.id = s.patrol_id
 		 WHERE s.session_id = $2 AND sc.comment != ''
 		 ORDER BY s.patrol_id, sc.criterion_id, sc.created_at`,
 		userID, sessionID,

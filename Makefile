@@ -1,4 +1,4 @@
-.PHONY: dev server frontend proto migrate seed reseed clean
+.PHONY: dev server frontend proto migrate seed seed-fly-ba reseed clean
 
 # Start everything for development
 dev: 
@@ -28,6 +28,10 @@ migrate:
 # Seed development data (uses admin CLI)
 seed:
 	./scripts/seed-dev.sh
+
+# Seed Blair Atholl demo data in the scoutmark-ba Fly app
+seed-fly-ba:
+	./scripts/seed-fly-ba.sh
 
 # Reset dev database and re-seed
 reseed:

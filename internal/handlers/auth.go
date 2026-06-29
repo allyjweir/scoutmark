@@ -152,7 +152,6 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type changePasswordRequest struct {
-	OldPassword string `json:"old_password"`
 	NewPassword string `json:"new_password"`
 }
 
@@ -179,22 +178,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the current user to verify old password
-	currentUser, err := h.db.GetUserByID(ctx, user.ID)
-	if err != nil {
-		tracing.RecordError(ctx, err)
-		writeError(w, r, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	if currentUser == nil {
-		writeError(w, r, http.StatusUnauthorized, "user not found")
-		return
-	}
-
-	// Verify the old password
-	if !auth.CheckPassword(req.OldPassword, currentUser.PasswordHash) {
-		span.SetAttributes(attribute.Bool("password.valid", false))
-		writeError(w, r, http.StatusUnauthorized, "invalid old password")
+	if len(req.NewPassword) < 8 {
+		writeError(w, r, http.StatusBadRequest, "password must be at least 8 characters")
 		return
 	}
 

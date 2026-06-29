@@ -7,7 +7,6 @@ import * as api from '../lib/api';
 export const ChangePasswordPage = () => {
   const navigate = useNavigate();
   const { user, clearPasswordChangeRequired } = useAuth();
-  const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -24,26 +23,25 @@ export const ChangePasswordPage = () => {
     setError('');
     setSuccess('');
 
-    if (!oldPassword || !newPassword || !confirmPassword) {
+    if (!newPassword || !confirmPassword) {
       setError('All fields are required');
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError('New password and confirmation do not match');
+      setError('Passwords do not match');
       return;
     }
 
     if (newPassword.length < 8) {
-      setError('New password must be at least 8 characters');
+      setError('Password must be at least 8 characters');
       return;
     }
 
     setIsLoading(true);
     try {
-      await api.changePassword(oldPassword, newPassword);
+      await api.changePassword(newPassword);
       setSuccess('Password changed successfully!');
-      setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
       clearPasswordChangeRequired();
@@ -70,23 +68,13 @@ export const ChangePasswordPage = () => {
 
         <form onSubmit={handleSubmit}>
           <FormControl sx={{ mb: 3 }}>
-            <FormControl.Label>Current Password</FormControl.Label>
-            <TextInput
-              type="password"
-              value={oldPassword}
-              onChange={(e) => setOldPassword(e.target.value)}
-              disabled={isLoading}
-              aria-label="Current Password"
-            />
-          </FormControl>
-
-          <FormControl sx={{ mb: 3 }}>
             <FormControl.Label>New Password</FormControl.Label>
             <TextInput
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               disabled={isLoading}
+              autoFocus
               aria-label="New Password"
             />
             <FormControl.Caption>At least 8 characters</FormControl.Caption>

@@ -53,10 +53,10 @@ export const logout = async (): Promise<void> => {
 export const getCurrentUser = async (): Promise<User> =>
   request<User>('/auth/me');
 
-export const changePassword = async (oldPassword: string, newPassword: string): Promise<{ status: string }> =>
+export const changePassword = async (newPassword: string): Promise<{ status: string }> =>
   request('/auth/change-password', {
     method: 'POST',
-    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    body: JSON.stringify({ new_password: newPassword }),
   });
 
 // ─── Sessions ───────────────────────────────────────────────────────

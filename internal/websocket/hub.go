@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -22,17 +23,31 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		allowed := os.Getenv("ALLOWED_ORIGIN")
-		origin := r.Header.Get("Origin")
+	CheckOrigin:     checkOrigin,
+}
 
-		if allowed != "" {
-			// Production: only accept the configured origin
-			return origin == allowed
-		}
-		// Development: allow localhost origins
-		return strings.HasPrefix(origin, "http://localhost:") || origin == ""
-	},
+func checkOrigin(r *http.Request) bool {
+	allowed := os.Getenv("ALLOWED_ORIGIN")
+	origin := r.Header.Get("Origin")
+
+	if allowed != "" && origin == allowed {
+		return true
+	}
+
+	if allowed == "" && (strings.HasPrefix(origin, "http://localhost:") || origin == "") {
+		return true
+	}
+
+	originURL, err := url.Parse(origin)
+	if err != nil || originURL.Host == "" {
+		return false
+	}
+
+	if originURL.Scheme != "http" && originURL.Scheme != "https" {
+		return false
+	}
+
+	return strings.EqualFold(originURL.Host, r.Host)
 }
 
 // ─── Message Types ──────────────────────────────────────────────────

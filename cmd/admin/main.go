@@ -122,13 +122,14 @@ func createUser() error {
 	flagDisplay := fs.String("display-name", "", "Display name (non-interactive mode)")
 	flagAdmin := fs.Bool("admin", false, "Make admin user (non-interactive mode)")
 	flagID := fs.String("id", "", "User ID (default: auto-generated UUID)")
+	flagForcePasswordChange := fs.Bool("force-password-change", false, "Require password change on first login")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 
 	var username, password, displayName string
-	var isAdmin bool
+	var isAdmin, forcePasswordChange bool
 
 	if *flagUsername != "" {
 		// Non-interactive (flag-driven) mode for scripting
@@ -136,6 +137,7 @@ func createUser() error {
 		password = *flagPassword
 		displayName = *flagDisplay
 		isAdmin = *flagAdmin
+		forcePasswordChange = *flagForcePasswordChange
 		if password == "" {
 			return fmt.Errorf("-password is required in non-interactive mode")
 		}
@@ -175,6 +177,12 @@ func createUser() error {
 			return err
 		}
 		isAdmin = strings.HasPrefix(strings.ToLower(adminInput), "y")
+
+		forceChangeInput, err := promptDefault(reader, "Force password change on first login?", "N")
+		if err != nil {
+			return err
+		}
+		forcePasswordChange = strings.HasPrefix(strings.ToLower(forceChangeInput), "y")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -201,8 +209,8 @@ func createUser() error {
 		userID = uuid.New().String()
 	}
 	_, err = db.Exec(
-		"INSERT INTO users (id, username, password_hash, display_name, is_admin) VALUES ($1, $2, $3, $4, $5)",
-		userID, username, string(hash), displayName, isAdmin,
+		"INSERT INTO users (id, username, password_hash, display_name, is_admin, password_change_required) VALUES ($1, $2, $3, $4, $5, $6)",
+		userID, username, string(hash), displayName, isAdmin, forcePasswordChange,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting user: %w", err)
@@ -210,10 +218,11 @@ func createUser() error {
 
 	fmt.Println()
 	fmt.Println("✓ User created")
-	fmt.Printf("  ID:           %s\n", userID)
-	fmt.Printf("  Username:     %s\n", username)
-	fmt.Printf("  Display name: %s\n", displayName)
-	fmt.Printf("  Admin:        %v\n", isAdmin)
+	fmt.Printf("  ID:                        %s\n", userID)
+	fmt.Printf("  Username:                  %s\n", username)
+	fmt.Printf("  Display name:              %s\n", displayName)
+	fmt.Printf("  Admin:                     %v\n", isAdmin)
+	fmt.Printf("  Force password change:     %v\n", forcePasswordChange)
 	return nil
 }
 

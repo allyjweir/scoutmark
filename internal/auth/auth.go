@@ -20,12 +20,29 @@ const (
 	SessionDuration = 30 * 24 * time.Hour // 30 days
 )
 
+// Role constants for user roles.
+const (
+	RoleScorer    = "scorer"
+	RoleCampChief = "camp_chief"
+	RoleAdmin     = "admin"
+)
+
 // AuthUser is the authenticated user stored in request context.
 type AuthUser struct {
 	ID          string
 	Username    string
 	DisplayName string
-	IsAdmin     bool
+	Role        string
+}
+
+// IsAdmin returns true if the user has the admin role.
+func (u *AuthUser) IsAdmin() bool {
+	return u.Role == RoleAdmin
+}
+
+// IsCampChief returns true if the user has the camp_chief role.
+func (u *AuthUser) IsCampChief() bool {
+	return u.Role == RoleCampChief
 }
 
 // UserFromContext extracts the authenticated user from context.
@@ -68,7 +85,7 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 				ID:          user.ID,
 				Username:    user.Username,
 				DisplayName: user.DisplayName,
-				IsAdmin:     user.IsAdmin,
+				Role:        user.Role,
 			}
 
 			// Add user attributes to the trace span
@@ -84,7 +101,19 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := UserFromContext(r.Context())
-		if user == nil || !user.IsAdmin {
+		if user == nil || !user.IsAdmin() {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireCampChief returns middleware that checks the user is a camp chief.
+func RequireCampChief(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := UserFromContext(r.Context())
+		if user == nil || !user.IsCampChief() {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}

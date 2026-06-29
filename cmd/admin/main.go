@@ -9,7 +9,9 @@ package main
 
 import (
 	"bufio"
+	crand "crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -120,27 +122,32 @@ func createUser() error {
 	flagUsername := fs.String("username", "", "Username (non-interactive mode)")
 	flagPassword := fs.String("password", "", "Password (non-interactive mode)")
 	flagDisplay := fs.String("display-name", "", "Display name (non-interactive mode)")
-	flagAdmin := fs.Bool("admin", false, "Make admin user (non-interactive mode)")
+	flagRole := fs.String("role", "scorer", "User role: scorer, camp_chief, admin")
 	flagID := fs.String("id", "", "User ID (default: auto-generated UUID)")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
 
-	var username, password, displayName string
-	var isAdmin bool
+	var username, password, displayName, role string
 
 	if *flagUsername != "" {
 		// Non-interactive (flag-driven) mode for scripting
 		username = *flagUsername
 		password = *flagPassword
 		displayName = *flagDisplay
-		isAdmin = *flagAdmin
+		role = *flagRole
 		if password == "" {
 			return fmt.Errorf("-password is required in non-interactive mode")
 		}
 		if displayName == "" {
 			displayName = username
+		}
+		// Validate role
+		switch role {
+		case "scorer", "camp_chief", "admin":
+		default:
+			return fmt.Errorf("invalid role %q: must be scorer, camp_chief, or admin", role)
 		}
 	} else {
 		// Interactive mode
@@ -170,11 +177,16 @@ func createUser() error {
 			return err
 		}
 
-		adminInput, err := promptDefault(reader, "Admin user?", "N")
+		roleInput, err := promptDefault(reader, "Role (scorer/camp_chief/admin)", "scorer")
 		if err != nil {
 			return err
 		}
-		isAdmin = strings.HasPrefix(strings.ToLower(adminInput), "y")
+		role = strings.TrimSpace(roleInput)
+		switch role {
+		case "scorer", "camp_chief", "admin":
+		default:
+			return fmt.Errorf("invalid role %q: must be scorer, camp_chief, or admin", role)
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -201,8 +213,8 @@ func createUser() error {
 		userID = uuid.New().String()
 	}
 	_, err = db.Exec(
-		"INSERT INTO users (id, username, password_hash, display_name, is_admin) VALUES ($1, $2, $3, $4, $5)",
-		userID, username, string(hash), displayName, isAdmin,
+		"INSERT INTO users (id, username, password_hash, display_name, role) VALUES ($1, $2, $3, $4, $5)",
+		userID, username, string(hash), displayName, role,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting user: %w", err)
@@ -213,7 +225,7 @@ func createUser() error {
 	fmt.Printf("  ID:           %s\n", userID)
 	fmt.Printf("  Username:     %s\n", username)
 	fmt.Printf("  Display name: %s\n", displayName)
-	fmt.Printf("  Admin:        %v\n", isAdmin)
+	fmt.Printf("  Role:         %s\n", role)
 	return nil
 }
 
@@ -273,29 +285,24 @@ func listUsers() error {
 	}
 	defer db.Close()
 
-	rows, err := db.Query("SELECT id, username, display_name, is_admin, created_at FROM users ORDER BY created_at ASC")
+	rows, err := db.Query("SELECT id, username, display_name, role, created_at FROM users ORDER BY created_at ASC")
 	if err != nil {
 		return fmt.Errorf("querying users: %w", err)
 	}
 	defer rows.Close()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tUSERNAME\tDISPLAY NAME\tADMIN\tCREATED")
-	fmt.Fprintln(w, "──\t────────\t────────────\t─────\t───────")
+	fmt.Fprintln(w, "ID\tUSERNAME\tDISPLAY NAME\tROLE\tCREATED")
+	fmt.Fprintln(w, "──\t────────\t────────────\t────\t───────")
 
 	count := 0
 	for rows.Next() {
-		var id, username, displayName, createdAt string
-		var isAdmin bool
-		if err := rows.Scan(&id, &username, &displayName, &isAdmin, &createdAt); err != nil {
+		var id, username, displayName, createdAt, role string
+		if err := rows.Scan(&id, &username, &displayName, &role, &createdAt); err != nil {
 			return fmt.Errorf("scanning user: %w", err)
 		}
 
-		admin := ""
-		if isAdmin {
-			admin = "✓"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, username, displayName, admin, createdAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, username, displayName, role, createdAt)
 		count++
 	}
 	if err := rows.Err(); err != nil {
@@ -878,6 +885,11 @@ func listAvailable(db *sql.DB, query string) string {
 
 func seedScores() error {
 	fs := flag.NewFlagSet("seed-scores", flag.ExitOnError)
+	seed := time.Now().UnixNano()
+	if err := binary.Read(crand.Reader, binary.LittleEndian, &seed); err != nil {
+		seed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(seed))
 
 	sessionID := fs.String("session", "", "Session ID (required)")
 	userID := fs.String("user", "", "User ID to attribute submissions to (required)")
@@ -993,7 +1005,7 @@ Flags:
 
 		// Insert random scores
 		for _, criterionID := range criterionIDs {
-			value := *minScore + rand.Intn(scoreRange)
+			value := *minScore + rng.Intn(scoreRange)
 			scoreID := uuid.New().String()
 			_, err := db.Exec(
 				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)

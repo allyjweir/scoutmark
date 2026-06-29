@@ -35,7 +35,7 @@ type userJSON struct {
 	ID          string `json:"id"`
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
-	IsAdmin     bool   `json:"is_admin"`
+	Role        string `json:"role"`
 }
 
 // Login handles POST /api/auth/login
@@ -94,7 +94,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			ID:          user.ID,
 			Username:    user.Username,
 			DisplayName: user.DisplayName,
-			IsAdmin:     user.IsAdmin,
+			Role:        user.Role,
 		},
 	})
 }
@@ -145,6 +145,6 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		ID:          user.ID,
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
-		IsAdmin:     user.IsAdmin,
+		Role:        user.Role,
 	})
 }

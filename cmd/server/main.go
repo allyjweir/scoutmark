@@ -65,6 +65,7 @@ func run(ctx context.Context) error {
 	// ─── Handlers ───────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(db)
 	sessionHandler := handlers.NewSessionHandler(db, hub)
+	chiefHandler := handlers.NewChiefHandler(db)
 	reportHandler := handlers.NewReportHandler(db, handlers.LoadLogoPNG())
 	authMiddleware := auth.Middleware(db)
 
@@ -116,6 +117,12 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /api/admin/sessions/{session_id}/progress", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionProgress))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/comments", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionComments))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/users/{user_id}/scores", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetAdminUserScores))))
+
+	// Camp chief routes (any authenticated user can GET to see status; POST requires camp_chief role)
+	mux.Handle("GET /api/sessions/{session_id}/chief-round", authMiddleware(http.HandlerFunc(chiefHandler.GetChiefRound)))
+	mux.Handle("GET /api/sessions/{session_id}/chief-round/patrols/{patrol_id}/scores", authMiddleware(auth.RequireCampChief(http.HandlerFunc(chiefHandler.GetPatrolOriginalScores))))
+	mux.Handle("POST /api/sessions/{session_id}/chief-round/scores", authMiddleware(auth.RequireCampChief(http.HandlerFunc(chiefHandler.SaveChiefScores))))
+	mux.Handle("POST /api/sessions/{session_id}/chief-round/complete", authMiddleware(auth.RequireCampChief(http.HandlerFunc(chiefHandler.CompleteChiefRound))))
 
 	// WebSocket
 	mux.Handle("GET /api/ws", authMiddleware(http.HandlerFunc(hub.HandleWebSocket)))

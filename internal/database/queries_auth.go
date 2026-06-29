@@ -15,7 +15,7 @@ type UserRow struct {
 	Username     string
 	PasswordHash string
 	DisplayName  string
-	IsAdmin      bool
+	Role         string
 	CreatedAt    time.Time
 }
 
@@ -30,12 +30,12 @@ type SessionRow struct {
 // GetUserByUsername fetches a user by their username.
 func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE username = $1",
+		"SELECT id, username, password_hash, display_name, role, created_at FROM users WHERE username = $1",
 		username,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -48,12 +48,12 @@ func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, 
 // GetUserByID fetches a user by their ID.
 func (d *DB) GetUserByID(ctx context.Context, id string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, created_at FROM users WHERE id = $1",
+		"SELECT id, username, password_hash, display_name, role, created_at FROM users WHERE id = $1",
 		id,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

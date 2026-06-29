@@ -126,8 +126,7 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	marginL, _, marginR, _ := pdf.GetMargins()
 	usableWidth := pageWidth - marginL - marginR
 
-	// Columns: Patrol name | criteria... | Total
-	numCols := len(criteria) + 3 // rank + patrol + criteria + total
+	// Columns: rank | patrol | criteria... | total
 	rankColW := 10.0
 	patrolColW := 40.0
 	totalColW := 18.0
@@ -148,7 +147,6 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 		pdf.CellFormat(criteriaColW, 7, title, "1", 0, "C", true, 0, "")
 	}
 	pdf.CellFormat(totalColW, 7, "Total", "1", 1, "C", true, 0, "")
-	_ = numCols
 
 	// Determine ranking by total score
 	type rankedPatrol struct {

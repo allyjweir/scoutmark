@@ -27,8 +27,9 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	SessionToken string   `json:"session_token"`
-	User         userJSON `json:"user"`
+	SessionToken             string   `json:"session_token"`
+	User                     userJSON `json:"user"`
+	PasswordChangeRequired   bool     `json:"password_change_required"`
 }
 
 type userJSON struct {
@@ -89,7 +90,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		SessionToken: session.Token,
+		SessionToken:           session.Token,
+		PasswordChangeRequired: user.PasswordChangeRequired,
 		User: userJSON{
 			ID:          user.ID,
 			Username:    user.Username,
@@ -147,4 +149,59 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		DisplayName: user.DisplayName,
 		IsAdmin:     user.IsAdmin,
 	})
+}
+
+type changePasswordRequest struct {
+	NewPassword string `json:"new_password"`
+}
+
+// ChangePassword handles POST /api/auth/change-password
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	_, span := tracing.Tracer().Start(ctx, "handler.change_password")
+	defer span.End()
+
+	user := auth.UserFromContext(ctx)
+	if user == nil {
+		writeError(w, r, http.StatusUnauthorized, "not logged in")
+		return
+	}
+
+	var req changePasswordRequest
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.NewPassword == "" {
+		writeError(w, r, http.StatusBadRequest, "new password cannot be empty")
+		return
+	}
+
+	if len(req.NewPassword) < 8 {
+		writeError(w, r, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+
+	// Hash the new password
+	newHash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not hash password")
+		return
+	}
+
+	// Update the password in the database
+	if err := h.db.UpdateUserPassword(ctx, user.ID, newHash); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not update password")
+		return
+	}
+
+	span.SetAttributes(
+		attribute.Bool("password.changed", true),
+		attribute.String("user.id", user.ID),
+	)
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "password changed"})
 }

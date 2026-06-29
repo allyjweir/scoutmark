@@ -22,10 +22,11 @@ const (
 
 // AuthUser is the authenticated user stored in request context.
 type AuthUser struct {
-	ID          string
-	Username    string
-	DisplayName string
-	IsAdmin     bool
+	ID                     string
+	Username               string
+	DisplayName            string
+	IsAdmin                bool
+	PasswordChangeRequired bool
 }
 
 // UserFromContext extracts the authenticated user from context.
@@ -65,10 +66,11 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 			}
 
 			authUser := &AuthUser{
-				ID:          user.ID,
-				Username:    user.Username,
-				DisplayName: user.DisplayName,
-				IsAdmin:     user.IsAdmin,
+				ID:                     user.ID,
+				Username:               user.Username,
+				DisplayName:            user.DisplayName,
+				IsAdmin:                user.IsAdmin,
+				PasswordChangeRequired: user.PasswordChangeRequired,
 			}
 
 			// Add user attributes to the trace span

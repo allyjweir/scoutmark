@@ -36,8 +36,8 @@ const request = async <T>(path: string, options: RequestInit = {}): Promise<T> =
 
 // ─── Auth ───────────────────────────────────────────────────────────
 
-export const login = async (username: string, password: string): Promise<{ session_token: string; user: User }> => {
-  const result = await request<{ session_token: string; user: User }>('/auth/login', {
+export const login = async (username: string, password: string): Promise<{ session_token: string; user: User; password_change_required: boolean }> => {
+  const result = await request<{ session_token: string; user: User; password_change_required: boolean }>('/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
@@ -52,6 +52,12 @@ export const logout = async (): Promise<void> => {
 
 export const getCurrentUser = async (): Promise<User> =>
   request<User>('/auth/me');
+
+export const changePassword = async (newPassword: string): Promise<{ status: string }> =>
+  request('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ new_password: newPassword }),
+  });
 
 // ─── Sessions ───────────────────────────────────────────────────────
 

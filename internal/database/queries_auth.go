@@ -11,13 +11,14 @@ import (
 
 // UserRow represents a user record from the database.
 type UserRow struct {
-	ID                      string
-	Username                string
-	PasswordHash            string
-	DisplayName             string
-	IsAdmin                 bool
-	PasswordChangeRequired  bool
-	CreatedAt               time.Time
+	ID                     string
+	Username               string
+	PasswordHash           string
+	DisplayName            string
+	IsAdmin                bool
+	SubcampID              *string
+	PasswordChangeRequired bool
+	CreatedAt              time.Time
 }
 
 // SessionRow represents a user session (auth token) record.
@@ -31,12 +32,12 @@ type SessionRow struct {
 // GetUserByUsername fetches a user by their username.
 func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, password_change_required, created_at FROM users WHERE username = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required, created_at FROM users WHERE username = $1",
 		username,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.PasswordChangeRequired, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -49,12 +50,12 @@ func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, 
 // GetUserByID fetches a user by their ID.
 func (d *DB) GetUserByID(ctx context.Context, id string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, password_change_required, created_at FROM users WHERE id = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required, created_at FROM users WHERE id = $1",
 		id,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.PasswordChangeRequired, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -126,12 +127,51 @@ func (d *DB) DeleteExpiredSessions(ctx context.Context) (int64, error) {
 // UserOwnsPatrol checks whether a user is assigned to the given patrol.
 func (d *DB) UserOwnsPatrol(ctx context.Context, userID, patrolID string) (bool, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM user_patrols WHERE user_id = $1 AND patrol_id = $2",
+		`SELECT COUNT(*)
+		 FROM users u
+		 JOIN patrols p ON p.id = $2
+		 WHERE u.id = $1
+		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id))`,
 		userID, patrolID,
 	)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return false, fmt.Errorf("checking patrol ownership: %w", err)
+	}
+	return count > 0, nil
+}
+
+// UserOwnsSessionPatrol checks whether a user can access a patrol within a session.
+func (d *DB) UserOwnsSessionPatrol(ctx context.Context, userID, sessionID, patrolID string) (bool, error) {
+	row := d.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		 FROM users u
+		 JOIN patrols p ON p.id = $3
+		 JOIN session_subcamps ss ON ss.session_id = $2 AND ss.subcamp_id = p.subcamp_id
+		 WHERE u.id = $1
+		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id))`,
+		userID, sessionID, patrolID,
+	)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, fmt.Errorf("checking session patrol ownership: %w", err)
+	}
+	return count > 0, nil
+}
+
+// UserCanAccessSession checks whether a user can access any patrol in the session.
+func (d *DB) UserCanAccessSession(ctx context.Context, userID, sessionID string) (bool, error) {
+	row := d.QueryRowContext(ctx,
+		`SELECT COUNT(*)
+		 FROM users u
+		 JOIN session_subcamps ss ON ss.session_id = $2
+		 WHERE u.id = $1
+		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = ss.subcamp_id))`,
+		userID, sessionID,
+	)
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return false, fmt.Errorf("checking session access: %w", err)
 	}
 	return count > 0, nil
 }

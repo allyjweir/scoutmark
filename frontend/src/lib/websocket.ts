@@ -8,6 +8,7 @@ export class ScoutmarkSocket {
   private messageQueue: WSClientMessage[] = [];
   private handlers: Map<string, MessageHandler> = new Map();
   private globalHandlers: Set<MessageHandler> = new Set();
+  private subscribedSessions: Set<string> = new Set();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -21,6 +22,7 @@ export class ScoutmarkSocket {
     this.disconnect();
     this.handlers.clear();
     this.globalHandlers.clear();
+    this.subscribedSessions.clear();
     this.messageQueue = [];
     this.reconnectAttempts = 0;
   }
@@ -44,6 +46,12 @@ export class ScoutmarkSocket {
     this.ws.onopen = () => {
       this._connected = true;
       this.reconnectAttempts = 0;
+
+      // Re-subscribe to all sessions after every (re)connect.
+      for (const sessionId of this.subscribedSessions) {
+        this.send('subscribe_session', { session_id: sessionId });
+      }
+
       // Flush queued messages
       const queue = [...this.messageQueue];
       this.messageQueue = [];
@@ -112,7 +120,19 @@ export class ScoutmarkSocket {
    * Subscribe to a scoring session to receive broadcast updates.
    */
   subscribeSession(sessionId: string): void {
+    this.subscribedSessions.add(sessionId);
     this.send('subscribe_session', { session_id: sessionId });
+  }
+
+  /**
+   * Unsubscribe from a scoring session to stop receiving broadcast updates.
+   */
+  unsubscribeSession(sessionId: string): void {
+    this.subscribedSessions.delete(sessionId);
+
+    if (this._connected && this.ws?.readyState === WebSocket.OPEN) {
+      this.send('unsubscribe_session', { session_id: sessionId });
+    }
   }
 
   /**

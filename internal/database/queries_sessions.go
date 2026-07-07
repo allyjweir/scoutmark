@@ -15,27 +15,42 @@ type UserPatrolRow struct {
 	PatrolID  string
 	Name      string
 	SortOrder int
+	SubcampID string
+	Subcamp   string
 }
 
-// GetUserPatrols returns the ordered list of patrols for a user.
-func (d *DB) GetUserPatrols(ctx context.Context, userID string) ([]UserPatrolRow, error) {
+// GetSessionPatrolsForUser returns patrols in a session that a user can access.
+// Non-admin users see only their subcamp's patrols; admins see all session subcamps.
+func (d *DB) GetSessionPatrolsForUser(ctx context.Context, userID, sessionID string, isAdmin bool) ([]UserPatrolRow, error) {
+	query := `SELECT p.id, p.name, p.sort_order, sc.id, sc.name
+		 FROM patrols p
+		 JOIN subcamps sc ON sc.id = p.subcamp_id
+		 JOIN session_subcamps ss ON ss.subcamp_id = sc.id
+		 WHERE ss.session_id = $1`
+	args := []any{sessionID}
+
+	if !isAdmin {
+		query += `
+		 AND sc.id = (SELECT subcamp_id FROM users WHERE id = $2)`
+		args = append(args, userID)
+	}
+
+	query += `
+		 ORDER BY sc.name ASC, p.sort_order ASC, p.name ASC`
+
 	rows, err := d.QueryContext(ctx,
-		`SELECT p.id, p.name, up.sort_order
-		 FROM user_patrols up
-		 JOIN patrols p ON p.id = up.patrol_id
-		 WHERE up.user_id = $1
-		 ORDER BY up.sort_order ASC`,
-		userID,
+		query,
+		args...,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying user patrols: %w", err)
+		return nil, fmt.Errorf("querying session patrols: %w", err)
 	}
 	defer rows.Close()
 
 	var patrols []UserPatrolRow
 	for rows.Next() {
 		var p UserPatrolRow
-		if err := rows.Scan(&p.PatrolID, &p.Name, &p.SortOrder); err != nil {
+		if err := rows.Scan(&p.PatrolID, &p.Name, &p.SortOrder, &p.SubcampID, &p.Subcamp); err != nil {
 			return nil, fmt.Errorf("scanning patrol: %w", err)
 		}
 		patrols = append(patrols, p)
@@ -54,6 +69,9 @@ type SessionDetailRow struct {
 	Name              string
 	StartsAt          time.Time
 	EndsAt            time.Time
+	LockedAt          *time.Time
+	LockedBy          *string
+	LockedByName      *string
 	CreatedAt         time.Time
 	PreviousSessionID *string
 	AwardBestPatrol   bool
@@ -62,6 +80,10 @@ type SessionDetailRow struct {
 
 // ComputeStatus derives the session status from time boundaries.
 func (s *SessionDetailRow) ComputeStatus() string {
+	if s.LockedAt != nil {
+		return "LOCKED"
+	}
+
 	now := time.Now()
 	switch {
 	case now.Before(s.StartsAt):
@@ -76,10 +98,13 @@ func (s *SessionDetailRow) ComputeStatus() string {
 // ListSessions returns sessions, optionally filtered by status.
 func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDetailRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
+		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at,
+		        s.locked_at, s.locked_by, lu.display_name,
+		        s.created_at,
 		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
+		 LEFT JOIN users lu ON lu.id = s.locked_by
 		 ORDER BY s.starts_at ASC`,
 	)
 	if err != nil {
@@ -90,7 +115,9 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 	var sessions []SessionDetailRow
 	for rows.Next() {
 		var s SessionDetailRow
-		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
+		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt,
+			&s.LockedAt, &s.LockedBy, &s.LockedByName,
+			&s.CreatedAt,
 			&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
 			return nil, fmt.Errorf("scanning session: %w", err)
 		}
@@ -114,20 +141,53 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 // GetSession returns a single session by ID.
 func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRow, error) {
 	row := d.QueryRowContext(ctx,
-		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at, s.created_at,
+		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at,
+		        s.locked_at, s.locked_by, lu.display_name,
+		        s.created_at,
 		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
 		 FROM sessions s
 		 JOIN events e ON e.id = s.event_id
+		 LEFT JOIN users lu ON lu.id = s.locked_by
 		 WHERE s.id = $1`,
 		sessionID,
 	)
 
 	s := &SessionDetailRow{}
-	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt, &s.CreatedAt,
+	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt,
+		&s.LockedAt, &s.LockedBy, &s.LockedByName,
+		&s.CreatedAt,
 		&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
 		return nil, fmt.Errorf("scanning session: %w", err)
 	}
 	return s, nil
+}
+
+// LockSession marks a session as locked by an admin/camp chief user.
+func (d *DB) LockSession(ctx context.Context, sessionID, lockedByUserID string) error {
+	_, err := d.ExecContext(ctx,
+		`UPDATE sessions
+		 SET locked_at = NOW(), locked_by = $2
+		 WHERE id = $1`,
+		sessionID, lockedByUserID,
+	)
+	if err != nil {
+		return fmt.Errorf("locking session: %w", err)
+	}
+	return nil
+}
+
+// UnlockSession clears a previously applied session-level lock.
+func (d *DB) UnlockSession(ctx context.Context, sessionID string) error {
+	_, err := d.ExecContext(ctx,
+		`UPDATE sessions
+		 SET locked_at = NULL, locked_by = NULL
+		 WHERE id = $1`,
+		sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("unlocking session: %w", err)
+	}
+	return nil
 }
 
 // ─── Criteria Template Queries ──────────────────────────────────────
@@ -172,21 +232,30 @@ func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]Crit
 
 // GetUserFinalisedSessionIDs returns the set of session IDs where ALL of the
 // user's assigned patrols have been submitted (shared model — no user_id on submissions).
-func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map[string]bool, error) {
-	rows, err := d.QueryContext(ctx,
-		`SELECT s.id AS session_id,
-		        COUNT(up.patrol_id) AS total_patrols,
-		        COUNT(sub.id) AS submitted_patrols
-		 FROM user_patrols up
-		 CROSS JOIN sessions s
-		 LEFT JOIN submissions sub
-		   ON sub.session_id = s.id
-		  AND sub.patrol_id = up.patrol_id
-		 WHERE up.user_id = $1
-		 GROUP BY s.id
-		 HAVING COUNT(up.patrol_id) > 0 AND COUNT(up.patrol_id) = COUNT(sub.id)`,
-		userID,
-	)
+func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string, isAdmin bool) (map[string]bool, error) {
+	query := `SELECT s.id AS session_id,
+	        COUNT(p.id) AS total_patrols,
+	        COUNT(sub.id) AS submitted_patrols
+	 FROM sessions s
+	 JOIN session_subcamps ss ON ss.session_id = s.id
+	 JOIN patrols p ON p.subcamp_id = ss.subcamp_id
+	 LEFT JOIN submissions sub
+	   ON sub.session_id = s.id
+	  AND sub.patrol_id = p.id`
+	args := []any{}
+
+	if !isAdmin {
+		query += `
+	 JOIN users u ON u.id = $1
+	 WHERE u.subcamp_id = ss.subcamp_id`
+		args = append(args, userID)
+	}
+
+	query += `
+	 GROUP BY s.id
+	 HAVING COUNT(p.id) > 0 AND COUNT(p.id) = COUNT(sub.id)`
+
+	rows, err := d.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying finalised sessions: %w", err)
 	}
@@ -210,8 +279,11 @@ func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string) (map
 type UserProgressRow struct {
 	UserID      string
 	DisplayName string
+	SubcampID   string
+	SubcampName string
 	PatrolID    string
 	PatrolName  string
+	SortOrder   int
 	Status      string // "not_started", "drafting", "submitted"
 }
 
@@ -219,18 +291,19 @@ type UserProgressRow struct {
 // Drafts are shared (no user_id), so drafting status is per-patrol not per-user.
 func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserProgressRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT u.id, u.display_name, up.patrol_id, p.name,
+		`SELECT u.id, u.display_name, sc.id, sc.name, p.id, p.name, p.sort_order,
 		        CASE
 		          WHEN s.id IS NOT NULL THEN 'submitted'
 		          WHEN dr.id IS NOT NULL THEN 'drafting'
 		          ELSE 'not_started'
 		        END AS status
 		 FROM users u
-		 JOIN user_patrols up ON up.user_id = u.id
-		 JOIN patrols p ON p.id = up.patrol_id
-		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = up.patrol_id
-		 LEFT JOIN drafts dr ON dr.session_id = $2 AND dr.patrol_id = up.patrol_id
-		 ORDER BY u.display_name, up.sort_order`,
+		 JOIN subcamps sc ON sc.id = u.subcamp_id
+		 JOIN session_subcamps ss ON ss.subcamp_id = sc.id AND ss.session_id = $1
+		 JOIN patrols p ON p.subcamp_id = sc.id
+		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = p.id
+		 LEFT JOIN drafts dr ON dr.session_id = $2 AND dr.patrol_id = p.id
+		 ORDER BY sc.name ASC, u.display_name ASC, p.sort_order ASC, p.name ASC`,
 		sessionID, sessionID,
 	)
 	if err != nil {
@@ -241,7 +314,7 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 	var progress []UserProgressRow
 	for rows.Next() {
 		var r UserProgressRow
-		if err := rows.Scan(&r.UserID, &r.DisplayName, &r.PatrolID, &r.PatrolName, &r.Status); err != nil {
+		if err := rows.Scan(&r.UserID, &r.DisplayName, &r.SubcampID, &r.SubcampName, &r.PatrolID, &r.PatrolName, &r.SortOrder, &r.Status); err != nil {
 			return nil, fmt.Errorf("scanning progress row: %w", err)
 		}
 		progress = append(progress, r)

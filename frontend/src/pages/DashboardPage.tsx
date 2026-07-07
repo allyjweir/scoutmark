@@ -38,10 +38,11 @@ export const DashboardPage = () => {
   const grouped = groupBy(sessions, 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
+  const lockedSessions = sortBy(grouped['LOCKED'] ?? [], 'starts_at');
   const closedSessions = sortBy(grouped['CLOSED'] ?? [], 'ends_at').reverse();
 
   const handleSessionClick = (session: Session) => {
-    if (session.status === 'ACTIVE' || session.status === 'CLOSED') {
+    if (session.status === 'ACTIVE' || session.status === 'LOCKED' || session.status === 'CLOSED') {
       navigate(`/sessions/${session.id}`);
     }
   };
@@ -126,6 +127,23 @@ export const DashboardPage = () => {
           </Heading>
           {upcomingSessions.map((session) => (
             <SessionCard key={session.id} session={session} disabled />
+          ))}
+        </Box>
+      )}
+
+      {/* Closed Sessions */}
+      {lockedSessions.length > 0 && (
+        <Box mb={4}>
+          <Heading sx={{ fontSize: 2, mb: 2, color: 'danger.fg' }}>
+            Locked
+          </Heading>
+          {lockedSessions.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              onClick={() => handleSessionClick(session)}
+              recentlyFinalised={session.user_finalised}
+            />
           ))}
         </Box>
       )}

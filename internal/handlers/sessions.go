@@ -2,8 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
@@ -38,6 +41,9 @@ type sessionJSON struct {
 	StartsAt          string          `json:"starts_at"`
 	EndsAt            string          `json:"ends_at"`
 	Status            string          `json:"status"`
+	LockedAt          *string         `json:"locked_at,omitempty"`
+	LockedBy          *string         `json:"locked_by,omitempty"`
+	LockedByName      *string         `json:"locked_by_name,omitempty"`
 	CreatedAt         string          `json:"created_at"`
 	Criteria          []criterionJSON `json:"criteria,omitempty"`
 	UserFinalised     bool            `json:"user_finalised"`
@@ -59,6 +65,8 @@ type patrolJSON struct {
 	PatrolID  string `json:"patrol_id"`
 	Name      string `json:"name"`
 	SortOrder int    `json:"sort_order"`
+	SubcampID string `json:"subcamp_id,omitempty"`
+	Subcamp   string `json:"subcamp,omitempty"`
 }
 
 type submissionJSON struct {
@@ -114,7 +122,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Look up which sessions this user has fully finalised
-	finalisedSet, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID)
+	finalisedSet, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID, user.IsAdmin)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		// Non-fatal: just proceed without finalised info
@@ -124,6 +132,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(attribute.Int("sessions.count", len(sessions)))
 
 	result := lo.Map(sessions, func(s database.SessionDetailRow, _ int) sessionJSON {
+		lockedAt := lo.Ternary(s.LockedAt != nil, lo.ToPtr(s.LockedAt.Format("2006-01-02T15:04:05Z")), nil)
 		return sessionJSON{
 			ID:                s.ID,
 			EventID:           s.EventID,
@@ -133,6 +142,9 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
 			EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
 			Status:            s.ComputeStatus(),
+			LockedAt:          lockedAt,
+			LockedBy:          s.LockedBy,
+			LockedByName:      s.LockedByName,
 			CreatedAt:         s.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			UserFinalised:     finalisedSet[s.ID],
 			PreviousSessionID: s.PreviousSessionID,
@@ -172,7 +184,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch user's patrols
-	patrols, err := h.db.GetUserPatrols(ctx, user.ID)
+	patrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, user.IsAdmin)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
@@ -203,6 +215,9 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
+		LockedAt:          lo.Ternary(session.LockedAt != nil, lo.ToPtr(session.LockedAt.Format("2006-01-02T15:04:05Z")), nil),
+		LockedBy:          session.LockedBy,
+		LockedByName:      session.LockedByName,
 		CreatedAt:         session.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		PreviousSessionID: session.PreviousSessionID,
 		AwardBestPatrol:   session.AwardBestPatrol,
@@ -220,7 +235,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	patrolResult := lo.Map(patrols, func(p database.UserPatrolRow, _ int) patrolJSON {
-		return patrolJSON{PatrolID: p.PatrolID, Name: p.Name, SortOrder: p.SortOrder}
+		return patrolJSON{PatrolID: p.PatrolID, Name: p.Name, SortOrder: p.SortOrder, SubcampID: p.SubcampID, Subcamp: p.Subcamp}
 	})
 
 	submissionResult := lo.Map(submissions, func(s database.SubmissionRow, _ int) submissionJSON {
@@ -253,6 +268,88 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// LockSession handles POST /api/admin/sessions/{session_id}/lock
+func (h *SessionHandler) LockSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	user := auth.UserFromContext(ctx)
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+
+	if session.ComputeStatus() != "ACTIVE" {
+		writeError(w, r, http.StatusBadRequest, "only active sessions can be locked")
+		return
+	}
+
+	if err := h.db.LockSession(ctx, sessionID, user.ID); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not lock session")
+		return
+	}
+
+	lockedSession, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch locked session")
+		return
+	}
+
+	if fb, ok := h.broadcaster.(interface {
+		BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string)
+	}); ok && lockedSession.LockedAt != nil {
+		fb.BroadcastSessionLocked(
+			sessionID,
+			user.ID,
+			user.DisplayName,
+			lockedSession.LockedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			lockedSession.EndsAt.Format("2006-01-02T15:04:05Z"),
+		)
+	}
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// UnlockSession handles POST /api/admin/sessions/{session_id}/unlock
+func (h *SessionHandler) UnlockSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+
+	if session.LockedAt == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	if err := h.db.UnlockSession(ctx, sessionID); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not unlock session")
+		return
+	}
+
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+	}
+	if fb, ok := h.broadcaster.(interface {
+		BroadcastSessionUnlocked(sessionID string)
+	}); ok {
+		fb.BroadcastSessionUnlocked(sessionID)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // GetDraft handles GET /api/sessions/{session_id}/patrols/{patrol_id}/draft
 func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -266,7 +363,7 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(ctx)
 
 	// IDOR check: verify user owns this patrol
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -329,13 +426,21 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			locker := lo.FromPtr(session.LockedByName)
+			if locker == "" {
+				locker = "an administrator"
+			}
+			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
+			return
+		}
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
 		writeError(w, r, http.StatusBadRequest, "session is not active")
 		return
 	}
 
 	// IDOR check: verify user owns this patrol
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -481,24 +586,62 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			locker := lo.FromPtr(session.LockedByName)
+			if locker == "" {
+				locker = "an administrator"
+			}
+			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
+			return
+		}
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
 		writeError(w, r, http.StatusBadRequest, "session is not active")
 		return
 	}
 
-	newSubmissions, err := h.db.FinaliseSession(ctx, user.ID, sessionID)
+	var req struct {
+		SubcampID string `json:"subcamp_id"`
+	}
+	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	targetSubcampID := ""
+	if req.SubcampID != "" {
+		if !user.IsAdmin {
+			writeError(w, r, http.StatusForbidden, "only admins can finalise another subcamp")
+			return
+		}
+		targetSubcampID = req.SubcampID
+	} else if user.SubcampID != nil {
+		targetSubcampID = *user.SubcampID
+	} else if !user.IsAdmin {
+		writeError(w, r, http.StatusForbidden, "user is not assigned to a subcamp")
+		return
+	} else if user.IsAdmin {
+		writeError(w, r, http.StatusBadRequest, "subcamp_id is required for admin users without an assigned subcamp")
+		return
+	}
+
+	newSubmissions, err := h.db.FinaliseSession(ctx, user.ID, sessionID, targetSubcampID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not finalise session")
 		return
 	}
 
-	// Return all submissions for user's patrols (including previously submitted)
-	userPatrols, err := h.db.GetUserPatrols(ctx, user.ID)
+	// Return all submissions for the finalised subcamp patrols.
+	userPatrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, user.IsAdmin)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
 		return
+	}
+	if targetSubcampID != "" {
+		userPatrols = lo.Filter(userPatrols, func(p database.UserPatrolRow, _ int) bool {
+			return p.SubcampID == targetSubcampID
+		})
 	}
 	patrolIDs := lo.Map(userPatrols, func(p database.UserPatrolRow, _ int) string { return p.PatrolID })
 	allSubmissions, err := h.db.GetSubmissionsForPatrols(ctx, sessionID, patrolIDs)
@@ -536,9 +679,16 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 
 	// Broadcast finalised event to all session subscribers (for lock screen)
 	if fb, ok := h.broadcaster.(interface {
-		BroadcastSessionFinalised(sessionID, userID, displayName, endsAt string)
+		BroadcastSessionFinalised(sessionID, userID, displayName, subcampID, finalisedAt, endsAt string)
 	}); ok {
-		fb.BroadcastSessionFinalised(sessionID, user.ID, user.DisplayName, session.EndsAt.Format("2006-01-02T15:04:05Z"))
+		fb.BroadcastSessionFinalised(
+			sessionID,
+			user.ID,
+			user.DisplayName,
+			targetSubcampID,
+			time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			session.EndsAt.Format("2006-01-02T15:04:05Z"),
+		)
 	}
 }
 
@@ -561,6 +711,14 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			locker := lo.FromPtr(session.LockedByName)
+			if locker == "" {
+				locker = "an administrator"
+			}
+			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
+			return
+		}
 		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
 		writeError(w, r, http.StatusBadRequest, "session is not active")
 		return
@@ -570,6 +728,10 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not revise session")
 		return
+	}
+
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -592,7 +754,7 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 	user := auth.UserFromContext(ctx)
 
 	// IDOR check: verify user owns this patrol
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -657,7 +819,14 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 	type userProgress struct {
 		UserID      string           `json:"user_id"`
 		DisplayName string           `json:"display_name"`
+		SubcampID   string           `json:"subcamp_id"`
+		SubcampName string           `json:"subcamp_name"`
 		Patrols     []patrolProgress `json:"patrols"`
+	}
+	type subcampProgress struct {
+		SubcampID   string         `json:"subcamp_id"`
+		SubcampName string         `json:"subcamp_name"`
+		Users       []userProgress `json:"users"`
 	}
 
 	userMap := make(map[string]*userProgress)
@@ -669,6 +838,8 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 			up = &userProgress{
 				UserID:      row.UserID,
 				DisplayName: row.DisplayName,
+				SubcampID:   row.SubcampID,
+				SubcampName: row.SubcampName,
 			}
 			userMap[row.UserID] = up
 			userOrder = append(userOrder, row.UserID)
@@ -680,13 +851,32 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
-	// Preserve insertion order
-	users := make([]userProgress, 0, len(userOrder))
+	// Preserve insertion order, grouped by subcamp.
+	usersBySubcamp := make(map[string][]userProgress)
+	subcampOrder := []string{}
+	seenSubcamp := make(map[string]bool)
 	for _, id := range userOrder {
-		users = append(users, *userMap[id])
+		u := *userMap[id]
+		usersBySubcamp[u.SubcampID] = append(usersBySubcamp[u.SubcampID], u)
+		if !seenSubcamp[u.SubcampID] {
+			subcampOrder = append(subcampOrder, u.SubcampID)
+			seenSubcamp[u.SubcampID] = true
+		}
 	}
 
-	span.SetAttributes(attribute.Int("users.count", len(users)))
+	subcamps := make([]subcampProgress, 0, len(subcampOrder))
+	for _, sid := range subcampOrder {
+		name := sid
+		for _, u := range usersBySubcamp[sid] {
+			if u.SubcampName != "" {
+				name = u.SubcampName
+				break
+			}
+		}
+		subcamps = append(subcamps, subcampProgress{SubcampID: sid, SubcampName: name, Users: usersBySubcamp[sid]})
+	}
+
+	span.SetAttributes(attribute.Int("users.count", len(userOrder)))
 
 	sessionResult := sessionJSON{
 		ID:                session.ID,
@@ -734,22 +924,44 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 	type userWithAwards struct {
 		UserID      string           `json:"user_id"`
 		DisplayName string           `json:"display_name"`
+		SubcampID   string           `json:"subcamp_id"`
+		SubcampName string           `json:"subcamp_name"`
 		Patrols     []patrolProgress `json:"patrols"`
 		Awards      []userAwardJSON  `json:"awards,omitempty"`
 	}
-	usersWithAwards := make([]userWithAwards, 0, len(users))
-	for _, u := range users {
-		usersWithAwards = append(usersWithAwards, userWithAwards{
-			UserID:      u.UserID,
-			DisplayName: u.DisplayName,
-			Patrols:     u.Patrols,
-			Awards:      userAwardsMap[u.UserID],
+	type subcampWithAwards struct {
+		SubcampID   string           `json:"subcamp_id"`
+		SubcampName string           `json:"subcamp_name"`
+		Users       []userWithAwards `json:"users"`
+	}
+
+	subcampsWithAwards := make([]subcampWithAwards, 0, len(subcamps))
+	flatUsersWithAwards := make([]userWithAwards, 0)
+	for _, sc := range subcamps {
+		usersWithAwards := make([]userWithAwards, 0, len(sc.Users))
+		for _, u := range sc.Users {
+			uw := userWithAwards{
+				UserID:      u.UserID,
+				DisplayName: u.DisplayName,
+				SubcampID:   u.SubcampID,
+				SubcampName: u.SubcampName,
+				Patrols:     u.Patrols,
+				Awards:      userAwardsMap[u.UserID],
+			}
+			usersWithAwards = append(usersWithAwards, uw)
+			flatUsersWithAwards = append(flatUsersWithAwards, uw)
+		}
+		subcampsWithAwards = append(subcampsWithAwards, subcampWithAwards{
+			SubcampID:   sc.SubcampID,
+			SubcampName: sc.SubcampName,
+			Users:       usersWithAwards,
 		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"session": sessionResult,
-		"users":   usersWithAwards,
+		"session":  sessionResult,
+		"users":    flatUsersWithAwards,
+		"subcamps": subcampsWithAwards,
 	})
 }
 
@@ -796,7 +1008,7 @@ func (h *SessionHandler) SaveAward(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// IDOR check: verify user owns the patrol
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, req.PatrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, req.PatrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -849,7 +1061,7 @@ func (h *SessionHandler) GetPreviousScores(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get user's patrol IDs for the lookup
-	userPatrols, err := h.db.GetUserPatrols(ctx, user.ID)
+	userPatrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, user.IsAdmin)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
@@ -1033,7 +1245,7 @@ func (h *SessionHandler) GetDraftComments(w http.ResponseWriter, r *http.Request
 	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
 
 	// IDOR check
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -1077,8 +1289,26 @@ func (h *SessionHandler) SaveDraftComment(w http.ResponseWriter, r *http.Request
 	defer span.End()
 	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
 
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			locker := lo.FromPtr(session.LockedByName)
+			if locker == "" {
+				locker = "an administrator"
+			}
+			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
+			return
+		}
+		writeError(w, r, http.StatusBadRequest, "session is not active")
+		return
+	}
+
 	// IDOR check
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -1139,8 +1369,26 @@ func (h *SessionHandler) DeleteDraftComment(w http.ResponseWriter, r *http.Reque
 	defer span.End()
 	tracing.AddSessionAttrs(ctx, sessionID, patrolID)
 
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			locker := lo.FromPtr(session.LockedByName)
+			if locker == "" {
+				locker = "an administrator"
+			}
+			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
+			return
+		}
+		writeError(w, r, http.StatusBadRequest, "session is not active")
+		return
+	}
+
 	// IDOR check
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")
@@ -1183,7 +1431,7 @@ func (h *SessionHandler) GetSubmittedComments(w http.ResponseWriter, r *http.Req
 	defer span.End()
 
 	// IDOR check
-	owns, err := h.db.UserOwnsPatrol(ctx, user.ID, patrolID)
+	owns, err := h.db.UserOwnsSessionPatrol(ctx, user.ID, sessionID, patrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "internal server error")

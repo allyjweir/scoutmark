@@ -5,6 +5,7 @@ export interface User {
   username: string;
   display_name: string;
   is_admin: boolean;
+  subcamp_id?: string;
   password_change_required?: boolean;
 }
 
@@ -16,7 +17,10 @@ export interface Session {
   name: string;
   starts_at: string;
   ends_at: string;
-  status: 'UPCOMING' | 'ACTIVE' | 'CLOSED';
+  status: 'UPCOMING' | 'ACTIVE' | 'LOCKED' | 'CLOSED';
+  locked_at?: string;
+  locked_by?: string;
+  locked_by_name?: string;
   created_at: string;
   criteria?: Criterion[];
   user_finalised: boolean;
@@ -49,6 +53,8 @@ export interface Patrol {
   patrol_id: string;
   name: string;
   sort_order: number;
+  subcamp_id?: string;
+  subcamp?: string;
 }
 
 export interface Draft {
@@ -84,7 +90,7 @@ export interface SubmissionScore {
 
 export interface WSClientMessage {
   request_id: string;
-  type: 'save_draft' | 'subscribe_session' | 'presence';
+  type: 'save_draft' | 'subscribe_session' | 'unsubscribe_session' | 'presence';
   payload: unknown;
 }
 
@@ -109,7 +115,7 @@ export interface WSCommentUpdatedPayload {
 
 export interface WSServerMessage {
   request_id?: string;
-  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'progress_updated' | 'presence_updated' | 'presence_state' | 'comment_updated' | 'session_finalised';
+  type: 'draft_saved' | 'draft_updated' | 'patrol_submitted' | 'error' | 'subscribed' | 'unsubscribed' | 'progress_updated' | 'presence_updated' | 'presence_state' | 'comment_updated' | 'session_finalised' | 'session_locked' | 'session_unlocked';
   payload: unknown;
 }
 
@@ -148,7 +154,21 @@ export interface WSSessionFinalisedPayload {
   session_id: string;
   user_id: string;
   user_display_name: string;
+  subcamp_id: string;
+  finalised_at: string;
   ends_at: string;
+}
+
+export interface WSSessionLockedPayload {
+  session_id: string;
+  user_id: string;
+  user_display_name: string;
+  locked_at: string;
+  ends_at: string;
+}
+
+export interface WSSessionUnlockedPayload {
+  session_id: string;
 }
 
 export interface WSPresenceUpdatedPayload {
@@ -185,6 +205,8 @@ export interface WSPatrolProgressPayload {
 export interface WSUserProgressPayload {
   user_id: string;
   display_name: string;
+  subcamp_id: string;
+  subcamp_name: string;
   patrols: WSPatrolProgressPayload[];
 }
 

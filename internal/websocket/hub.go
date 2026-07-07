@@ -103,7 +103,21 @@ type SessionFinalisedPayload struct {
 	SessionID       string `json:"session_id"`
 	UserID          string `json:"user_id"`
 	UserDisplayName string `json:"user_display_name"`
+	SubcampID       string `json:"subcamp_id"`
+	FinalisedAt     string `json:"finalised_at"`
 	EndsAt          string `json:"ends_at"`
+}
+
+type SessionLockedPayload struct {
+	SessionID       string `json:"session_id"`
+	UserID          string `json:"user_id"`
+	UserDisplayName string `json:"user_display_name"`
+	LockedAt        string `json:"locked_at"`
+	EndsAt          string `json:"ends_at"`
+}
+
+type SessionUnlockedPayload struct {
+	SessionID string `json:"session_id"`
 }
 
 type ErrorPayload struct {
@@ -112,6 +126,10 @@ type ErrorPayload struct {
 }
 
 type SubscribeSessionPayload struct {
+	SessionID string `json:"session_id"`
+}
+
+type UnsubscribeSessionPayload struct {
 	SessionID string `json:"session_id"`
 }
 
@@ -152,6 +170,8 @@ type PatrolProgressPayload struct {
 type UserProgressPayload struct {
 	UserID      string                  `json:"user_id"`
 	DisplayName string                  `json:"display_name"`
+	SubcampID   string                  `json:"subcamp_id"`
+	SubcampName string                  `json:"subcamp_name"`
 	Patrols     []PatrolProgressPayload `json:"patrols"`
 }
 
@@ -185,6 +205,17 @@ func (c *Client) isSubscribedTo(sessionID string) bool {
 	c.sessionsMu.RLock()
 	defer c.sessionsMu.RUnlock()
 	return c.sessions[sessionID]
+}
+
+func (c *Client) unsubscribeFrom(sessionID string) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+	delete(c.sessions, sessionID)
+
+	c.presenceMu.Lock()
+	defer c.presenceMu.Unlock()
+	delete(c.presence, sessionID)
+	delete(c.commentingOn, sessionID)
 }
 
 func (c *Client) setPresence(sessionID, patrolID, commentingOn string) {
@@ -316,6 +347,8 @@ func (h *Hub) BroadcastSessionProgress(ctx context.Context, sessionID string) {
 			up = &UserProgressPayload{
 				UserID:      row.UserID,
 				DisplayName: row.DisplayName,
+				SubcampID:   row.SubcampID,
+				SubcampName: row.SubcampName,
 			}
 			userMap[row.UserID] = up
 			userOrder = append(userOrder, row.UserID)
@@ -350,15 +383,68 @@ func (h *Hub) BroadcastCommentUpdated(sessionID string, payload any, exclude any
 	}, nil) // broadcast to everyone including the sender for consistency
 }
 
-// BroadcastSessionFinalised sends a session_finalised message to all session subscribers.
-func (h *Hub) BroadcastSessionFinalised(sessionID, userID, displayName, endsAt string) {
-	h.BroadcastToSession(sessionID, ServerMessage{
+// BroadcastSessionFinalised sends a session_finalised message to subscribers in the same subcamp.
+func (h *Hub) BroadcastSessionFinalised(sessionID, userID, displayName, subcampID, finalisedAt, endsAt string) {
+	msg := ServerMessage{
 		Type: "session_finalised",
 		Payload: SessionFinalisedPayload{
 			SessionID:       sessionID,
 			UserID:          userID,
 			UserDisplayName: displayName,
+			SubcampID:       subcampID,
+			FinalisedAt:     finalisedAt,
 			EndsAt:          endsAt,
+		},
+	}
+
+	h.clientsMu.RLock()
+	defer h.clientsMu.RUnlock()
+
+	subscribers := lo.Filter(lo.Keys(h.clients), func(c *Client, _ int) bool {
+		if !c.isSubscribedTo(sessionID) {
+			return false
+		}
+		if c.user.IsAdmin {
+			return true
+		}
+		return c.user.SubcampID != nil && *c.user.SubcampID == subcampID
+	})
+
+	lo.ForEach(subscribers, func(c *Client, _ int) {
+		select {
+		case c.send <- msg:
+		default:
+			// Client buffer full; disconnect
+			h.clientsMu.RUnlock()
+			h.clientsMu.Lock()
+			delete(h.clients, c)
+			close(c.send)
+			h.clientsMu.Unlock()
+			h.clientsMu.RLock()
+		}
+	})
+}
+
+// BroadcastSessionLocked sends a session_locked message to all session subscribers.
+func (h *Hub) BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type: "session_locked",
+		Payload: SessionLockedPayload{
+			SessionID:       sessionID,
+			UserID:          userID,
+			UserDisplayName: displayName,
+			LockedAt:        lockedAt,
+			EndsAt:          endsAt,
+		},
+	}, nil)
+}
+
+// BroadcastSessionUnlocked notifies subscribers that a full-session lock was removed.
+func (h *Hub) BroadcastSessionUnlocked(sessionID string) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type: "session_unlocked",
+		Payload: SessionUnlockedPayload{
+			SessionID: sessionID,
 		},
 	}, nil)
 }
@@ -468,6 +554,8 @@ func (c *Client) handleMessage(msg ClientMessage) {
 		c.handleSaveDraft(ctx, msg)
 	case "subscribe_session":
 		c.handleSubscribeSession(ctx, msg)
+	case "unsubscribe_session":
+		c.handleUnsubscribeSession(msg)
 	case "presence":
 		c.handlePresence(ctx, msg)
 	default:
@@ -491,12 +579,16 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 		return
 	}
 	if session.ComputeStatus() != "ACTIVE" {
+		if session.LockedAt != nil {
+			c.sendError(msg.RequestID, "SESSION_LOCKED", "session is locked")
+			return
+		}
 		c.sendError(msg.RequestID, "SESSION_NOT_ACTIVE", "session is not active")
 		return
 	}
 
-	// Verify the user owns this patrol
-	owns, err := c.hub.db.UserOwnsPatrol(ctx, c.user.ID, payload.PatrolID)
+	// Verify the user owns this patrol within this session
+	owns, err := c.hub.db.UserOwnsSessionPatrol(ctx, c.user.ID, payload.SessionID, payload.PatrolID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		c.sendError(msg.RequestID, "INTERNAL_ERROR", "could not verify patrol ownership")
@@ -552,6 +644,21 @@ func (c *Client) handleSubscribeSession(ctx context.Context, msg ClientMessage) 
 		c.sendError(msg.RequestID, "INVALID_PAYLOAD", "could not parse subscribe_session payload")
 		return
 	}
+	if payload.SessionID == "" {
+		c.sendError(msg.RequestID, "INVALID_PAYLOAD", "session_id is required")
+		return
+	}
+
+	allowed, err := c.hub.db.UserCanAccessSession(ctx, c.user.ID, payload.SessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		c.sendError(msg.RequestID, "INTERNAL_ERROR", "could not verify session access")
+		return
+	}
+	if !allowed {
+		c.sendError(msg.RequestID, "FORBIDDEN", "you are not assigned to this session")
+		return
+	}
 
 	c.subscribeTo(payload.SessionID)
 
@@ -571,6 +678,26 @@ func (c *Client) handleSubscribeSession(ctx context.Context, msg ClientMessage) 
 	c.send <- ServerMessage{
 		RequestID: msg.RequestID,
 		Type:      "subscribed",
+		Payload:   map[string]string{"session_id": payload.SessionID},
+	}
+}
+
+func (c *Client) handleUnsubscribeSession(msg ClientMessage) {
+	var payload UnsubscribeSessionPayload
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		c.sendError(msg.RequestID, "INVALID_PAYLOAD", "could not parse unsubscribe_session payload")
+		return
+	}
+	if payload.SessionID == "" {
+		c.sendError(msg.RequestID, "INVALID_PAYLOAD", "session_id is required")
+		return
+	}
+
+	c.unsubscribeFrom(payload.SessionID)
+
+	c.send <- ServerMessage{
+		RequestID: msg.RequestID,
+		Type:      "unsubscribed",
 		Payload:   map[string]string{"session_id": payload.SessionID},
 	}
 }

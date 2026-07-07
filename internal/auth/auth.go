@@ -26,6 +26,7 @@ type AuthUser struct {
 	Username               string
 	DisplayName            string
 	IsAdmin                bool
+	SubcampID              *string
 	PasswordChangeRequired bool
 }
 
@@ -70,6 +71,7 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 				Username:               user.Username,
 				DisplayName:            user.DisplayName,
 				IsAdmin:                user.IsAdmin,
+				SubcampID:              user.SubcampID,
 				PasswordChangeRequired: user.PasswordChangeRequired,
 			}
 

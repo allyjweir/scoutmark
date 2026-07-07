@@ -394,12 +394,33 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 	return subs, rows.Err()
 }
 
-// FinaliseSession converts all shared drafts for a user's assigned patrols into submissions.
+// FinaliseSession converts all shared drafts for a session+subcamp into submissions.
 // Missing criteria are filled with zeros.
-func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]SubmissionRow, error) {
+func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID string) ([]SubmissionRow, error) {
 	var submissions []SubmissionRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
+		resolvedSubcampID := subcampID
+		if resolvedSubcampID == "" {
+			if err := tx.QueryRowContext(ctx,
+				"SELECT subcamp_id FROM users WHERE id = $1", userID,
+			).Scan(&resolvedSubcampID); err != nil {
+				return fmt.Errorf("looking up user subcamp: %w", err)
+			}
+		}
+
+		// Ensure the target subcamp participates in this session.
+		var inSessionCount int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM session_subcamps WHERE session_id = $1 AND subcamp_id = $2",
+			sessionID, resolvedSubcampID,
+		).Scan(&inSessionCount); err != nil {
+			return fmt.Errorf("checking session subcamp: %w", err)
+		}
+		if inSessionCount == 0 {
+			return fmt.Errorf("subcamp is not part of this session")
+		}
+
 		// Look up the session's template to get the full criteria list
 		var templateID string
 		if err := tx.QueryRowContext(ctx,
@@ -425,15 +446,17 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 		}
 		critRows.Close()
 
-		// Get all patrols assigned to this user
+		// Get all patrols for this subcamp that are in-session
 		patrolRows, err := tx.QueryContext(ctx,
-			`SELECT p.id, p.name FROM user_patrols up
-			 JOIN patrols p ON p.id = up.patrol_id
-			 WHERE up.user_id = $1`,
-			userID,
+			`SELECT p.id, p.name
+			 FROM patrols p
+			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
+			 WHERE p.subcamp_id = $2
+			 ORDER BY p.sort_order ASC, p.name ASC`,
+			sessionID, resolvedSubcampID,
 		)
 		if err != nil {
-			return fmt.Errorf("querying user patrols: %w", err)
+			return fmt.Errorf("querying subcamp patrols: %w", err)
 		}
 		type patrolInfo struct {
 			ID   string
@@ -476,7 +499,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 			return err
 		}
 
-		// Process every assigned patrol
+		// Process every patrol in the target subcamp
 		for _, patrol := range userPatrols {
 			// Skip patrols that already have a submission
 			var existingCount int
@@ -572,15 +595,27 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID string) ([]S
 	return submissions, err
 }
 
-// ReviseSession converts all submissions for a user's patrols back into shared drafts.
+// ReviseSession converts all submissions for a user's subcamp patrols back into shared drafts.
 func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
-		// Get the user's assigned patrols
+		// Get the user's subcamp
+		var subcampID string
+		if err := tx.QueryRowContext(ctx,
+			"SELECT subcamp_id FROM users WHERE id = $1", userID,
+		).Scan(&subcampID); err != nil {
+			return fmt.Errorf("querying user subcamp: %w", err)
+		}
+
+		// Get patrols in the user's subcamp that are included in this session
 		patrolRows, err := tx.QueryContext(ctx,
-			"SELECT patrol_id FROM user_patrols WHERE user_id = $1", userID,
+			`SELECT p.id
+			 FROM patrols p
+			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
+			 WHERE p.subcamp_id = $2`,
+			sessionID, subcampID,
 		)
 		if err != nil {
-			return fmt.Errorf("querying user patrols: %w", err)
+			return fmt.Errorf("querying subcamp patrols: %w", err)
 		}
 		var patrolIDs []string
 		for patrolRows.Next() {
@@ -592,6 +627,9 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			patrolIDs = append(patrolIDs, id)
 		}
 		patrolRows.Close()
+		if len(patrolIDs) == 0 {
+			return nil
+		}
 
 		// Fetch submissions for these patrols
 		subRows, err := tx.QueryContext(ctx,
@@ -957,9 +995,9 @@ func (d *DB) GetAdminUserSubmissions(ctx context.Context, userID, sessionID stri
 		 JOIN patrols p ON p.id = s.patrol_id
 		 JOIN submission_scores ss ON ss.submission_id = s.id
 		 JOIN criteria c ON c.id = ss.criterion_id
-		 JOIN user_patrols up ON up.patrol_id = s.patrol_id AND up.user_id = $1
+		 JOIN users u ON u.id = $1 AND u.subcamp_id = p.subcamp_id
 		 WHERE s.session_id = $2
-		 ORDER BY p.name, c.sort_order`,
+		 ORDER BY p.sort_order, p.name, c.sort_order`,
 		userID, sessionID,
 	)
 	if err != nil {
@@ -1055,13 +1093,22 @@ type ReportCardRow struct {
 // the requesting user's patrol sort_order. Each row is one (patrol, criterion) score.
 func (d *DB) GetReportCardData(ctx context.Context, userID, sessionID string) ([]ReportCardRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT p.id, p.name, up.sort_order, ss.criterion_id, ss.value
-		 FROM user_patrols up
-		 JOIN patrols p ON p.id = up.patrol_id
+		`SELECT p.id, p.name, p.sort_order, ss.criterion_id, ss.value
+		 FROM users u
+		 JOIN patrols p ON (
+		   (u.is_admin = TRUE AND EXISTS (
+		     SELECT 1 FROM session_subcamps ssc
+		     WHERE ssc.session_id = $2 AND ssc.subcamp_id = p.subcamp_id
+		   ))
+		   OR (u.is_admin = FALSE AND u.subcamp_id = p.subcamp_id AND EXISTS (
+		     SELECT 1 FROM session_subcamps ssc
+		     WHERE ssc.session_id = $2 AND ssc.subcamp_id = u.subcamp_id
+		   ))
+		 )
 		 JOIN submissions s ON s.session_id = $2 AND s.patrol_id = p.id
 		 JOIN submission_scores ss ON ss.submission_id = s.id
-		 WHERE up.user_id = $1
-		 ORDER BY up.sort_order ASC, ss.criterion_id ASC`,
+		 WHERE u.id = $1
+		 ORDER BY p.sort_order ASC, ss.criterion_id ASC`,
 		userID, sessionID,
 	)
 	if err != nil {

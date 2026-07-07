@@ -29,7 +29,7 @@ func readJSON(r *http.Request, v any) error {
 
 // writeError writes a JSON error response.
 func writeError(w http.ResponseWriter, r *http.Request, status int, message string) {
-	tracing.RecordError(r.Context(), fmt.Errorf(message))
+	tracing.RecordError(r.Context(), fmt.Errorf("%s", message))
 	writeJSON(w, status, map[string]string{"error": message})
 }
 

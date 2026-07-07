@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
 import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
+import { AdminWorkspacePage } from './pages/AdminWorkspacePage';
 import type { ReactNode } from 'react';
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
@@ -27,6 +28,28 @@ const ProtectedRoute = ({ children }: { children: ReactNode }) => {
 
   if (passwordChangeRequired) {
     return <Navigate to="/change-password" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const AdminRoute = ({ children }: { children: ReactNode }) => {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
+        <Spinner size="large" />
+      </Box>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!user.is_admin) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;
@@ -64,17 +87,25 @@ const AppRoutes = () => (
       <Route
         path="/admin/sessions/:sessionId"
         element={
-          <ProtectedRoute>
+          <AdminRoute>
             <AdminSessionPage />
-          </ProtectedRoute>
+          </AdminRoute>
         }
       />
       <Route
         path="/admin/sessions/:sessionId/scorer/:userId"
         element={
-          <ProtectedRoute>
+          <AdminRoute>
             <AdminScorerPage />
-          </ProtectedRoute>
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminWorkspacePage />
+          </AdminRoute>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />

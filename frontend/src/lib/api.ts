@@ -205,6 +205,198 @@ export const getAdminUserScores = async (
 ): Promise<AdminUserScoresResponse> =>
   request(`/admin/sessions/${sessionId}/users/${userId}/scores`);
 
+export interface AdminUserPatrol {
+  patrol_id: string;
+  patrol_name: string;
+  sort_order: number;
+}
+
+export interface AdminUserSummary {
+  id: string;
+  username: string;
+  display_name: string;
+  is_admin: boolean;
+  created_at: string;
+  patrols: AdminUserPatrol[];
+}
+
+export interface AdminEventSummary {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+}
+
+export interface AdminCriterionSummary {
+  id: string;
+  title: string;
+  description: string;
+  min_value: number;
+  max_value: number;
+  sort_order: number;
+}
+
+export interface AdminTemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  criteria: AdminCriterionSummary[];
+}
+
+export interface AdminPatrolSummary {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+export interface AdminSessionSummary {
+  id: string;
+  event_id: string;
+  event_name: string;
+  template_id: string;
+  template_name: string;
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  status: 'UPCOMING' | 'ACTIVE' | 'CLOSED';
+  created_at: string;
+  previous_session_id: string | null;
+  award_best_patrol: boolean;
+  award_most_improved: boolean;
+}
+
+export interface AdminBootstrap {
+  users: AdminUserSummary[];
+  events: AdminEventSummary[];
+  templates: AdminTemplateSummary[];
+  patrols: AdminPatrolSummary[];
+  sessions: AdminSessionSummary[];
+}
+
+export const getAdminBootstrap = async (): Promise<AdminBootstrap> =>
+  request('/admin/bootstrap');
+
+export const createAdminUser = async (payload: {
+  id?: string;
+  username: string;
+  password: string;
+  display_name: string;
+  is_admin: boolean;
+}): Promise<{ ok: boolean; id: string }> =>
+  request('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const changeAdminUserPassword = async (
+  userId: string,
+  password: string,
+): Promise<{ ok: boolean }> =>
+  request(`/admin/users/${userId}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password }),
+  });
+
+export const createAdminEvent = async (payload: {
+  id?: string;
+  name: string;
+  description: string;
+}): Promise<{ ok: boolean; id: string }> =>
+  request('/admin/events', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const createAdminTemplate = async (payload: {
+  id?: string;
+  name: string;
+  description: string;
+}): Promise<{ ok: boolean; id: string }> =>
+  request('/admin/templates', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const addAdminCriterion = async (
+  templateId: string,
+  payload: {
+    id?: string;
+    title: string;
+    description: string;
+    min_value: number;
+    max_value: number;
+    sort_order: number;
+  },
+): Promise<{ ok: boolean; id: string; template_name: string }> =>
+  request(`/admin/templates/${templateId}/criteria`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const createAdminPatrol = async (payload: {
+  id?: string;
+  name: string;
+}): Promise<{ ok: boolean; id: string }> =>
+  request('/admin/patrols', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const assignAdminPatrol = async (
+  userId: string,
+  payload: {
+    patrol_id: string;
+    sort_order: number;
+  },
+): Promise<{ ok: boolean; user: string; patrol: string }> =>
+  request(`/admin/users/${userId}/patrols`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const createAdminSession = async (payload: {
+  id?: string;
+  event_id: string;
+  template_id: string;
+  name: string;
+  start: string;
+  duration: string;
+  award_best_patrol: boolean;
+  award_most_improved: boolean;
+  previous_session_id: string;
+}): Promise<{ ok: boolean; id: string; event_name: string; template_name: string }> =>
+  request('/admin/sessions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+export const updateAdminSession = async (
+  sessionId: string,
+  payload: {
+    award_best_patrol: boolean;
+    award_most_improved: boolean;
+    previous_session_id: string;
+  },
+): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+export const seedAdminSessionScores = async (
+  sessionId: string,
+  payload: {
+    user_id: string;
+    min_score: number;
+    max_score: number;
+  },
+): Promise<{ ok: boolean; seeded: number }> =>
+  request(`/admin/sessions/${sessionId}/seed-scores`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
 // ─── Per-User Comments ──────────────────────────────────────────────
 
 export interface DraftCommentAPI {

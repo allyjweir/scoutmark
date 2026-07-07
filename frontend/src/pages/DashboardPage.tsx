@@ -80,11 +80,19 @@ export const DashboardPage = () => {
       )}
 
       {/* Admin quick-access */}
-      {user?.is_admin && (activeSessions.length > 0 || closedSessions.length > 0) && (
+      {user?.is_admin && (
         <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
           <Heading sx={{ fontSize: 1, mb: 2, color: 'accent.fg' }}>
             🛡️ Admin — Session Progress
           </Heading>
+          <Button
+            variant="invisible"
+            onClick={() => navigate('/admin')}
+            sx={{ justifyContent: 'flex-start', fontWeight: 'normal', fontSize: 1, mb: 2 }}
+            size="small"
+          >
+            Open admin workspace
+          </Button>
           <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>
             {[...activeSessions, ...closedSessions].map((session) => (
               <Button

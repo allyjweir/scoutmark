@@ -65,6 +65,7 @@ func run(ctx context.Context) error {
 	// ─── Handlers ───────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(db)
 	sessionHandler := handlers.NewSessionHandler(db, hub)
+	adminHandler := handlers.NewAdminHandler(db)
 	reportHandler := handlers.NewReportHandler(db, handlers.LoadLogoPNG())
 	authMiddleware := auth.Middleware(db)
 
@@ -113,6 +114,17 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /api/sessions/{session_id}/report-card", authMiddleware(http.HandlerFunc(reportHandler.GetReportCard)))
 
 	// Admin routes
+	mux.Handle("GET /api/admin/bootstrap", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.Bootstrap))))
+	mux.Handle("POST /api/admin/users", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.CreateUser))))
+	mux.Handle("PUT /api/admin/users/{user_id}/password", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.ChangePassword))))
+	mux.Handle("POST /api/admin/events", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.CreateEvent))))
+	mux.Handle("POST /api/admin/templates", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.CreateTemplate))))
+	mux.Handle("POST /api/admin/templates/{template_id}/criteria", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.AddCriterion))))
+	mux.Handle("POST /api/admin/patrols", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.CreatePatrol))))
+	mux.Handle("POST /api/admin/users/{user_id}/patrols", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.AssignPatrol))))
+	mux.Handle("POST /api/admin/sessions", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.CreateSession))))
+	mux.Handle("PUT /api/admin/sessions/{session_id}", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.UpdateSession))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/seed-scores", authMiddleware(auth.RequireAdmin(http.HandlerFunc(adminHandler.SeedScores))))
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/progress", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionProgress))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/comments", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionComments))))

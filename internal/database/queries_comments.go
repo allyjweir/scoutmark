@@ -225,8 +225,10 @@ func (d *DB) GetSubmissionCommentsBySession(ctx context.Context, userID, session
 		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.created_at
 		 FROM submission_comments sc
 		 JOIN submissions s ON s.id = sc.submission_id
-		 JOIN user_patrols up ON up.patrol_id = s.patrol_id AND up.user_id = $1
+		 JOIN patrols p ON p.id = s.patrol_id
+		 JOIN users u ON u.id = $1
 		 WHERE s.session_id = $2 AND sc.comment != ''
+		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id))
 		 ORDER BY s.patrol_id, sc.criterion_id, sc.created_at`,
 		userID, sessionID,
 	)

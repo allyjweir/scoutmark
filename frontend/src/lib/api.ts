@@ -152,8 +152,16 @@ export interface PatrolProgress {
 export interface UserProgress {
   user_id: string;
   display_name: string;
+  subcamp_id: string;
+  subcamp_name: string;
   patrols: PatrolProgress[];
   awards?: UserAward[];
+}
+
+export interface SubcampProgress {
+  subcamp_id: string;
+  subcamp_name: string;
+  users: UserProgress[];
 }
 
 export interface SessionComment {
@@ -169,7 +177,7 @@ export interface SessionComment {
 
 export const getSessionProgress = async (
   sessionId: string,
-): Promise<{ session: Session; users: UserProgress[] }> =>
+): Promise<{ session: Session; users: UserProgress[]; subcamps?: SubcampProgress[] }> =>
   request(`/admin/sessions/${sessionId}/progress`);
 
 export const getSessionComments = async (
@@ -204,6 +212,20 @@ export const getAdminUserScores = async (
   userId: string,
 ): Promise<AdminUserScoresResponse> =>
   request(`/admin/sessions/${sessionId}/users/${userId}/scores`);
+
+export const lockSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/lock`, {
+    method: 'POST',
+  });
+
+export const unlockSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/unlock`, {
+    method: 'POST',
+  });
 
 // ─── Per-User Comments ──────────────────────────────────────────────
 

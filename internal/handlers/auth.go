@@ -7,6 +7,7 @@ import (
 	"github.com/allyjweir/scoutmark/internal/auth"
 	"github.com/allyjweir/scoutmark/internal/database"
 	"github.com/allyjweir/scoutmark/internal/tracing"
+	"github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -27,9 +28,9 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	SessionToken             string   `json:"session_token"`
-	User                     userJSON `json:"user"`
-	PasswordChangeRequired   bool     `json:"password_change_required"`
+	SessionToken           string   `json:"session_token"`
+	User                   userJSON `json:"user"`
+	PasswordChangeRequired bool     `json:"password_change_required"`
 }
 
 type userJSON struct {
@@ -37,6 +38,7 @@ type userJSON struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	IsAdmin     bool   `json:"is_admin"`
+	SubcampID   string `json:"subcamp_id,omitempty"`
 }
 
 // Login handles POST /api/auth/login
@@ -97,6 +99,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Username:    user.Username,
 			DisplayName: user.DisplayName,
 			IsAdmin:     user.IsAdmin,
+			SubcampID:   lo.FromPtr(user.SubcampID),
 		},
 	})
 }
@@ -148,6 +151,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
 		IsAdmin:     user.IsAdmin,
+		SubcampID:   lo.FromPtr(user.SubcampID),
 	})
 }
 

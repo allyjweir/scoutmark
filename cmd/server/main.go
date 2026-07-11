@@ -114,6 +114,8 @@ func run(ctx context.Context) error {
 
 	// Admin routes
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/lock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.LockSession))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSession))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/progress", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionProgress))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/comments", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetSessionComments))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/users/{user_id}/scores", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetAdminUserScores))))

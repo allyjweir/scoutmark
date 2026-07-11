@@ -50,10 +50,12 @@ export const useSessionSubscription = (
     if (!sessionId) return;
 
     socket.subscribeSession(sessionId);
+    const unsubscribeMessageHandler = onMessage ? socket.onMessage(onMessage) : undefined;
 
-    if (onMessage) {
-      return socket.onMessage(onMessage);
-    }
+    return () => {
+      socket.unsubscribeSession(sessionId);
+      unsubscribeMessageHandler?.();
+    };
   }, [socket, sessionId, onMessage]);
 };
 

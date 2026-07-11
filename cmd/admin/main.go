@@ -33,15 +33,20 @@ Commands:
   create-user       Create a new user (interactive or with flags)
   change-password   Change a user's password
   list-users        List all users
+	create-subcamp    Create a subcamp
+	update-subcamp    Update a subcamp name
   create-event      Create an event
   create-template   Create a criteria template
   add-criterion     Add a criterion to a template
   create-patrol     Create a patrol
-  assign-patrol     Assign a patrol to a user
+	assign-user-subcamp Assign a user to a subcamp
+	assign-patrol-subcamp Assign a patrol to a subcamp
+	assign-session-subcamp Assign a session to a subcamp
   create-session    Create a scoring session
   update-session    Update session settings (awards, previous session)
   list-sessions     List all sessions with status
   seed-scores       Seed random submission scores for all patrols in a session
+	seed-ba-demo      Seed the Blair Atholl demo data set
 
 Environment:
   DATABASE_URL      PostgreSQL connection string (default: postgres://scoutmark:scoutmark@localhost:5432/scoutmark?sslmode=disable)
@@ -61,6 +66,10 @@ func main() {
 		err = changePassword()
 	case "list-users":
 		err = listUsers()
+	case "create-subcamp":
+		err = createSubcamp()
+	case "update-subcamp":
+		err = updateSubcamp()
 	case "create-event":
 		err = createEvent()
 	case "create-template":
@@ -69,8 +78,12 @@ func main() {
 		err = addCriterion()
 	case "create-patrol":
 		err = createPatrol()
-	case "assign-patrol":
-		err = assignPatrol()
+	case "assign-user-subcamp":
+		err = assignUserSubcamp()
+	case "assign-patrol-subcamp":
+		err = assignPatrolSubcamp()
+	case "assign-session-subcamp":
+		err = assignSessionSubcamp()
 	case "create-session":
 		err = createSession()
 	case "update-session":
@@ -79,6 +92,8 @@ func main() {
 		err = listSessions()
 	case "seed-scores":
 		err = seedScores()
+	case "seed-ba-demo":
+		err = seedBADemo()
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return
@@ -121,6 +136,7 @@ func createUser() error {
 	flagPassword := fs.String("password", "", "Password (non-interactive mode)")
 	flagDisplay := fs.String("display-name", "", "Display name (non-interactive mode)")
 	flagAdmin := fs.Bool("admin", false, "Make admin user (non-interactive mode)")
+	flagSubcamp := fs.String("subcamp", "", "Subcamp ID (optional; ignored for admin users)")
 	flagID := fs.String("id", "", "User ID (default: auto-generated UUID)")
 	flagForcePasswordChange := fs.Bool("force-password-change", false, "Require password change on first login")
 
@@ -128,7 +144,7 @@ func createUser() error {
 		return err
 	}
 
-	var username, password, displayName string
+	var username, password, displayName, subcampID string
 	var isAdmin, forcePasswordChange bool
 
 	if *flagUsername != "" {
@@ -137,6 +153,7 @@ func createUser() error {
 		password = *flagPassword
 		displayName = *flagDisplay
 		isAdmin = *flagAdmin
+		subcampID = *flagSubcamp
 		forcePasswordChange = *flagForcePasswordChange
 		if password == "" {
 			return fmt.Errorf("-password is required in non-interactive mode")
@@ -183,6 +200,14 @@ func createUser() error {
 			return err
 		}
 		forcePasswordChange = strings.HasPrefix(strings.ToLower(forceChangeInput), "y")
+
+		if !isAdmin {
+			subcampInput, err := promptDefault(reader, "Subcamp ID (optional)", "")
+			if err != nil {
+				return err
+			}
+			subcampID = strings.TrimSpace(subcampInput)
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -204,13 +229,26 @@ func createUser() error {
 		return fmt.Errorf("user %q already exists", username)
 	}
 
+	if isAdmin {
+		subcampID = ""
+	}
+	if subcampID != "" {
+		var subcampExists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM subcamps WHERE id = $1)", subcampID).Scan(&subcampExists); err != nil {
+			return fmt.Errorf("checking subcamp: %w", err)
+		}
+		if !subcampExists {
+			return fmt.Errorf("subcamp %q not found", subcampID)
+		}
+	}
+
 	userID := *flagID
 	if userID == "" {
 		userID = uuid.New().String()
 	}
 	_, err = db.Exec(
-		"INSERT INTO users (id, username, password_hash, display_name, is_admin, password_change_required) VALUES ($1, $2, $3, $4, $5, $6)",
-		userID, username, string(hash), displayName, isAdmin, forcePasswordChange,
+		"INSERT INTO users (id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+		userID, username, string(hash), displayName, isAdmin, nullableString(subcampID), forcePasswordChange,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting user: %w", err)
@@ -222,6 +260,7 @@ func createUser() error {
 	fmt.Printf("  Username:                  %s\n", username)
 	fmt.Printf("  Display name:              %s\n", displayName)
 	fmt.Printf("  Admin:                     %v\n", isAdmin)
+	fmt.Printf("  Subcamp:                   %s\n", emptyAsDash(subcampID))
 	fmt.Printf("  Force password change:     %v\n", forcePasswordChange)
 	return nil
 }
@@ -282,21 +321,26 @@ func listUsers() error {
 	}
 	defer db.Close()
 
-	rows, err := db.Query("SELECT id, username, display_name, is_admin, created_at FROM users ORDER BY created_at ASC")
+	rows, err := db.Query(
+		`SELECT u.id, u.username, u.display_name, u.is_admin, COALESCE(sc.name, ''), u.created_at
+		 FROM users u
+		 LEFT JOIN subcamps sc ON sc.id = u.subcamp_id
+		 ORDER BY u.created_at ASC`,
+	)
 	if err != nil {
 		return fmt.Errorf("querying users: %w", err)
 	}
 	defer rows.Close()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tUSERNAME\tDISPLAY NAME\tADMIN\tCREATED")
-	fmt.Fprintln(w, "──\t────────\t────────────\t─────\t───────")
+	fmt.Fprintln(w, "ID\tUSERNAME\tDISPLAY NAME\tADMIN\tSUBCAMP\tCREATED")
+	fmt.Fprintln(w, "──\t────────\t────────────\t─────\t───────\t───────")
 
 	count := 0
 	for rows.Next() {
-		var id, username, displayName, createdAt string
+		var id, username, displayName, subcampName, createdAt string
 		var isAdmin bool
-		if err := rows.Scan(&id, &username, &displayName, &isAdmin, &createdAt); err != nil {
+		if err := rows.Scan(&id, &username, &displayName, &isAdmin, &subcampName, &createdAt); err != nil {
 			return fmt.Errorf("scanning user: %w", err)
 		}
 
@@ -304,7 +348,7 @@ func listUsers() error {
 		if isAdmin {
 			admin = "✓"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id, username, displayName, admin, createdAt)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", id, username, displayName, admin, emptyAsDash(subcampName), createdAt)
 		count++
 	}
 	if err := rows.Err(); err != nil {
@@ -313,6 +357,75 @@ func listUsers() error {
 
 	w.Flush()
 	fmt.Printf("\n%d user(s)\n", count)
+	return nil
+}
+
+func createSubcamp() error {
+	fs := flag.NewFlagSet("create-subcamp", flag.ExitOnError)
+	id := fs.String("id", "", "Subcamp ID (default: auto-generated UUID)")
+	name := fs.String("name", "", "Subcamp name (required)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *name == "" {
+		return fmt.Errorf("required flag: -name")
+	}
+
+	subcampID := *id
+	if subcampID == "" {
+		subcampID = uuid.New().String()
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if _, err := db.Exec("INSERT INTO subcamps (id, name) VALUES ($1, $2)", subcampID, *name); err != nil {
+		return fmt.Errorf("creating subcamp: %w", err)
+	}
+
+	fmt.Println("✓ Subcamp created")
+	fmt.Printf("  ID:   %s\n", subcampID)
+	fmt.Printf("  Name: %s\n", *name)
+	return nil
+}
+
+func updateSubcamp() error {
+	fs := flag.NewFlagSet("update-subcamp", flag.ExitOnError)
+	id := fs.String("id", "", "Subcamp ID (required)")
+	name := fs.String("name", "", "New subcamp name (required)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *id == "" || *name == "" {
+		return fmt.Errorf("required flags: -id, -name")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	result, err := db.Exec("UPDATE subcamps SET name = $2 WHERE id = $1", *id, *name)
+	if err != nil {
+		return fmt.Errorf("updating subcamp: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking update result: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("subcamp %q not found", *id)
+	}
+
+	fmt.Println("✓ Subcamp updated")
+	fmt.Printf("  ID:   %s\n", *id)
+	fmt.Printf("  Name: %s\n", *name)
 	return nil
 }
 
@@ -328,6 +441,7 @@ func createSession() error {
 	awardBestPatrol := fs.Bool("award-best-patrol", false, "Enable Best Patrol award")
 	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
 	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining / Most Improved)")
+	subcampsCSV := fs.String("subcamps", "", "Comma-separated subcamp IDs to include (default: all subcamps)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a scoring session
@@ -414,13 +528,67 @@ Flags:
 		prevID = previousSessionID
 	}
 
-	_, err = db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(
 		`INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at, award_best_patrol, award_most_improved, previous_session_id)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		id, *eventID, *templateID, *name, startsAt, endsAt, *awardBestPatrol, *awardMostImproved, prevID,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting session: %w", err)
+	}
+
+	var subcampIDs []string
+	if strings.TrimSpace(*subcampsCSV) == "" {
+		rows, err := tx.Query("SELECT id FROM subcamps ORDER BY name")
+		if err != nil {
+			return fmt.Errorf("querying subcamps: %w", err)
+		}
+		for rows.Next() {
+			var sid string
+			if err := rows.Scan(&sid); err != nil {
+				rows.Close()
+				return fmt.Errorf("scanning subcamp: %w", err)
+			}
+			subcampIDs = append(subcampIDs, sid)
+		}
+		rows.Close()
+	} else {
+		for _, sid := range strings.Split(*subcampsCSV, ",") {
+			t := strings.TrimSpace(sid)
+			if t != "" {
+				subcampIDs = append(subcampIDs, t)
+			}
+		}
+	}
+
+	if len(subcampIDs) == 0 {
+		return fmt.Errorf("no subcamps available for session association")
+	}
+
+	for _, sid := range subcampIDs {
+		var exists bool
+		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM subcamps WHERE id = $1)", sid).Scan(&exists); err != nil {
+			return fmt.Errorf("checking subcamp %q: %w", sid, err)
+		}
+		if !exists {
+			return fmt.Errorf("subcamp %q not found", sid)
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO session_subcamps (session_id, subcamp_id) VALUES ($1, $2)",
+			id, sid,
+		); err != nil {
+			return fmt.Errorf("associating subcamp %q with session: %w", sid, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing session transaction: %w", err)
 	}
 
 	fmt.Println()
@@ -432,6 +600,7 @@ Flags:
 	fmt.Printf("  Starts:   %s\n", startsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Ends:     %s\n", endsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Duration: %s\n", duration)
+	fmt.Printf("  Subcamps: %d\n", len(subcampIDs))
 	if *awardBestPatrol || *awardMostImproved {
 		fmt.Printf("  Awards:   best_patrol=%v most_improved=%v\n", *awardBestPatrol, *awardMostImproved)
 	}
@@ -760,6 +929,8 @@ func createPatrol() error {
 
 	id := fs.String("id", "", "Patrol ID (default: auto-generated UUID)")
 	name := fs.String("name", "", "Patrol name (required)")
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
+	sortOrder := fs.Int("order", 0, "Sort order within subcamp (default: auto-increment)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a patrol
@@ -775,9 +946,9 @@ Flags:
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if *name == "" {
+	if *name == "" || *subcampID == "" {
 		fs.Usage()
-		return fmt.Errorf("required flag: -name")
+		return fmt.Errorf("required flags: -name, -subcamp")
 	}
 
 	patrolID := *id
@@ -791,9 +962,27 @@ Flags:
 	}
 	defer db.Close()
 
+	var subcampExists bool
+	if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM subcamps WHERE id = $1)", *subcampID).Scan(&subcampExists); err != nil {
+		return fmt.Errorf("checking subcamp: %w", err)
+	}
+	if !subcampExists {
+		return fmt.Errorf("subcamp %q not found", *subcampID)
+	}
+
+	if *sortOrder == 0 {
+		if err := db.QueryRow(
+			"SELECT COALESCE(MAX(sort_order), 0) FROM patrols WHERE subcamp_id = $1",
+			*subcampID,
+		).Scan(sortOrder); err != nil {
+			return fmt.Errorf("querying max patrol order: %w", err)
+		}
+		*sortOrder += 1
+	}
+
 	_, err = db.Exec(
-		"INSERT INTO patrols (id, name) VALUES ($1, $2)",
-		patrolID, *name,
+		"INSERT INTO patrols (id, name, subcamp_id, sort_order) VALUES ($1, $2, $3, $4)",
+		patrolID, *name, *subcampID, *sortOrder,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting patrol: %w", err)
@@ -802,33 +991,21 @@ Flags:
 	fmt.Println("✓ Patrol created")
 	fmt.Printf("  ID:   %s\n", patrolID)
 	fmt.Printf("  Name: %s\n", *name)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
+	fmt.Printf("  Order: %d\n", *sortOrder)
 	return nil
 }
 
-func assignPatrol() error {
-	fs := flag.NewFlagSet("assign-patrol", flag.ExitOnError)
-
+func assignUserSubcamp() error {
+	fs := flag.NewFlagSet("assign-user-subcamp", flag.ExitOnError)
 	userID := fs.String("user", "", "User ID (required)")
-	patrolID := fs.String("patrol", "", "Patrol ID (required)")
-	sortOrder := fs.Int("order", 0, "Sort order (default: auto-increment)")
-
-	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Assign a patrol to a user
-
-Usage:
-  admin assign-patrol -user usr-morrison -patrol pat-mor-1 [-order 1]
-
-Flags:
-`)
-		fs.PrintDefaults()
-	}
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if *userID == "" || *patrolID == "" {
-		fs.Usage()
-		return fmt.Errorf("required flags: -user, -patrol")
+	if *userID == "" || *subcampID == "" {
+		return fmt.Errorf("required flags: -user, -subcamp")
 	}
 
 	db, err := connectDB()
@@ -837,28 +1014,83 @@ Flags:
 	}
 	defer db.Close()
 
-	// Auto-increment sort order if not specified
-	if *sortOrder == 0 {
-		var maxOrder int
-		err := db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM user_patrols WHERE user_id = $1", *userID).Scan(&maxOrder)
-		if err != nil {
-			return fmt.Errorf("querying max sort order: %w", err)
-		}
-		*sortOrder = maxOrder + 1
+	if _, err := db.Exec("UPDATE users SET subcamp_id = $2 WHERE id = $1", *userID, *subcampID); err != nil {
+		return fmt.Errorf("assigning user subcamp: %w", err)
 	}
 
-	_, err = db.Exec(
-		"INSERT INTO user_patrols (user_id, patrol_id, sort_order) VALUES ($1, $2, $3)",
-		*userID, *patrolID, *sortOrder,
-	)
+	fmt.Println("✓ User assigned to subcamp")
+	fmt.Printf("  User:    %s\n", *userID)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
+	return nil
+}
+
+func assignPatrolSubcamp() error {
+	fs := flag.NewFlagSet("assign-patrol-subcamp", flag.ExitOnError)
+	patrolID := fs.String("patrol", "", "Patrol ID (required)")
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
+	sortOrder := fs.Int("order", 0, "Sort order in subcamp (optional)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *patrolID == "" || *subcampID == "" {
+		return fmt.Errorf("required flags: -patrol, -subcamp")
+	}
+
+	db, err := connectDB()
 	if err != nil {
-		return fmt.Errorf("assigning patrol: %w", err)
+		return err
+	}
+	defer db.Close()
+
+	if *sortOrder == 0 {
+		if err := db.QueryRow("SELECT sort_order FROM patrols WHERE id = $1", *patrolID).Scan(sortOrder); err != nil {
+			return fmt.Errorf("querying patrol sort order: %w", err)
+		}
 	}
 
-	fmt.Println("✓ Patrol assigned")
-	fmt.Printf("  User:   %s\n", *userID)
-	fmt.Printf("  Patrol: %s\n", *patrolID)
-	fmt.Printf("  Order:  %d\n", *sortOrder)
+	if _, err := db.Exec(
+		"UPDATE patrols SET subcamp_id = $2, sort_order = $3 WHERE id = $1",
+		*patrolID, *subcampID, *sortOrder,
+	); err != nil {
+		return fmt.Errorf("assigning patrol subcamp: %w", err)
+	}
+
+	fmt.Println("✓ Patrol assigned to subcamp")
+	fmt.Printf("  Patrol:  %s\n", *patrolID)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
+	fmt.Printf("  Order:   %d\n", *sortOrder)
+	return nil
+}
+
+func assignSessionSubcamp() error {
+	fs := flag.NewFlagSet("assign-session-subcamp", flag.ExitOnError)
+	sessionID := fs.String("session", "", "Session ID (required)")
+	subcampID := fs.String("subcamp", "", "Subcamp ID (required)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *sessionID == "" || *subcampID == "" {
+		return fmt.Errorf("required flags: -session, -subcamp")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(
+		"INSERT INTO session_subcamps (session_id, subcamp_id) VALUES ($1, $2) ON CONFLICT (session_id, subcamp_id) DO NOTHING",
+		*sessionID, *subcampID,
+	); err != nil {
+		return fmt.Errorf("assigning session subcamp: %w", err)
+	}
+
+	fmt.Println("✓ Session assigned to subcamp")
+	fmt.Printf("  Session: %s\n", *sessionID)
+	fmt.Printf("  Subcamp: %s\n", *subcampID)
 	return nil
 }
 
@@ -922,104 +1154,633 @@ Flags:
 	}
 	defer db.Close()
 
-	// Get the session's template
-	var templateID string
-	if err := db.QueryRow("SELECT template_id FROM sessions WHERE id = $1", *sessionID).Scan(&templateID); err != nil {
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("session %q not found", *sessionID)
-		}
-		return fmt.Errorf("looking up session: %w", err)
+	patrolCount, criterionCount, err := seedScoresForUser(db, *sessionID, *userID, *minScore, *maxScore)
+	if err != nil {
+		return err
 	}
 
-	// Get criteria for the template
+	fmt.Printf("\nSeeded %d patrols × %d criteria with random scores [%d-%d]\n",
+		patrolCount, criterionCount, *minScore, *maxScore)
+	return nil
+}
+
+func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore int) (int, int, error) {
+	if maxScore < minScore {
+		return 0, 0, fmt.Errorf("max score must be greater than or equal to min score")
+	}
+
+	var templateID string
+	if err := db.QueryRow("SELECT template_id FROM sessions WHERE id = $1", sessionID).Scan(&templateID); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, fmt.Errorf("session %q not found", sessionID)
+		}
+		return 0, 0, fmt.Errorf("looking up session: %w", err)
+	}
+
 	rows, err := db.Query("SELECT id FROM criteria WHERE template_id = $1 ORDER BY sort_order", templateID)
 	if err != nil {
-		return fmt.Errorf("querying criteria: %w", err)
+		return 0, 0, fmt.Errorf("querying criteria: %w", err)
 	}
 	var criterionIDs []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
-			return fmt.Errorf("scanning criterion: %w", err)
+			return 0, 0, fmt.Errorf("scanning criterion: %w", err)
 		}
 		criterionIDs = append(criterionIDs, id)
 	}
 	rows.Close()
 	if len(criterionIDs) == 0 {
-		return fmt.Errorf("no criteria found for template %q", templateID)
+		return 0, 0, fmt.Errorf("no criteria found for template %q", templateID)
 	}
 
-	// Get patrols assigned to the user
 	patrolRows, err := db.Query(
-		"SELECT patrol_id FROM user_patrols WHERE user_id = $1 ORDER BY sort_order", *userID)
+		`SELECT p.id
+		 FROM users u
+		 JOIN patrols p ON p.subcamp_id = u.subcamp_id
+		 JOIN session_subcamps ss ON ss.session_id = $2 AND ss.subcamp_id = p.subcamp_id
+		 WHERE u.id = $1
+		 ORDER BY p.sort_order ASC, p.name ASC`,
+		userID, sessionID,
+	)
 	if err != nil {
-		return fmt.Errorf("querying user patrols: %w", err)
+		return 0, 0, fmt.Errorf("querying subcamp patrols: %w", err)
 	}
 	var patrolIDs []string
 	for patrolRows.Next() {
 		var id string
 		if err := patrolRows.Scan(&id); err != nil {
 			patrolRows.Close()
-			return fmt.Errorf("scanning patrol: %w", err)
+			return 0, 0, fmt.Errorf("scanning patrol: %w", err)
 		}
 		patrolIDs = append(patrolIDs, id)
 	}
 	patrolRows.Close()
 	if len(patrolIDs) == 0 {
-		return fmt.Errorf("user %q has no assigned patrols", *userID)
+		return 0, 0, fmt.Errorf("user %q has no patrols in this session", userID)
 	}
 
-	// Create submissions with random scores for each patrol
-	scoreRange := *maxScore - *minScore + 1
+	scoreRange := maxScore - minScore + 1
 	for _, patrolID := range patrolIDs {
 		submissionID := uuid.New().String()
 
-		// Upsert submission
 		_, err := db.Exec(
 			`INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked)
 			 VALUES ($1, $2, $3, $4, TRUE)
 			 ON CONFLICT (session_id, patrol_id) DO UPDATE SET locked = TRUE, submitted_at = NOW(), submitted_by = $2`,
-			submissionID, *userID, *sessionID, patrolID,
+			submissionID, userID, sessionID, patrolID,
 		)
 		if err != nil {
-			return fmt.Errorf("inserting submission for patrol %s: %w", patrolID, err)
+			return 0, 0, fmt.Errorf("inserting submission for patrol %s: %w", patrolID, err)
 		}
 
-		// Get actual submission ID (in case of conflict)
-		if err := db.QueryRow(
-			"SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2",
-			*sessionID, patrolID,
-		).Scan(&submissionID); err != nil {
-			return fmt.Errorf("getting submission ID: %w", err)
+		if err := db.QueryRow("SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2", sessionID, patrolID).Scan(&submissionID); err != nil {
+			return 0, 0, fmt.Errorf("getting submission ID: %w", err)
 		}
 
-		// Clear old scores if re-seeding
-		_, err = db.Exec("DELETE FROM submission_scores WHERE submission_id = $1", submissionID)
-		if err != nil {
-			return fmt.Errorf("clearing old scores: %w", err)
+		if _, err := db.Exec("DELETE FROM submission_scores WHERE submission_id = $1", submissionID); err != nil {
+			return 0, 0, fmt.Errorf("clearing old scores: %w", err)
 		}
 
-		// Insert random scores
 		for _, criterionID := range criterionIDs {
-			value := *minScore + rand.Intn(scoreRange)
-			scoreID := uuid.New().String()
+			value := minScore + rand.Intn(scoreRange)
 			_, err := db.Exec(
 				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
 				 VALUES ($1, $2, $3, $4, '', $5)`,
-				scoreID, submissionID, criterionID, value, *userID,
+				uuid.New().String(), submissionID, criterionID, value, userID,
 			)
 			if err != nil {
-				return fmt.Errorf("inserting score for criterion %s: %w", criterionID, err)
+				return 0, 0, fmt.Errorf("inserting score for criterion %s: %w", criterionID, err)
 			}
 		}
 
 		fmt.Printf("  ✓ Seeded scores for patrol %s\n", patrolID)
 	}
 
-	fmt.Printf("\nSeeded %d patrols × %d criteria with random scores [%d-%d]\n",
-		len(patrolIDs), len(criterionIDs), *minScore, *maxScore)
+	return len(patrolIDs), len(criterionIDs), nil
+}
+
+// ─── Blair Atholl Demo Seed ─────────────────────────────────────────
+
+type baCriterion struct {
+	ID          string
+	Title       string
+	Description string
+	MinValue    int
+	MaxValue    int
+	SortOrder   int
+}
+
+type baUser struct {
+	ID          string
+	Username    string
+	DisplayName string
+	Subcamp     string
+	IsAdmin     bool
+}
+
+type baPatrol struct {
+	ID        string
+	Name      string
+	Subcamp   string
+	SortOrder int
+}
+
+func seedBADemo() error {
+	fs := flag.NewFlagSet("seed-ba-demo", flag.ExitOnError)
+
+	password := fs.String("password", envOrDefaultAdmin("SCOUTMARK_DEMO_PASSWORD", "password"), "Password for seeded users")
+	pastSeedUsername := fs.String("past-seed-username", "morrison.stacey", "Username to attribute seeded past-session submissions to")
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Seed Blair Atholl demo data
+
+Creates/updates the event, template, criteria, patrols, assignments, today's
+session, next week's session, and a closed past session with demo scores.
+Users are created only if missing and left unchanged when they already exist.
+
+Usage:
+  admin seed-ba-demo [-password password]
+
+Flags:
+`)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *password == "" {
+		return fmt.Errorf("password cannot be empty")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	users := baDemoUsers()
+	patrols := baDemoPatrols()
+	criteria := baDemoCriteria()
+	now := time.Now().UTC()
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(*password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hashing password: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning seed transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := upsertBAEvent(tx); err != nil {
+		return err
+	}
+	if err := upsertBATemplate(tx); err != nil {
+		return err
+	}
+	for _, criterion := range criteria {
+		if err := upsertBACriterion(tx, criterion); err != nil {
+			return err
+		}
+	}
+	resolvedUsers := make([]baUser, 0, len(users))
+	for _, user := range users {
+		resolvedUser, err := ensureBAUser(tx, user, string(passwordHash))
+		if err != nil {
+			return err
+		}
+		resolvedUsers = append(resolvedUsers, resolvedUser)
+	}
+	for _, slug := range baDemoSubcamps() {
+		if err := upsertBASubcamp(tx, slug); err != nil {
+			return err
+		}
+	}
+	for _, patrol := range patrols {
+		if err := upsertBAPatrol(tx, patrol); err != nil {
+			return err
+		}
+	}
+	for _, user := range resolvedUsers {
+		if user.Subcamp == "" {
+			continue
+		}
+		if err := upsertBAUserSubcamp(tx, user.ID, user.Subcamp); err != nil {
+			return err
+		}
+	}
+	if err := upsertBASession(tx, "ses-ba-demo-past", "Camp Inspection - Practice", now.AddDate(0, 0, -7), 6*time.Hour, true, false, nil); err != nil {
+		return err
+	}
+	if err := upsertBASession(tx, "ses-ba-demo-today", "Camp Inspection - Today", now, 6*time.Hour, true, true, strPtr("ses-ba-demo-past")); err != nil {
+		return err
+	}
+	if err := upsertBASession(tx, "ses-ba-demo-next-week", "Camp Inspection - Next Week", now.AddDate(0, 0, 7), 6*time.Hour, true, true, strPtr("ses-ba-demo-today")); err != nil {
+		return err
+	}
+	for _, sid := range []string{"ses-ba-demo-past", "ses-ba-demo-today", "ses-ba-demo-next-week"} {
+		for _, slug := range baDemoSubcamps() {
+			if err := upsertBASessionSubcamp(tx, sid, slug); err != nil {
+				return err
+			}
+		}
+	}
+
+	if err := resetBADemoSessionData(tx, []string{"ses-ba-demo-past", "ses-ba-demo-today", "ses-ba-demo-next-week"}); err != nil {
+		return err
+	}
+
+	pastSeedUserID, err := lookupBAUserID(resolvedUsers, *pastSeedUsername)
+	if err != nil {
+		return err
+	}
+	if err := seedBAPastScores(tx, "ses-ba-demo-past", pastSeedUserID, criteria, patrols); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing seed transaction: %w", err)
+	}
+
+	fmt.Println("✓ Blair Atholl demo data seeded")
+	fmt.Printf("  Event:       Blair Atholl 2026 (evt-ba-2026)\n")
+	fmt.Printf("  Users:       %d leaders plus campchief (existing users left unchanged)\n", len(users)-1)
+	fmt.Printf("  Patrols:     %d patrols across 6 subcamps\n", len(patrols))
+	fmt.Printf("  Sessions:    past, today, next week\n")
+	fmt.Printf("  Password:    %s\n", *password)
 	return nil
+}
+
+func upsertBAEvent(tx *sql.Tx) error {
+	_, err := tx.Exec(
+		`INSERT INTO events (id, name, description)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description`,
+		"evt-ba-2026", "Blair Atholl 2026", "Blair Atholl Jamborette 2026",
+	)
+	if err != nil {
+		return fmt.Errorf("upserting event: %w", err)
+	}
+	return nil
+}
+
+func upsertBATemplate(tx *sql.Tx) error {
+	_, err := tx.Exec(
+		`INSERT INTO criteria_templates (id, name, description)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description`,
+		"tpl-camp", "Camp Inspection", "Daily camp inspection criteria",
+	)
+	if err != nil {
+		return fmt.Errorf("upserting template: %w", err)
+	}
+	return nil
+}
+
+func upsertBACriterion(tx *sql.Tx, criterion baCriterion) error {
+	_, err := tx.Exec(
+		`INSERT INTO criteria (id, template_id, title, description, min_value, max_value, sort_order)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (id) DO UPDATE SET
+		   template_id = EXCLUDED.template_id,
+		   title = EXCLUDED.title,
+		   description = EXCLUDED.description,
+		   min_value = EXCLUDED.min_value,
+		   max_value = EXCLUDED.max_value,
+		   sort_order = EXCLUDED.sort_order`,
+		criterion.ID, "tpl-camp", criterion.Title, criterion.Description, criterion.MinValue, criterion.MaxValue, criterion.SortOrder,
+	)
+	if err != nil {
+		return fmt.Errorf("upserting criterion %s: %w", criterion.ID, err)
+	}
+	return nil
+}
+
+func ensureBAUser(tx *sql.Tx, user baUser, passwordHash string) (baUser, error) {
+	_, err := tx.Exec(
+		`INSERT INTO users (id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required)
+		 VALUES ($1, $2, $3, $4, $5, NULL, FALSE)
+		 ON CONFLICT (username) DO NOTHING`,
+		user.ID, user.Username, passwordHash, user.DisplayName, user.IsAdmin,
+	)
+	if err != nil {
+		return baUser{}, fmt.Errorf("ensuring user %s: %w", user.Username, err)
+	}
+
+	if err := tx.QueryRow("SELECT id FROM users WHERE username = $1", user.Username).Scan(&user.ID); err != nil {
+		return baUser{}, fmt.Errorf("looking up user %s: %w", user.Username, err)
+	}
+	return user, nil
+}
+
+func upsertBASubcamp(tx *sql.Tx, slug string) error {
+	_, err := tx.Exec(
+		`INSERT INTO subcamps (id, name)
+		 VALUES ($1, $2)
+		 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+		subcampIDFromSlug(slug), displayNameFromUsernamePart(slug),
+	)
+	if err != nil {
+		return fmt.Errorf("upserting subcamp %s: %w", slug, err)
+	}
+	return nil
+}
+
+func lookupBAUserID(users []baUser, username string) (string, error) {
+	for _, user := range users {
+		if user.Username == username {
+			return user.ID, nil
+		}
+	}
+	return "", fmt.Errorf("seed score username %q not found", username)
+}
+
+func upsertBAPatrol(tx *sql.Tx, patrol baPatrol) error {
+	_, err := tx.Exec(
+		`INSERT INTO patrols (id, name, subcamp_id, sort_order)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (id) DO UPDATE SET
+		   name = EXCLUDED.name,
+		   subcamp_id = EXCLUDED.subcamp_id,
+		   sort_order = EXCLUDED.sort_order`,
+		patrol.ID, patrol.Name, subcampIDFromSlug(patrol.Subcamp), patrol.SortOrder,
+	)
+	if err != nil {
+		return fmt.Errorf("upserting patrol %s: %w", patrol.ID, err)
+	}
+	return nil
+}
+
+func upsertBAUserSubcamp(tx *sql.Tx, userID, subcampSlug string) error {
+	_, err := tx.Exec(
+		`UPDATE users SET subcamp_id = $2 WHERE id = $1`,
+		userID, subcampIDFromSlug(subcampSlug),
+	)
+	if err != nil {
+		return fmt.Errorf("assigning subcamp %s to user %s: %w", subcampSlug, userID, err)
+	}
+	return nil
+}
+
+func upsertBASessionSubcamp(tx *sql.Tx, sessionID, subcampSlug string) error {
+	_, err := tx.Exec(
+		`INSERT INTO session_subcamps (session_id, subcamp_id)
+		 VALUES ($1, $2)
+		 ON CONFLICT (session_id, subcamp_id) DO NOTHING`,
+		sessionID, subcampIDFromSlug(subcampSlug),
+	)
+	if err != nil {
+		return fmt.Errorf("assigning subcamp %s to session %s: %w", subcampSlug, sessionID, err)
+	}
+	return nil
+}
+
+func upsertBASession(tx *sql.Tx, id, name string, startsAt time.Time, duration time.Duration, awardBestPatrol, awardMostImproved bool, previousSessionID *string) error {
+	_, err := tx.Exec(
+		`INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at, award_best_patrol, award_most_improved, previous_session_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (id) DO UPDATE SET
+		   event_id = EXCLUDED.event_id,
+		   template_id = EXCLUDED.template_id,
+		   name = EXCLUDED.name,
+		   starts_at = EXCLUDED.starts_at,
+		   ends_at = EXCLUDED.ends_at,
+		   award_best_patrol = EXCLUDED.award_best_patrol,
+		   award_most_improved = EXCLUDED.award_most_improved,
+		   previous_session_id = EXCLUDED.previous_session_id`,
+		id, "evt-ba-2026", "tpl-camp", name, startsAt, startsAt.Add(duration), awardBestPatrol, awardMostImproved, previousSessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("upserting session %s: %w", id, err)
+	}
+	return nil
+}
+
+func resetBADemoSessionData(tx *sql.Tx, sessionIDs []string) error {
+	for _, sessionID := range sessionIDs {
+		if _, err := tx.Exec("DELETE FROM session_awards WHERE session_id = $1", sessionID); err != nil {
+			return fmt.Errorf("clearing awards for session %s: %w", sessionID, err)
+		}
+		if _, err := tx.Exec("DELETE FROM drafts WHERE session_id = $1", sessionID); err != nil {
+			return fmt.Errorf("clearing drafts for session %s: %w", sessionID, err)
+		}
+		if _, err := tx.Exec("DELETE FROM submissions WHERE session_id = $1", sessionID); err != nil {
+			return fmt.Errorf("clearing submissions for session %s: %w", sessionID, err)
+		}
+	}
+	return nil
+}
+
+func seedBAPastScores(tx *sql.Tx, sessionID, userID string, criteria []baCriterion, patrols []baPatrol) error {
+	var userExists bool
+	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", userID).Scan(&userExists); err != nil {
+		return fmt.Errorf("checking seed score user: %w", err)
+	}
+	if !userExists {
+		return fmt.Errorf("seed score user %q not found", userID)
+	}
+
+	for _, patrol := range patrols {
+		submissionID := fmt.Sprintf("sub-%s-%s", sessionID, patrol.ID)
+		_, err := tx.Exec(
+			`INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked)
+			 VALUES ($1, $2, $3, $4, TRUE)
+			 ON CONFLICT (session_id, patrol_id) DO UPDATE SET locked = TRUE, submitted_at = NOW(), submitted_by = $2`,
+			submissionID, userID, sessionID, patrol.ID,
+		)
+		if err != nil {
+			return fmt.Errorf("upserting submission for patrol %s: %w", patrol.ID, err)
+		}
+
+		if err := tx.QueryRow("SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2", sessionID, patrol.ID).Scan(&submissionID); err != nil {
+			return fmt.Errorf("getting submission ID for patrol %s: %w", patrol.ID, err)
+		}
+
+		if _, err := tx.Exec("DELETE FROM submission_scores WHERE submission_id = $1", submissionID); err != nil {
+			return fmt.Errorf("clearing scores for patrol %s: %w", patrol.ID, err)
+		}
+
+		for _, criterion := range criteria {
+			value := 3 + rand.Intn(8)
+			_, err := tx.Exec(
+				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
+				 VALUES ($1, $2, $3, $4, '', $5)`,
+				uuid.New().String(), submissionID, criterion.ID, value, userID,
+			)
+			if err != nil {
+				return fmt.Errorf("inserting score for patrol %s criterion %s: %w", patrol.ID, criterion.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func baDemoCriteria() []baCriterion {
+	return []baCriterion{
+		{ID: "crt-tent", Title: "Tent & Bedding", Description: "Tents properly pitched, bedding aired and rolled", MinValue: 0, MaxValue: 10, SortOrder: 1},
+		{ID: "crt-kit", Title: "Kit Layout", Description: "Personal kit neatly stored and accessible", MinValue: 0, MaxValue: 10, SortOrder: 2},
+		{ID: "crt-hygiene", Title: "Hygiene Area", Description: "Wash stands clean, toiletries organised", MinValue: 0, MaxValue: 10, SortOrder: 3},
+		{ID: "crt-kitchen", Title: "Kitchen Area", Description: "Cooking area clean, fire properly maintained", MinValue: 0, MaxValue: 10, SortOrder: 4},
+		{ID: "crt-gadgets", Title: "Camp Gadgets", Description: "Quality and creativity of pioneering projects", MinValue: 0, MaxValue: 10, SortOrder: 5},
+		{ID: "crt-spirit", Title: "Camp Spirit", Description: "Enthusiasm, teamwork and patrol morale", MinValue: 0, MaxValue: 10, SortOrder: 6},
+	}
+}
+
+func baDemoPatrols() []baPatrol {
+	subcamps := baDemoSubcamps()
+	patrols := make([]baPatrol, 0, len(subcamps)*3)
+	for _, subcamp := range subcamps {
+		for i := 1; i <= 3; i++ {
+			patrols = append(patrols, baPatrol{
+				ID:        fmt.Sprintf("pat-%s-%d", subcamp, i),
+				Name:      fmt.Sprintf("%s Site %d", displayNameFromUsernamePart(subcamp), i),
+				Subcamp:   subcamp,
+				SortOrder: i,
+			})
+		}
+	}
+	return patrols
+}
+
+func baDemoSubcamps() []string {
+	return []string{"mcdonald", "morrison", "robertson", "stewart", "murray", "mclean"}
+}
+
+func baDemoUsers() []baUser {
+	usernames := []string{
+		"mcdonald.mark",
+		"mcdonald.lee",
+		"mcdonald.heather.g",
+		"mcdonald.heather.w",
+		"mcdonald.sam",
+		"mcdonald.joe",
+		"mcdonald.sarah",
+		"mcdonald.gemma",
+		"mcdonald.tara",
+		"mcdonald.kerry",
+		"morrison.stacey",
+		"morrison.john",
+		"morrison.gill",
+		"morrison.iona",
+		"morrison.joyce",
+		"morrison.marc",
+		"morrison.graham",
+		"morrison.brodie",
+		"morrison.sj",
+		"morrison.abby",
+		"morrison.ally",
+		"morrison.nicholas",
+		"robertson.gemma",
+		"robertson.rachel",
+		"robertson.paula",
+		"robertson.emma",
+		"robertson.matt",
+		"robertson.euan",
+		"robertson.kieran",
+		"robertson.callum",
+		"robertson.theresa",
+		"robertson.abby",
+		"robertson.james",
+		"stewart.jamie",
+		"stewart.meghan",
+		"stewart.amanda",
+		"stewart.ross",
+		"stewart.leanne",
+		"stewart.kieran",
+		"stewart.ewan",
+		"stewart.amy",
+		"stewart.mike",
+		"stewart.belen",
+		"stewart.mieke",
+		"murray.ross",
+		"murray.ryan",
+		"murray.ea",
+		"murray.iain",
+		"murray.daniel",
+		"murray.caroline",
+		"murray.fiona",
+		"murray.jackie",
+		"murray.patri",
+		"murray.hamish",
+		"murray.leslie",
+		"mclean.may",
+		"mclean.jonny",
+		"mclean.hollie",
+		"mclean.morvin",
+		"mclean.gauldy",
+		"mclean.graeme",
+		"mclean.lisa",
+		"mclean.julie",
+		"mclean.mathew",
+		"mclean.rafa",
+		"mclean.tanner",
+	}
+
+	users := []baUser{{ID: "usr-campchief", Username: "campchief", DisplayName: "Camp Chief", IsAdmin: true}}
+	for _, username := range usernames {
+		parts := strings.Split(username, ".")
+		subcamp := parts[0]
+		users = append(users, baUser{
+			ID:          "usr-" + strings.ReplaceAll(username, ".", "-"),
+			Username:    username,
+			DisplayName: displayNameFromUsername(username),
+			Subcamp:     subcamp,
+		})
+	}
+	return users
+}
+
+func displayNameFromUsername(username string) string {
+	parts := strings.Split(username, ".")
+	for i, part := range parts {
+		parts[i] = displayNameFromUsernamePart(part)
+	}
+	return strings.Join(parts, " ")
+}
+
+func displayNameFromUsernamePart(part string) string {
+	if part == "" {
+		return ""
+	}
+	if len(part) <= 2 {
+		return strings.ToUpper(part)
+	}
+	return strings.ToUpper(part[:1]) + part[1:]
+}
+
+func strPtr(value string) *string {
+	return &value
+}
+
+func subcampIDFromSlug(slug string) string {
+	return "sub-" + slug
+}
+
+func envOrDefaultAdmin(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func nullableString(value string) any {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
+}
+
+func emptyAsDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 // ─── Input Helpers ──────────────────────────────────────────────────

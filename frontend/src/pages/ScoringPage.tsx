@@ -5,7 +5,7 @@ import {
   Label, CounterLabel,
 } from '@primer/react';
 import { keyBy, mapValues, every, debounce } from 'lodash';
-import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSSessionFinalisedPayload, WSServerMessage } from '../lib/types';
+import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSSessionFinalisedPayload, WSSessionLockedPayload, WSSessionUnlockedPayload, WSServerMessage } from '../lib/types';
 import * as api from '../lib/api';
 import { useDraftSync, useSessionSubscription, usePresence } from '../hooks/useWebSocket';
 import { useAuth } from '../hooks/useAuth';
@@ -48,8 +48,8 @@ export const ScoringPage = () => {
   // Track total score per patrol (patrol_id → total)
   const [patrolTotals, setPatrolTotals] = useState<Record<string, number | null>>({});
 
-  // Lock screen state: set when another user finalises the session
-  const [lockedBy, setLockedBy] = useState<{ displayName: string; endsAt: string } | null>(null);
+  // Lock screen state for either subcamp finalisation or full session lock.
+  const [lockState, setLockState] = useState<{ kind: 'subcamp' | 'session'; displayName: string; actionAt: string; endsAt: string } | null>(null);
 
   // Track which patrols have had all criteria touched (keyed by patrol_id)
   const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
@@ -228,12 +228,38 @@ export const ScoringPage = () => {
     // Handle session finalised by another user — show lock screen
     if (msg.type === 'session_finalised') {
       const payload = msg.payload as WSSessionFinalisedPayload;
-      setLockedBy({
+
+      // Only lock this scorer when their own subcamp is finalised.
+      // Users without a subcamp assignment should not enter the scorer lock state.
+      if (!user?.subcamp_id || payload.subcamp_id !== user.subcamp_id) {
+        return;
+      }
+
+      setLockState({
+        kind: 'subcamp',
         displayName: payload.user_display_name,
+        actionAt: payload.finalised_at,
         endsAt: payload.ends_at,
       });
     }
-  }, []);
+
+    if (msg.type === 'session_locked') {
+      const payload = msg.payload as WSSessionLockedPayload;
+      setLockState({
+        kind: 'session',
+        displayName: payload.user_display_name,
+        actionAt: payload.locked_at,
+        endsAt: payload.ends_at,
+      });
+    }
+
+    if (msg.type === 'session_unlocked') {
+      const payload = msg.payload as WSSessionUnlockedPayload;
+      if (payload.session_id === sessionId) {
+        setLockState((prev) => (prev?.kind === 'session' ? null : prev));
+      }
+    }
+  }, [user?.subcamp_id, sessionId]);
 
   useSessionSubscription(sessionId, handleWSMessage);
 
@@ -247,6 +273,16 @@ export const ScoringPage = () => {
     api.getSession(sessionId)
       .then(({ session, patrols, submissions, awards: savedAwards }) => {
         setSession(session);
+
+        if (session.status === 'LOCKED') {
+          setLockState({
+            kind: 'session',
+            displayName: session.locked_by_name || 'an administrator',
+            actionAt: session.locked_at || new Date().toISOString(),
+            endsAt: session.ends_at,
+          });
+        }
+
         setPatrols(patrols);
         setSubmissions(submissions);
 
@@ -765,8 +801,17 @@ export const ScoringPage = () => {
   }
 
   // ─── Lock screen: another user has finalised the session ───
-  if (lockedBy) {
-    const deadlineDate = new Date(lockedBy.endsAt);
+  if (lockState) {
+    const actionDate = new Date(lockState.actionAt);
+    const formattedActionAt = actionDate.toLocaleString(undefined, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const deadlineDate = new Date(lockState.endsAt);
     const formattedDeadline = deadlineDate.toLocaleString(undefined, {
       weekday: 'short',
       day: 'numeric',
@@ -797,10 +842,14 @@ export const ScoringPage = () => {
           sx={{ width: '100%', textAlign: 'center' }}
         >
           <Text sx={{ fontSize: 4, display: 'block', mb: 3 }}>🔒</Text>
-          <Heading sx={{ fontSize: 3, mb: 2 }}>Session Finalised</Heading>
+          <Heading sx={{ fontSize: 3, mb: 2 }}>
+            {lockState.kind === 'session' ? 'Session Locked' : 'Subcamp Finalised'}
+          </Heading>
           <Text as="p" sx={{ fontSize: 1, color: 'fg.muted', mb: 3 }}>
-            <Text sx={{ fontWeight: 'bold' }}>{lockedBy.displayName}</Text> has submitted the final
-            scores for this session. No further edits can be made.
+            <Text sx={{ fontWeight: 'bold' }}>{lockState.displayName}</Text>
+            {lockState.kind === 'session'
+              ? ' has locked this session. No further scoring edits can be made by any user.'
+              : ' has submitted the final scores for your subcamp. No further edits can be made.'}
           </Text>
 
           <Box
@@ -810,6 +859,10 @@ export const ScoringPage = () => {
             sx={{ bg: 'neutral.subtle', borderWidth: 1, borderStyle: 'solid', borderColor: 'border.muted' }}
           >
             <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 1, fontWeight: 'bold' }}>
+              {lockState.kind === 'session' ? 'Locked at' : 'Finalised at'}
+            </Text>
+            <Text sx={{ fontSize: 1, mb: 2 }}>{formattedActionAt}</Text>
+            <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 1, fontWeight: 'bold' }}>
               Scores deadline
             </Text>
             <Text sx={{ fontSize: 1 }}>{formattedDeadline}</Text>
@@ -817,7 +870,7 @@ export const ScoringPage = () => {
 
           <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 4 }}>
             If you believe this was done in error, contact{' '}
-            <Text sx={{ fontWeight: 'bold' }}>{lockedBy.displayName}</Text> or a session
+            <Text sx={{ fontWeight: 'bold' }}>{lockState.displayName}</Text> or a session
             administrator. An admin can reopen the session to allow further changes.
           </Text>
 
@@ -828,6 +881,13 @@ export const ScoringPage = () => {
       </Box>
     );
   }
+
+  const inlineDeadline = new Date(session.ends_at).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
   return (
     <Box display="flex" flexDirection="column" minHeight="100vh" bg="canvas.default">
@@ -847,7 +907,12 @@ export const ScoringPage = () => {
             {session.event_name}
           </Text>
         </Box>
-        <Heading sx={{ fontSize: 2, mb: 1 }}>{session.name}</Heading>
+        <Heading sx={{ fontSize: 2, mb: 1 }}>
+          {session.name}
+          <Text as="span" sx={{ fontSize: 0, color: 'fg.subtle', fontWeight: 'normal', ml: 1 }}>
+            Deadline {inlineDeadline}
+          </Text>
+        </Heading>
 
         {/* Progress bar — tracks patrols that are scored or submitted */}
         {(() => {

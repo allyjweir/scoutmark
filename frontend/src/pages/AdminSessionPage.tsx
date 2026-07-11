@@ -4,10 +4,17 @@ import {
   Box, Heading, Text, Spinner, Flash, Button, Label,
   ProgressBar, CounterLabel,
 } from '@primer/react';
-import type { Session, WSServerMessage, WSProgressUpdatedPayload } from '../lib/types';
+import type {
+  Session,
+  WSServerMessage,
+  WSProgressUpdatedPayload,
+  WSSessionLockedPayload,
+  WSSessionUnlockedPayload,
+} from '../lib/types';
 import * as api from '../lib/api';
 import type { UserProgress, SessionComment } from '../lib/api';
 import { useSessionSubscription } from '../hooks/useWebSocket';
+import { SessionStatusBanner } from '../components/SessionStatusBanner';
 
 const STATUS_COLORS: Record<string, string> = {
   submitted: 'success.emphasis',
@@ -29,6 +36,7 @@ export const AdminSessionPage = () => {
   const [users, setUsers] = useState<UserProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [locking, setLocking] = useState(false);
 
   // Comments — loaded eagerly, refreshed on WS updates
   const [comments, setComments] = useState<SessionComment[]>([]);
@@ -103,6 +111,40 @@ export const AdminSessionPage = () => {
         applyUsers(payload.users as UserProgress[]);
         loadComments();
       }
+      return;
+    }
+
+    if (msg.type === 'session_locked') {
+      const payload = msg.payload as WSSessionLockedPayload;
+      if (payload.session_id === sessionId) {
+        setSession((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: 'LOCKED',
+            locked_at: payload.locked_at,
+            locked_by: payload.user_id,
+            locked_by_name: payload.user_display_name,
+          };
+        });
+      }
+      return;
+    }
+
+    if (msg.type === 'session_unlocked') {
+      const payload = msg.payload as WSSessionUnlockedPayload;
+      if (payload.session_id === sessionId) {
+        setSession((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            status: 'ACTIVE',
+            locked_at: undefined,
+            locked_by: undefined,
+            locked_by_name: undefined,
+          };
+        });
+      }
     }
   }, [sessionId, applyUsers, loadComments]);
 
@@ -163,6 +205,41 @@ export const AdminSessionPage = () => {
     };
   }, [users]);
 
+  const usersGroupedBySubcamp = useMemo(() => {
+    const groups: Record<string, { subcampName: string; users: UserProgress[] }> = {};
+    for (const user of users) {
+      const id = user.subcamp_id || 'unassigned';
+      const name = user.subcamp_name || 'Unassigned';
+      if (!groups[id]) {
+        groups[id] = { subcampName: name, users: [] };
+      }
+      groups[id].users.push(user);
+    }
+    return Object.entries(groups).sort((a, b) => a[1].subcampName.localeCompare(b[1].subcampName));
+  }, [users]);
+
+  const handleLockToggle = useCallback(async () => {
+    if (!sessionId || !session) return;
+    setLocking(true);
+    setError('');
+
+    try {
+      if (session.status === 'LOCKED') {
+        await api.unlockSession(sessionId);
+      } else {
+        await api.lockSession(sessionId);
+      }
+
+      const progress = await api.getSessionProgress(sessionId);
+      setSession(progress.session);
+      applyUsers(progress.users, true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update session lock');
+    } finally {
+      setLocking(false);
+    }
+  }, [sessionId, session, applyUsers]);
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
@@ -196,6 +273,7 @@ export const AdminSessionPage = () => {
           <Label variant={
             session.status === 'ACTIVE' ? 'success'
             : session.status === 'UPCOMING' ? 'accent'
+            : session.status === 'LOCKED' ? 'danger'
             : 'default'
           }>
             {session.status}
@@ -207,7 +285,15 @@ export const AdminSessionPage = () => {
           <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
             Admin Progress View
           </Text>
-          <Box display="flex" alignItems="center" sx={{ gap: 1 }}>
+          <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+            <Button
+              size="small"
+              variant={session.status === 'LOCKED' ? 'default' : 'danger'}
+              onClick={handleLockToggle}
+              disabled={locking || session.status === 'UPCOMING' || session.status === 'CLOSED'}
+            >
+              {locking ? 'Working...' : session.status === 'LOCKED' ? 'Unlock Session' : 'Lock Session'}
+            </Button>
             <Box
               sx={{
                 width: 8, height: 8, borderRadius: '50%',
@@ -222,6 +308,10 @@ export const AdminSessionPage = () => {
             <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Live</Text>
           </Box>
         </Box>
+      </Box>
+
+      <Box px={3} pt={3}>
+        <SessionStatusBanner session={session} />
       </Box>
 
       {error && (
@@ -283,8 +373,15 @@ export const AdminSessionPage = () => {
           Scorers ({users.length})
         </Heading>
 
-        <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
-          {users.map((user) => {
+        <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
+          {usersGroupedBySubcamp.map(([subcampId, group]) => (
+            <Box key={subcampId}>
+              <Heading sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>
+                {group.subcampName}
+              </Heading>
+
+              <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
+                {group.users.map((user) => {
             const userSubmitted = user.patrols.filter(
               (p) => p.status === 'submitted',
             ).length;
@@ -295,7 +392,7 @@ export const AdminSessionPage = () => {
             const isExpanded = expandedUsers.has(user.user_id);
             const userCommentsByPatrol = commentsByUser[user.user_id] || {};
 
-            return (
+                  return (
               <Box
                 key={user.user_id}
                 borderWidth={1}
@@ -496,8 +593,11 @@ export const AdminSessionPage = () => {
                   </Box>
                 )}
               </Box>
-            );
-          })}
+                  );
+                })}
+              </Box>
+            </Box>
+          ))}
         </Box>
 
         {users.length === 0 && (

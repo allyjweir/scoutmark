@@ -231,18 +231,19 @@ $ADMIN create-session \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
   -award-best-patrol -award-most-improved -previous-session ses-2026-07-29
 
+$ADMIN create-session \
+  -id ses-local-complete-morrison -event evt-ba-2026 -template tpl-camp \
+  -name "Completed Morrison Example" -start "2026-07-10T07:00:00+01:00" -duration 4h \
+  -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
+  -award-best-patrol
+
 echo
 
-# ─── Seed Scores for Saturday 18 July ───────────────────────────────
+# ─── Seed Scores for one completed local session (Morrison only) ────
 
-echo "Seeding scores for Saturday 18 July session (for report card testing)..."
+echo "Seeding scores for completed Morrison-only session (with comments)..."
 
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-morrison
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-macdonald
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-maclean
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-murray
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-robertson
-$ADMIN seed-scores -session ses-2026-07-18 -user usr-stewart
+$ADMIN seed-scores -session ses-local-complete-morrison -user usr-morrison -commented-categories 4
 
 echo
 

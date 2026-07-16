@@ -103,6 +103,14 @@ type awardJSON struct {
 	PatrolID  string `json:"patrol_id"`
 }
 
+func formatOptionalTime(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	formatted := t.Format("2006-01-02T15:04:05Z")
+	return &formatted
+}
+
 // ListSessions handles GET /api/sessions
 func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -132,7 +140,6 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(attribute.Int("sessions.count", len(sessions)))
 
 	result := lo.Map(sessions, func(s database.SessionDetailRow, _ int) sessionJSON {
-		lockedAt := lo.Ternary(s.LockedAt != nil, lo.ToPtr(s.LockedAt.Format("2006-01-02T15:04:05Z")), nil)
 		return sessionJSON{
 			ID:                s.ID,
 			EventID:           s.EventID,
@@ -142,7 +149,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
 			EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
 			Status:            s.ComputeStatus(),
-			LockedAt:          lockedAt,
+			LockedAt:          formatOptionalTime(s.LockedAt),
 			LockedBy:          s.LockedBy,
 			LockedByName:      s.LockedByName,
 			CreatedAt:         s.CreatedAt.Format("2006-01-02T15:04:05Z"),
@@ -215,7 +222,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
-		LockedAt:          lo.Ternary(session.LockedAt != nil, lo.ToPtr(session.LockedAt.Format("2006-01-02T15:04:05Z")), nil),
+		LockedAt:          formatOptionalTime(session.LockedAt),
 		LockedBy:          session.LockedBy,
 		LockedByName:      session.LockedByName,
 		CreatedAt:         session.CreatedAt.Format("2006-01-02T15:04:05Z"),

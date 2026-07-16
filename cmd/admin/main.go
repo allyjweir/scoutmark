@@ -1287,18 +1287,26 @@ type baPatrol struct {
 	SortOrder int
 }
 
+type baSession struct {
+	ID       string
+	Name     string
+	StartsAt time.Time
+	Duration time.Duration
+}
+
 func seedBADemo() error {
 	fs := flag.NewFlagSet("seed-ba-demo", flag.ExitOnError)
 
 	password := fs.String("password", envOrDefaultAdmin("SCOUTMARK_DEMO_PASSWORD", "password"), "Password for seeded users")
-	pastSeedUsername := fs.String("past-seed-username", "morrison.stacey", "Username to attribute seeded past-session submissions to")
+	resetNonUserData := fs.Bool("reset-non-user-data", false, "Delete all non-user data before reseeding (keeps users only)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Seed Blair Atholl demo data
 
-Creates/updates the event, template, criteria, patrols, assignments, today's
-session, next week's session, and a closed past session with demo scores.
+Creates/updates the event, template, criteria, patrols, assignments, and the
+July 2026 scoring schedule.
 Users are created only if missing and left unchanged when they already exist.
+Use -reset-non-user-data to retain users while resetting all other data.
 
 Usage:
   admin seed-ba-demo [-password password]
@@ -1324,7 +1332,7 @@ Flags:
 	users := baDemoUsers()
 	patrols := baDemoPatrols()
 	criteria := baDemoCriteria()
-	now := time.Now().UTC()
+	sessions := baDemoSessions()
 
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(*password), bcrypt.DefaultCost)
 	if err != nil {
@@ -1336,6 +1344,12 @@ Flags:
 		return fmt.Errorf("beginning seed transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	if *resetNonUserData {
+		if err := resetBANonUserData(tx); err != nil {
+			return err
+		}
+	}
 
 	if err := upsertBAEvent(tx); err != nil {
 		return err
@@ -1374,16 +1388,31 @@ Flags:
 			return err
 		}
 	}
-	if err := upsertBASession(tx, "ses-ba-demo-past", "Camp Inspection - Practice", now.AddDate(0, 0, -7), 6*time.Hour, true, false, nil); err != nil {
-		return err
+	sessionIDs := make([]string, 0, len(sessions))
+	for i, session := range sessions {
+		var previousSessionID *string
+		awardMostImproved := false
+		if i > 0 {
+			previousSessionID = strPtr(sessions[i-1].ID)
+			awardMostImproved = true
+		}
+
+		if err := upsertBASession(
+			tx,
+			session.ID,
+			session.Name,
+			session.StartsAt,
+			session.Duration,
+			true,
+			awardMostImproved,
+			previousSessionID,
+		); err != nil {
+			return err
+		}
+		sessionIDs = append(sessionIDs, session.ID)
 	}
-	if err := upsertBASession(tx, "ses-ba-demo-today", "Camp Inspection - Today", now, 6*time.Hour, true, true, strPtr("ses-ba-demo-past")); err != nil {
-		return err
-	}
-	if err := upsertBASession(tx, "ses-ba-demo-next-week", "Camp Inspection - Next Week", now.AddDate(0, 0, 7), 6*time.Hour, true, true, strPtr("ses-ba-demo-today")); err != nil {
-		return err
-	}
-	for _, sid := range []string{"ses-ba-demo-past", "ses-ba-demo-today", "ses-ba-demo-next-week"} {
+
+	for _, sid := range sessionIDs {
 		for _, slug := range baDemoSubcamps() {
 			if err := upsertBASessionSubcamp(tx, sid, slug); err != nil {
 				return err
@@ -1391,15 +1420,7 @@ Flags:
 		}
 	}
 
-	if err := resetBADemoSessionData(tx, []string{"ses-ba-demo-past", "ses-ba-demo-today", "ses-ba-demo-next-week"}); err != nil {
-		return err
-	}
-
-	pastSeedUserID, err := lookupBAUserID(resolvedUsers, *pastSeedUsername)
-	if err != nil {
-		return err
-	}
-	if err := seedBAPastScores(tx, "ses-ba-demo-past", pastSeedUserID, criteria, patrols); err != nil {
+	if err := resetBADemoSessionData(tx, sessionIDs); err != nil {
 		return err
 	}
 
@@ -1411,7 +1432,8 @@ Flags:
 	fmt.Printf("  Event:       Blair Atholl 2026 (evt-ba-2026)\n")
 	fmt.Printf("  Users:       %d leaders plus campchief (existing users left unchanged)\n", len(users)-1)
 	fmt.Printf("  Patrols:     %d patrols across 6 subcamps\n", len(patrols))
-	fmt.Printf("  Sessions:    past, today, next week\n")
+	fmt.Printf("  Sessions:    %d sessions (18-30 July 2026)\n", len(sessions))
+	fmt.Printf("  Reset mode:  %v\n", *resetNonUserData)
 	fmt.Printf("  Password:    %s\n", *password)
 	return nil
 }
@@ -1576,6 +1598,31 @@ func resetBADemoSessionData(tx *sql.Tx, sessionIDs []string) error {
 	return nil
 }
 
+func resetBANonUserData(tx *sql.Tx) error {
+	if _, err := tx.Exec(`
+		TRUNCATE TABLE
+			user_sessions,
+			session_awards,
+			submission_comments,
+			draft_comments,
+			submission_scores,
+			submissions,
+			draft_scores,
+			drafts,
+			session_subcamps,
+			sessions,
+			criteria,
+			criteria_templates,
+			patrols,
+			subcamps,
+			events
+		RESTART IDENTITY
+		CASCADE`); err != nil {
+		return fmt.Errorf("resetting non-user data: %w", err)
+	}
+	return nil
+}
+
 func seedBAPastScores(tx *sql.Tx, sessionID, userID string, criteria []baCriterion, patrols []baPatrol) error {
 	var userExists bool
 	if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", userID).Scan(&userExists); err != nil {
@@ -1622,12 +1669,38 @@ func seedBAPastScores(tx *sql.Tx, sessionID, userID string, criteria []baCriteri
 
 func baDemoCriteria() []baCriterion {
 	return []baCriterion{
-		{ID: "crt-tent", Title: "Tent & Bedding", Description: "Tents properly pitched, bedding aired and rolled", MinValue: 0, MaxValue: 10, SortOrder: 1},
-		{ID: "crt-kit", Title: "Kit Layout", Description: "Personal kit neatly stored and accessible", MinValue: 0, MaxValue: 10, SortOrder: 2},
-		{ID: "crt-hygiene", Title: "Hygiene Area", Description: "Wash stands clean, toiletries organised", MinValue: 0, MaxValue: 10, SortOrder: 3},
-		{ID: "crt-kitchen", Title: "Kitchen Area", Description: "Cooking area clean, fire properly maintained", MinValue: 0, MaxValue: 10, SortOrder: 4},
-		{ID: "crt-gadgets", Title: "Camp Gadgets", Description: "Quality and creativity of pioneering projects", MinValue: 0, MaxValue: 10, SortOrder: 5},
-		{ID: "crt-spirit", Title: "Camp Spirit", Description: "Enthusiasm, teamwork and patrol morale", MinValue: 0, MaxValue: 10, SortOrder: 6},
+		{ID: "crt-uniform", Title: "Uniform", Description: "Shirts, badges, neckies and ID badges.", MinValue: 0, MaxValue: 10, SortOrder: 0},
+		{ID: "crt-inside-tents", Title: "Inside Tents", Description: "Tidy and clean, personal kit organised, ground sheet folded back and tidy store tent.", MinValue: 0, MaxValue: 10, SortOrder: 1},
+		{ID: "crt-tent-structure", Title: "Tent Structure", Description: "Walls hung and pitched correctly.", MinValue: 0, MaxValue: 10, SortOrder: 2},
+		{ID: "crt-food-hygiene", Title: "Food Hygiene", Description: "Food stored off the ground, equipment clean, clean tea towels.", MinValue: 0, MaxValue: 10, SortOrder: 3},
+		{ID: "crt-structure", Title: "Structure", Description: "Stable and lashings tight, clean table, good fire, ashes cleared and fire buckets filled.", MinValue: 0, MaxValue: 10, SortOrder: 4},
+		{ID: "crt-chopping-area", Title: "Chopping Area", Description: "Wood ready for next meal, tidy, tools stored safely and boundary marked.", MinValue: 0, MaxValue: 10, SortOrder: 5},
+		{ID: "crt-general-area", Title: "General Area", Description: "Gate, boundary line (no laundry) and good gadgets.", MinValue: 0, MaxValue: 10, SortOrder: 6},
+		{ID: "crt-personal-hygiene", Title: "Personal Hygiene", Description: "Nails and hands clean, teeth brushed and they've had a shower at some point recently.", MinValue: 0, MaxValue: 10, SortOrder: 7},
+		{ID: "crt-team-work", Title: "Team Work", Description: "PLs leading well, group working together and supporting one another.", MinValue: 0, MaxValue: 10, SortOrder: 8},
+		{ID: "crt-litter", Title: "Litter", Description: "No litter, tidy behind tents, recycling organised and slop bucket emptied.", MinValue: 0, MaxValue: 10, SortOrder: 9},
+	}
+}
+
+func baDemoSessions() []baSession {
+	mustParse := func(value string) time.Time {
+		t, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			panic(fmt.Sprintf("invalid BA demo session timestamp %q: %v", value, err))
+		}
+		return t
+	}
+
+	return []baSession{
+		{ID: "ses-2026-07-18", Name: "Saturday 18 July", StartsAt: mustParse("2026-07-18T09:00:00+01:00"), Duration: 11 * time.Hour},
+		{ID: "ses-2026-07-22", Name: "Wednesday 22 July", StartsAt: mustParse("2026-07-22T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-23", Name: "Thursday 23 July", StartsAt: mustParse("2026-07-23T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-24", Name: "Friday 24 July", StartsAt: mustParse("2026-07-24T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-25", Name: "Saturday 25 July", StartsAt: mustParse("2026-07-25T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-27", Name: "Monday 27 July", StartsAt: mustParse("2026-07-27T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-28", Name: "Tuesday 28 July", StartsAt: mustParse("2026-07-28T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-29", Name: "Wednesday 29 July", StartsAt: mustParse("2026-07-29T07:00:00+01:00"), Duration: 4 * time.Hour},
+		{ID: "ses-2026-07-30", Name: "Thursday 30 July", StartsAt: mustParse("2026-07-30T07:00:00+01:00"), Duration: 4 * time.Hour},
 	}
 }
 

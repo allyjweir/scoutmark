@@ -43,7 +43,7 @@ curl -fsS --retry 12 --retry-delay 2 "$URL/healthz" >/dev/null
 echo
 
 echo "Running remote seed command..."
-flyctl ssh console -a "$APP" --config "$CONFIG" -C "/bin/scoutmark-admin seed-ba-demo"
+flyctl ssh console -a "$APP" --config "$CONFIG" -C "/bin/scoutmark-admin seed-ba-demo -reset-non-user-data"
 echo
 
 echo "Verifying sessions..."

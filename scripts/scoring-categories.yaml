@@ -1,0 +1,50 @@
+- name: Uniform
+  description: Shirts, badges, neckies and ID badges.
+  min: 0
+  max: 10
+  order: 0
+- name: Inside Tents
+  description: Tidy and clean, personal kit organised, ground sheet folded back and tidy store tent.
+  min: 0
+  max: 10
+  order: 1
+- name: Tent Structure
+  description: Walls hung and pitched correctly.
+  min: 0
+  max: 10
+  order: 2
+- name: Food Hygiene
+  description: Food stored off the ground, equipment clean, clean tea towels.
+  min: 0
+  max: 10
+  order: 3
+- name: Structure
+  description: Stable and lashings tight, clean table, good fire, ashes cleared and fire buckets filled.
+  min: 0
+  max: 10
+  order: 4
+- name: Chopping Area
+  description: Wood ready for next meal, tidy, tools stored safely and boundary marked.
+  min: 0
+  max: 10
+  order: 5
+- name: General Area
+  description: Gate, boundary line (no laundry) and good gadgets.
+  min: 0
+  max: 10
+  order: 6
+- name: Personal Hygiene
+  description: Nails and hands clean, teeth brushed and they've had a shower at some point recently.
+  min: 0
+  max: 10
+  order: 7
+- name: Team Work
+  description: PLs leading well, group working together and supporting one another.
+  min: 0
+  max: 10
+  order: 8
+- name: Litter
+  description: No litter, tidy behind tents, recycling organised and slop bucket emptied.
+  min: 0
+  max: 10
+  order: 9

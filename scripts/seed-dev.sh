@@ -43,35 +43,55 @@ $ADMIN create-template \
 echo
 
 echo "Adding criteria..."
-$ADMIN add-criterion -template tpl-camp -id crt-tent \
-  -title "Tent & Bedding" \
-  -description "Tents properly pitched, bedding aired and rolled" \
+$ADMIN add-criterion -template tpl-camp -id crt-uniform \
+  -title "Uniform" \
+  -description "Shirts, badges, neckies and ID badges." \
+  -min 0 -max 10 -order 0
+
+$ADMIN add-criterion -template tpl-camp -id crt-inside-tents \
+  -title "Inside Tents" \
+  -description "Tidy and clean, personal kit organised, ground sheet folded back and tidy store tent." \
   -min 0 -max 10 -order 1
 
-$ADMIN add-criterion -template tpl-camp -id crt-kit \
-  -title "Kit Layout" \
-  -description "Personal kit neatly stored and accessible" \
+$ADMIN add-criterion -template tpl-camp -id crt-tent-structure \
+  -title "Tent Structure" \
+  -description "Walls hung and pitched correctly." \
   -min 0 -max 10 -order 2
 
-$ADMIN add-criterion -template tpl-camp -id crt-hygiene \
-  -title "Hygiene Area" \
-  -description "Wash stands clean, toiletries organised" \
+$ADMIN add-criterion -template tpl-camp -id crt-food-hygiene \
+  -title "Food Hygiene" \
+  -description "Food stored off the ground, equipment clean, clean tea towels." \
   -min 0 -max 10 -order 3
 
-$ADMIN add-criterion -template tpl-camp -id crt-kitchen \
-  -title "Kitchen Area" \
-  -description "Cooking area clean, fire properly maintained" \
+$ADMIN add-criterion -template tpl-camp -id crt-structure \
+  -title "Structure" \
+  -description "Stable and lashings tight, clean table, good fire, ashes cleared and fire buckets filled." \
   -min 0 -max 10 -order 4
 
-$ADMIN add-criterion -template tpl-camp -id crt-gadgets \
-  -title "Camp Gadgets" \
-  -description "Quality and creativity of pioneering projects" \
+$ADMIN add-criterion -template tpl-camp -id crt-chopping-area \
+  -title "Chopping Area" \
+  -description "Wood ready for next meal, tidy, tools stored safely and boundary marked." \
   -min 0 -max 10 -order 5
 
-$ADMIN add-criterion -template tpl-camp -id crt-spirit \
-  -title "Camp Spirit" \
-  -description "Enthusiasm, teamwork and patrol morale" \
+$ADMIN add-criterion -template tpl-camp -id crt-general-area \
+  -title "General Area" \
+  -description "Gate, boundary line (no laundry) and good gadgets." \
   -min 0 -max 10 -order 6
+
+$ADMIN add-criterion -template tpl-camp -id crt-personal-hygiene \
+  -title "Personal Hygiene" \
+  -description "Nails and hands clean, teeth brushed and they've had a shower at some point recently." \
+  -min 0 -max 10 -order 7
+
+$ADMIN add-criterion -template tpl-camp -id crt-team-work \
+  -title "Team Work" \
+  -description "PLs leading well, group working together and supporting one another." \
+  -min 0 -max 10 -order 8
+
+$ADMIN add-criterion -template tpl-camp -id crt-litter \
+  -title "Litter" \
+  -description "No litter, tidy behind tents, recycling organised and slop bucket emptied." \
+  -min 0 -max 10 -order 9
 echo
 
 # ─── Users ───────────────────────────────────────────────────────────
@@ -158,47 +178,71 @@ echo
 echo "Creating sessions..."
 
 $ADMIN create-session \
-  -id ses-sun -event evt-ba-2026 -template tpl-camp \
-  -name "Sunday" -start now -duration 24h \
+  -id ses-2026-07-18 -event evt-ba-2026 -template tpl-camp \
+  -name "Saturday 18 July" -start "2026-07-18T09:00:00+01:00" -duration 11h \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
   -award-best-patrol
 
 $ADMIN create-session \
-  -id ses-mon -event evt-ba-2026 -template tpl-camp \
-  -name "Monday" -start "2026-02-09T06:00:00Z" -duration 4h \
+  -id ses-2026-07-22 -event evt-ba-2026 -template tpl-camp \
+  -name "Wednesday 22 July" -start "2026-07-22T07:00:00+01:00" -duration 4h \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
-  -award-best-patrol -award-most-improved -previous-session ses-sun
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-18
 
 $ADMIN create-session \
-  -id ses-tue -event evt-ba-2026 -template tpl-camp \
-  -name "Tuesday" -start "2026-02-10T06:00:00Z" -duration 4h \
+  -id ses-2026-07-23 -event evt-ba-2026 -template tpl-camp \
+  -name "Thursday 23 July" -start "2026-07-23T07:00:00+01:00" -duration 4h \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
-  -award-best-patrol -award-most-improved -previous-session ses-mon
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-22
 
 $ADMIN create-session \
-  -id ses-wed -event evt-ba-2026 -template tpl-camp \
-  -name "Wednesday" -start "2026-02-11T06:00:00Z" -duration 4h \
+  -id ses-2026-07-24 -event evt-ba-2026 -template tpl-camp \
+  -name "Friday 24 July" -start "2026-07-24T07:00:00+01:00" -duration 4h \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
-  -award-best-patrol -award-most-improved -previous-session ses-tue
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-23
 
 $ADMIN create-session \
-  -id ses-thu -event evt-ba-2026 -template tpl-camp \
-  -name "Thursday" -start "2026-02-12T06:00:00Z" -duration 4h \
+  -id ses-2026-07-25 -event evt-ba-2026 -template tpl-camp \
+  -name "Saturday 25 July" -start "2026-07-25T07:00:00+01:00" -duration 4h \
   -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
-  -award-best-patrol -award-most-improved -previous-session ses-wed
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-24
+
+$ADMIN create-session \
+  -id ses-2026-07-27 -event evt-ba-2026 -template tpl-camp \
+  -name "Monday 27 July" -start "2026-07-27T07:00:00+01:00" -duration 4h \
+  -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-25
+
+$ADMIN create-session \
+  -id ses-2026-07-28 -event evt-ba-2026 -template tpl-camp \
+  -name "Tuesday 28 July" -start "2026-07-28T07:00:00+01:00" -duration 4h \
+  -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-27
+
+$ADMIN create-session \
+  -id ses-2026-07-29 -event evt-ba-2026 -template tpl-camp \
+  -name "Wednesday 29 July" -start "2026-07-29T07:00:00+01:00" -duration 4h \
+  -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-28
+
+$ADMIN create-session \
+  -id ses-2026-07-30 -event evt-ba-2026 -template tpl-camp \
+  -name "Thursday 30 July" -start "2026-07-30T07:00:00+01:00" -duration 4h \
+  -subcamps "sub-morrison,sub-macdonald,sub-maclean,sub-murray,sub-robertson,sub-stewart" \
+  -award-best-patrol -award-most-improved -previous-session ses-2026-07-29
 
 echo
 
-# ─── Seed Scores for Thursday (closed session) ──────────────────────
+# ─── Seed Scores for Saturday 18 July ───────────────────────────────
 
-echo "Seeding scores for Thursday session (for report card testing)..."
+echo "Seeding scores for Saturday 18 July session (for report card testing)..."
 
-$ADMIN seed-scores -session ses-thu -user usr-morrison
-$ADMIN seed-scores -session ses-thu -user usr-macdonald
-$ADMIN seed-scores -session ses-thu -user usr-maclean
-$ADMIN seed-scores -session ses-thu -user usr-murray
-$ADMIN seed-scores -session ses-thu -user usr-robertson
-$ADMIN seed-scores -session ses-thu -user usr-stewart
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-morrison
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-macdonald
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-maclean
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-murray
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-robertson
+$ADMIN seed-scores -session ses-2026-07-18 -user usr-stewart
 
 echo
 

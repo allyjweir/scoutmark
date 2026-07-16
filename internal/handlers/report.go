@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-pdf/fpdf"
@@ -17,6 +18,17 @@ import (
 type ReportHandler struct {
 	db      *database.DB
 	logoPNG []byte // optional embedded logo; nil means no logo
+}
+
+type reportPatrolEntry struct {
+	name   string
+	scores map[string]int // criterion_id -> value
+	total  int
+}
+
+type reportCriterionComment struct {
+	displayName string
+	comment     string
 }
 
 // NewReportHandler creates a new ReportHandler.
@@ -67,23 +79,46 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build patrol→criterion→value map and ordered patrol list
-	type patrolEntry struct {
-		name   string
-		scores map[string]int // criterion_id → value
-		total  int
-	}
 	patrolOrder := []string{}
-	patrolMap := map[string]*patrolEntry{}
+	patrolMap := map[string]*reportPatrolEntry{}
 
 	for _, row := range rows {
 		pe, exists := patrolMap[row.PatrolID]
 		if !exists {
-			pe = &patrolEntry{name: row.PatrolName, scores: map[string]int{}}
+			pe = &reportPatrolEntry{name: row.PatrolName, scores: map[string]int{}}
 			patrolMap[row.PatrolID] = pe
 			patrolOrder = append(patrolOrder, row.PatrolID)
 		}
 		pe.scores[row.CriterionID] = row.Value
 		pe.total += row.Value
+	}
+
+	// Load per-user comments for each visible patrol/criterion.
+	allComments, err := h.db.GetAllSessionComments(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "failed to load comments")
+		return
+	}
+	visiblePatrols := make(map[string]bool, len(patrolOrder))
+	for _, pid := range patrolOrder {
+		visiblePatrols[pid] = true
+	}
+	commentsByPatrolCriterion := map[string]map[string][]reportCriterionComment{}
+	for _, c := range allComments {
+		if !visiblePatrols[c.PatrolID] {
+			continue
+		}
+		commentText := strings.TrimSpace(c.Comment)
+		if commentText == "" {
+			continue
+		}
+		if commentsByPatrolCriterion[c.PatrolID] == nil {
+			commentsByPatrolCriterion[c.PatrolID] = map[string][]reportCriterionComment{}
+		}
+		commentsByPatrolCriterion[c.PatrolID][c.CriterionID] = append(
+			commentsByPatrolCriterion[c.PatrolID][c.CriterionID],
+			reportCriterionComment{displayName: c.DisplayName, comment: commentText},
+		)
 	}
 
 	// Generate PDF
@@ -198,6 +233,35 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	pdf.SetFont("Arial", "I", 7)
 	pdf.CellFormat(0, 4, fmt.Sprintf("Generated %s", time.Now().Format("2 Jan 2006 15:04")), "", 0, "R", false, 0, "")
 
+	// ─── Per-patrol scorecards (2 per page) ─────────────────────
+	for i, pid := range patrolOrder {
+		if i%2 == 0 {
+			pdf.AddPageFormat("P", fpdf.SizeType{Wd: 210, Ht: 297})
+		}
+
+		cardMargin := 10.0
+		cardGap := 6.0
+		pageW, pageH := pdf.GetPageSize()
+		cardW := pageW - (2 * cardMargin)
+		cardH := (pageH - (2 * cardMargin) - cardGap) / 2
+		cardY := cardMargin
+		if i%2 == 1 {
+			cardY += cardH + cardGap
+		}
+
+		renderPatrolScorecard(
+			pdf,
+			session.Name,
+			patrolMap[pid],
+			criteria,
+			commentsByPatrolCriterion[pid],
+			cardMargin,
+			cardY,
+			cardW,
+			cardH,
+		)
+	}
+
 	// Write PDF to response
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
@@ -214,11 +278,92 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 
 // truncate shortens a string to maxLen characters, appending "..." if truncated.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
+}
+
+func renderPatrolScorecard(
+	pdf *fpdf.Fpdf,
+	sessionName string,
+	patrol *reportPatrolEntry,
+	criteria []database.CriterionRow,
+	commentsByCriterion map[string][]reportCriterionComment,
+	x, y, w, h float64,
+) {
+	if patrol == nil {
+		return
+	}
+
+	// Card frame
+	pdf.SetDrawColor(170, 170, 170)
+	pdf.SetFillColor(255, 255, 255)
+	pdf.Rect(x, y, w, h, "D")
+
+	pad := 4.0
+	innerX := x + pad
+	innerY := y + pad
+	innerW := w - (2 * pad)
+	innerBottom := y + h - pad
+
+	// Title block
+	pdf.SetXY(innerX, innerY)
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(innerW, 6, truncate(sessionName+" - "+patrol.name, 64), "", 1, "L", false, 0, "")
+	pdf.SetX(innerX)
+	pdf.SetFont("Arial", "", 9)
+	pdf.CellFormat(innerW, 5, fmt.Sprintf("Total Score: %d", patrol.total), "", 1, "L", false, 0, "")
+
+	pdf.Ln(1)
+
+	// Criterion table headers
+	titleW := 64.0
+	scoreW := 18.0
+	commentW := innerW - titleW - scoreW
+	headerH := 6.0
+	rowH := 6.0
+
+	pdf.SetX(innerX)
+	pdf.SetFont("Arial", "B", 8)
+	pdf.SetFillColor(235, 235, 235)
+	pdf.CellFormat(titleW, headerH, "Category", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(scoreW, headerH, "Score", "1", 0, "C", true, 0, "")
+	pdf.CellFormat(commentW, headerH, "Comments", "1", 1, "L", true, 0, "")
+
+	pdf.SetFont("Arial", "", 8)
+	for _, c := range criteria {
+		if pdf.GetY()+rowH > innerBottom {
+			break
+		}
+
+		score := patrol.scores[c.ID]
+		commentSummary := summarizeComments(commentsByCriterion[c.ID], 100)
+
+		pdf.SetX(innerX)
+		pdf.CellFormat(titleW, rowH, truncate(c.Title, 42), "1", 0, "L", false, 0, "")
+		pdf.CellFormat(scoreW, rowH, fmt.Sprintf("%d/%d", score, c.MaxValue), "1", 0, "C", false, 0, "")
+		pdf.CellFormat(commentW, rowH, commentSummary, "1", 1, "L", false, 0, "")
+	}
+}
+
+func summarizeComments(comments []reportCriterionComment, maxLen int) string {
+	if len(comments) == 0 {
+		return "-"
+	}
+	parts := make([]string, 0, len(comments))
+	for _, c := range comments {
+		name := strings.TrimSpace(c.displayName)
+		text := strings.Join(strings.Fields(c.comment), " ")
+		if name != "" {
+			parts = append(parts, name+": "+text)
+		} else {
+			parts = append(parts, text)
+		}
+	}
+	return truncate(strings.Join(parts, " | "), maxLen)
 }

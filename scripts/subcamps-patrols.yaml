@@ -1,0 +1,102 @@
+# Scoutmark BA subcamp/patrol source-of-truth.
+#
+# Intended use:
+# - Import command treats this file as the full replacement set for subcamps + patrols.
+# - Users are preserved; keep subcamp IDs stable to avoid breaking user assignments.
+# - Patrol IDs should also stay stable once in use.
+#
+# ID rules:
+# - lowercase letters, numbers, and hyphens only
+# - prefer prefixes: sub-... and pat-...
+#
+# Example naming:
+# - sub-morrison
+# - pat-morrison-1
+
+version: 1
+scope: scoutmark-ba
+
+subcamps:
+  - id: sub-morrison
+    name: Morrison
+    sort_order: 1
+    patrols:
+      - id: pat-morrison-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-morrison-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-morrison-3
+        name: Site 3
+        sort_order: 3
+
+  - id: sub-mcdonald
+    name: McDonald
+    sort_order: 2
+    patrols:
+      - id: pat-mcdonald-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-mcdonald-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-mcdonald-3
+        name: Site 3
+        sort_order: 3
+
+  - id: sub-robertson
+    name: Robertson
+    sort_order: 3
+    patrols:
+      - id: pat-robertson-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-robertson-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-robertson-3
+        name: Site 3
+        sort_order: 3
+
+  - id: sub-stewart
+    name: Stewart
+    sort_order: 4
+    patrols:
+      - id: pat-stewart-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-stewart-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-stewart-3
+        name: Site 3
+        sort_order: 3
+
+  - id: sub-murray
+    name: Murray
+    sort_order: 5
+    patrols:
+      - id: pat-murray-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-murray-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-murray-3
+        name: Site 3
+        sort_order: 3
+
+  - id: sub-mclean
+    name: McLean
+    sort_order: 6
+    patrols:
+      - id: pat-mclean-1
+        name: Site 1
+        sort_order: 1
+      - id: pat-mclean-2
+        name: Site 2
+        sort_order: 2
+      - id: pat-mclean-3
+        name: Site 3
+        sort_order: 3

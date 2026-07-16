@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"gopkg.in/yaml.v3"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
@@ -48,6 +48,7 @@ Commands:
 	assign-patrol-subcamp Assign a patrol to a subcamp
 	assign-session-subcamp Assign a session to a subcamp
   create-session    Create a scoring session
+	upsert-ba-structure Replace BA subcamps and patrols from scripts/subcamps-patrols.yaml
 	upsert-ba-criteria Upsert Blair Atholl criteria from scripts/scoring-categories.yaml
   update-session    Update session settings (awards, previous session)
   list-sessions     List all sessions with status
@@ -93,6 +94,8 @@ func main() {
 		err = assignSessionSubcamp()
 	case "create-session":
 		err = createSession()
+	case "upsert-ba-structure":
+		err = upsertBAStructure()
 	case "upsert-ba-criteria":
 		err = upsertBACriteria()
 	case "update-session":
@@ -1360,6 +1363,25 @@ type yamlScoringCategory struct {
 	Rubric      *yamlCriterionRubric `yaml:"rubric"`
 }
 
+type yamlBAPatrol struct {
+	ID        string `yaml:"id"`
+	Name      string `yaml:"name"`
+	SortOrder int    `yaml:"sort_order"`
+}
+
+type yamlBASubcamp struct {
+	ID        string         `yaml:"id"`
+	Name      string         `yaml:"name"`
+	SortOrder int            `yaml:"sort_order"`
+	Patrols   []yamlBAPatrol `yaml:"patrols"`
+}
+
+type yamlBAStructure struct {
+	Version  int             `yaml:"version"`
+	Scope    string          `yaml:"scope"`
+	Subcamps []yamlBASubcamp `yaml:"subcamps"`
+}
+
 type baUser struct {
 	ID          string
 	Username    string
@@ -1559,6 +1581,204 @@ func upsertBACriteria() error {
 
 	fmt.Printf("✓ Upserted %d Blair Atholl criteria from scripts/scoring-categories.yaml\n", len(criteria))
 	return nil
+}
+
+func upsertBAStructure() error {
+	structure, err := loadBAStructureFromYAML()
+	if err != nil {
+		return err
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning structure upsert transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	for _, subcamp := range structure.Subcamps {
+		if _, err := tx.Exec(
+			`INSERT INTO subcamps (id, name)
+			 VALUES ($1, $2)
+			 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+			subcamp.ID, subcamp.Name,
+		); err != nil {
+			return fmt.Errorf("upserting subcamp %s: %w", subcamp.ID, err)
+		}
+
+		for i, patrol := range subcamp.Patrols {
+			sortOrder := patrol.SortOrder
+			if sortOrder <= 0 {
+				sortOrder = i + 1
+			}
+
+			if _, err := tx.Exec(
+				`INSERT INTO patrols (id, name, subcamp_id, sort_order)
+				 VALUES ($1, $2, $3, $4)
+				 ON CONFLICT (id) DO UPDATE SET
+				   name = EXCLUDED.name,
+				   subcamp_id = EXCLUDED.subcamp_id,
+				   sort_order = EXCLUDED.sort_order`,
+				patrol.ID, patrol.Name, subcamp.ID, sortOrder,
+			); err != nil {
+				return fmt.Errorf("upserting patrol %s: %w", patrol.ID, err)
+			}
+		}
+	}
+
+	newSubcampIDs := make([]string, 0, len(structure.Subcamps))
+	newPatrolCount := 0
+	for _, subcamp := range structure.Subcamps {
+		newSubcampIDs = append(newSubcampIDs, subcamp.ID)
+		newPatrolCount += len(subcamp.Patrols)
+	}
+
+	blockedUsers, err := usersOutsideSubcampSet(tx, newSubcampIDs)
+	if err != nil {
+		return err
+	}
+	if len(blockedUsers) > 0 {
+		var preview []string
+		for i, b := range blockedUsers {
+			if i == 8 {
+				preview = append(preview, fmt.Sprintf("... and %d more", len(blockedUsers)-i))
+				break
+			}
+			preview = append(preview, fmt.Sprintf("%s(subcamp=%s)", b.username, b.subcampID))
+		}
+		return fmt.Errorf(
+			"refusing to replace structure: %d users are assigned to subcamps missing from YAML: %s",
+			len(blockedUsers),
+			strings.Join(preview, ", "),
+		)
+	}
+
+	newPatrolIDs := make([]string, 0, newPatrolCount)
+	for _, subcamp := range structure.Subcamps {
+		for _, patrol := range subcamp.Patrols {
+			newPatrolIDs = append(newPatrolIDs, patrol.ID)
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM patrols WHERE NOT (id = ANY($1::text[]))`, pq.Array(newPatrolIDs)); err != nil {
+		return fmt.Errorf("deleting patrols not present in YAML: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM subcamps WHERE NOT (id = ANY($1::text[]))`, pq.Array(newSubcampIDs)); err != nil {
+		return fmt.Errorf("deleting subcamps not present in YAML: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing structure upsert: %w", err)
+	}
+
+	fmt.Printf("✓ Replaced BA structure from scripts/subcamps-patrols.yaml\n")
+	fmt.Printf("  Subcamps: %d\n", len(newSubcampIDs))
+	fmt.Printf("  Patrols:  %d\n", newPatrolCount)
+	return nil
+}
+
+type userSubcampRef struct {
+	username  string
+	subcampID string
+}
+
+func usersOutsideSubcampSet(tx *sql.Tx, allowedSubcampIDs []string) ([]userSubcampRef, error) {
+	if len(allowedSubcampIDs) == 0 {
+		return nil, fmt.Errorf("subcamp list cannot be empty")
+	}
+
+	rows, err := tx.Query(
+		`SELECT username, subcamp_id
+		 FROM users
+		 WHERE subcamp_id IS NOT NULL
+		   AND NOT (subcamp_id = ANY($1::text[]))
+		 ORDER BY username`,
+		pq.Array(allowedSubcampIDs),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("checking users outside YAML subcamps: %w", err)
+	}
+	defer rows.Close()
+
+	var out []userSubcampRef
+	for rows.Next() {
+		var ref userSubcampRef
+		if err := rows.Scan(&ref.username, &ref.subcampID); err != nil {
+			return nil, fmt.Errorf("scanning user subcamp check row: %w", err)
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating user subcamp check rows: %w", err)
+	}
+
+	return out, nil
+}
+
+func loadBAStructureFromYAML() (*yamlBAStructure, error) {
+	path := filepath.Join("scripts", "subcamps-patrols.yaml")
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+
+	var structure yamlBAStructure
+	if err := yaml.Unmarshal(bytes, &structure); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if structure.Version != 1 {
+		return nil, fmt.Errorf("%s must have version: 1", path)
+	}
+	if len(structure.Subcamps) == 0 {
+		return nil, fmt.Errorf("no subcamps found in %s", path)
+	}
+
+	subcampIDs := make(map[string]struct{}, len(structure.Subcamps))
+	patrolIDs := map[string]string{}
+
+	for i := range structure.Subcamps {
+		subcamp := &structure.Subcamps[i]
+		subcamp.ID = strings.TrimSpace(subcamp.ID)
+		subcamp.Name = strings.TrimSpace(subcamp.Name)
+		if subcamp.ID == "" {
+			return nil, fmt.Errorf("subcamp %d is missing id", i)
+		}
+		if subcamp.Name == "" {
+			return nil, fmt.Errorf("subcamp %q is missing name", subcamp.ID)
+		}
+		if _, exists := subcampIDs[subcamp.ID]; exists {
+			return nil, fmt.Errorf("duplicate subcamp id %q", subcamp.ID)
+		}
+		subcampIDs[subcamp.ID] = struct{}{}
+
+		for j := range subcamp.Patrols {
+			patrol := &subcamp.Patrols[j]
+			patrol.ID = strings.TrimSpace(patrol.ID)
+			patrol.Name = strings.TrimSpace(patrol.Name)
+			if patrol.ID == "" {
+				return nil, fmt.Errorf("subcamp %q patrol %d is missing id", subcamp.ID, j)
+			}
+			if patrol.Name == "" {
+				return nil, fmt.Errorf("patrol %q is missing name", patrol.ID)
+			}
+			if owner, exists := patrolIDs[patrol.ID]; exists {
+				return nil, fmt.Errorf("duplicate patrol id %q in subcamps %q and %q", patrol.ID, owner, subcamp.ID)
+			}
+			patrolIDs[patrol.ID] = subcamp.ID
+		}
+	}
+
+	if len(patrolIDs) == 0 {
+		return nil, fmt.Errorf("no patrols found in %s", path)
+	}
+
+	return &structure, nil
 }
 
 func loadBACriteriaFromYAML() ([]baCriterion, error) {

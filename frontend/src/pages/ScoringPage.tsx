@@ -900,8 +900,18 @@ export const ScoringPage = () => {
         bg="canvas.subtle"
       >
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <Button variant="invisible" onClick={() => navigate('/')} size="small">
-            ← Back
+          <Button
+            variant="invisible"
+            onClick={() => {
+              if (view === 'summary') {
+                navigate('/');
+                return;
+              }
+              goToSummary();
+            }}
+            size="small"
+          >
+            {view === 'summary' ? '← Back' : '← Back to Summary'}
           </Button>
           <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
             {session.event_name}

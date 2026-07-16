@@ -212,13 +212,13 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf.Bytes())
 }
 
-// truncate shortens a string to maxLen characters, appending "…" if truncated.
+// truncate shortens a string to maxLen characters, appending "..." if truncated.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	if maxLen <= 1 {
-		return "…"
+	if maxLen <= 3 {
+		return s[:maxLen]
 	}
-	return s[:maxLen-1] + "…"
+	return s[:maxLen-3] + "..."
 }

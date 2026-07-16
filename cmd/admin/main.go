@@ -1124,6 +1124,7 @@ func seedScores() error {
 	userID := fs.String("user", "", "User ID to attribute submissions to (required)")
 	minScore := fs.Int("min", 3, "Minimum random score")
 	maxScore := fs.Int("max", 10, "Maximum random score")
+	commentedCategories := fs.Int("commented-categories", 0, "Number of criteria per patrol to receive random comments")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Seed random scores for all patrols in a session
@@ -1154,17 +1155,21 @@ Flags:
 	}
 	defer db.Close()
 
-	patrolCount, criterionCount, err := seedScoresForUser(db, *sessionID, *userID, *minScore, *maxScore)
+	patrolCount, criterionCount, err := seedScoresForUser(db, *sessionID, *userID, *minScore, *maxScore, *commentedCategories)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("\nSeeded %d patrols × %d criteria with random scores [%d-%d]\n",
+	fmt.Printf("\nSeeded %d patrols × %d criteria with random scores [%d-%d]",
 		patrolCount, criterionCount, *minScore, *maxScore)
+	if *commentedCategories > 0 {
+		fmt.Printf(" and %d random comments per patrol", *commentedCategories)
+	}
+	fmt.Println()
 	return nil
 }
 
-func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore int) (int, int, error) {
+func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore, commentedCategories int) (int, int, error) {
 	if maxScore < minScore {
 		return 0, 0, fmt.Errorf("max score must be greater than or equal to min score")
 	}
@@ -1193,6 +1198,12 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore 
 	rows.Close()
 	if len(criterionIDs) == 0 {
 		return 0, 0, fmt.Errorf("no criteria found for template %q", templateID)
+	}
+	if commentedCategories < 0 {
+		return 0, 0, fmt.Errorf("commented-categories must be greater than or equal to 0")
+	}
+	if commentedCategories > len(criterionIDs) {
+		commentedCategories = len(criterionIDs)
 	}
 
 	patrolRows, err := db.Query(
@@ -1223,6 +1234,14 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore 
 
 	scoreRange := maxScore - minScore + 1
 	for _, patrolID := range patrolIDs {
+		commentedSet := map[string]bool{}
+		if commentedCategories > 0 {
+			perm := rand.Perm(len(criterionIDs))
+			for _, idx := range perm[:commentedCategories] {
+				commentedSet[criterionIDs[idx]] = true
+			}
+		}
+
 		submissionID := uuid.New().String()
 
 		_, err := db.Exec(
@@ -1245,10 +1264,14 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore 
 
 		for _, criterionID := range criterionIDs {
 			value := minScore + rand.Intn(scoreRange)
+			comment := ""
+			if commentedSet[criterionID] {
+				comment = randomSeedComment()
+			}
 			_, err := db.Exec(
 				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
-				 VALUES ($1, $2, $3, $4, '', $5)`,
-				uuid.New().String(), submissionID, criterionID, value, userID,
+				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				uuid.New().String(), submissionID, criterionID, value, comment, userID,
 			)
 			if err != nil {
 				return 0, 0, fmt.Errorf("inserting score for criterion %s: %w", criterionID, err)
@@ -1259,6 +1282,18 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore 
 	}
 
 	return len(patrolIDs), len(criterionIDs), nil
+}
+
+func randomSeedComment() string {
+	comments := []string{
+		"Good standard overall.",
+		"Needs a quick tidy before next inspection.",
+		"Strong effort from the patrol.",
+		"A few small issues to fix.",
+		"Consistent and well presented.",
+		"Improving steadily day by day.",
+	}
+	return comments[rand.Intn(len(comments))]
 }
 
 // ─── Blair Atholl Demo Seed ─────────────────────────────────────────

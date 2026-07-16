@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Box, Label, Text } from '@primer/react';
+import { Box, Button, Label, Text } from '@primer/react';
 import type { Criterion, DraftComment } from '../lib/types';
 
 interface ScoreSliderProps {
   criterion: Criterion;
   value: number | null;
   comment: string;
+  isFirst?: boolean;
   otherComments?: DraftComment[];
   commentingIndicator?: string; // e.g. "✏️ Ally is commenting"
   onChange: (value: number) => void;
@@ -109,6 +110,7 @@ export const ScoreSlider = ({
   criterion,
   value,
   comment,
+  isFirst = false,
   otherComments = [],
   commentingIndicator,
   onChange,
@@ -139,6 +141,27 @@ export const ScoreSlider = ({
   const activeBand = isSet
     ? criterion.rubric?.bands.find((band) => displayValue >= band.min_value && displayValue <= band.max_value)
     : undefined;
+  const hasOwnComment = comment.trim().length > 0;
+
+  const bandTone = (band: NonNullable<Criterion['rubric']>['bands'][number]) => {
+    const scoreRange = Math.max(1, criterion.max_value - criterion.min_value);
+    const midpoint = (band.min_value + band.max_value) / 2;
+    const normalized = (midpoint - criterion.min_value) / scoreRange;
+
+    if (normalized >= 0.8) {
+      return { bg: 'success.subtle', border: 'success.muted', fg: 'success.fg' };
+    }
+    if (normalized >= 0.6) {
+      return { bg: 'accent.subtle', border: 'accent.muted', fg: 'accent.fg' };
+    }
+    if (normalized >= 0.4) {
+      return { bg: 'attention.subtle', border: 'attention.muted', fg: 'attention.fg' };
+    }
+    if (normalized >= 0.2) {
+      return { bg: 'severe.subtle', border: 'severe.muted', fg: 'severe.fg' };
+    }
+    return { bg: 'danger.subtle', border: 'danger.muted', fg: 'danger.fg' };
+  };
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,59 +193,57 @@ export const ScoreSlider = ({
     : 'var(--bgColor-neutral-muted, #d0d7de)';
 
   return (
-    <Box>
+    <Box
+      pt={isFirst ? 0 : 3}
+      borderTopWidth={isFirst ? 0 : 1}
+      borderTopStyle="solid"
+      borderTopColor={isFirst ? 'transparent' : 'border.muted'}
+      borderLeftWidth={hasOwnComment ? 2 : 0}
+      borderLeftStyle="solid"
+      borderLeftColor={hasOwnComment ? 'accent.emphasis' : 'transparent'}
+      pl={hasOwnComment ? 2 : 0}
+    >
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="baseline" mb={1}>
         <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>{criterion.title}</Text>
         <Text
           sx={{
-            fontSize: 3,
-            fontWeight: 'bold',
+            fontSize: 1,
+            fontWeight: 'semibold',
             fontVariantNumeric: 'tabular-nums',
-            color: !isSet ? 'fg.subtle' : disabled ? 'fg.muted' : 'fg.default',
+            color: !isSet ? 'fg.subtle' : disabled ? 'fg.muted' : 'fg.muted',
           }}
         >
-          {isSet ? displayValue : '–'}
+          {isSet ? displayValue : 'Not scored'}
         </Text>
       </Box>
-
-      {criterion.description && (
-        <Text sx={{ color: 'fg.muted', fontSize: 0, mb: 2, display: 'block' }}>
-          {criterion.description}
-        </Text>
-      )}
 
       {rubric && (
         <Box mb={2}>
           <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ gap: 2, flexWrap: 'wrap' }}>
             {activeBand ? (
-              <Label variant="accent" size="small">
+              <Label
+                size="small"
+                sx={{
+                  backgroundColor: bandTone(activeBand).bg,
+                  borderColor: bandTone(activeBand).border,
+                  color: bandTone(activeBand).fg,
+                }}
+              >
                 {activeBand.label} {activeBand.title}
               </Label>
             ) : (
-              <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-                Score using the guide below if needed.
-              </Text>
+              <Box />
             )}
-            <Text
-              as="button"
+            <Button
+              size="small"
+              variant="invisible"
               onClick={() => setGuideOpen((open) => !open)}
               aria-label={guideOpen ? 'Hide scoring guide' : 'View scoring guide'}
-              sx={{
-                fontSize: 0,
-                color: 'accent.fg',
-                cursor: 'pointer',
-                background: 'canvas.default',
-                borderWidth: 1,
-                borderStyle: 'solid',
-                borderColor: 'border.default',
-                padding: '6px 10px',
-                borderRadius: 2,
-                ':hover': { color: 'fg.default', bg: 'canvas.subtle' },
-              }}
+              sx={{ color: 'fg.muted', ':hover': { color: 'fg.default' } }}
             >
-              {guideOpen ? 'Hide scoring guide' : 'View scoring guide'}
-            </Text>
+              {guideOpen ? 'Hide guide' : 'Scoring guide'}
+            </Button>
           </Box>
 
           {guideOpen && (
@@ -248,6 +269,7 @@ export const ScoreSlider = ({
               <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
                 {rubric.bands.map((band) => {
                   const isActiveBand = activeBand?.label === band.label;
+                  const tone = bandTone(band);
                   return (
                     <Box
                       key={`${band.label}-${band.min_value}-${band.max_value}`}
@@ -255,8 +277,8 @@ export const ScoreSlider = ({
                       borderRadius={2}
                       borderWidth={1}
                       borderStyle="solid"
-                      borderColor={isActiveBand ? 'accent.emphasis' : 'border.default'}
-                      bg={isActiveBand ? 'accent.subtle' : 'canvas.default'}
+                      borderColor={isActiveBand ? tone.border : 'border.default'}
+                      bg={isActiveBand ? tone.bg : 'canvas.default'}
                     >
                       <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ gap: 2, mb: 1, flexWrap: 'wrap' }}>
                         <Text sx={{ fontSize: 1, fontWeight: 'bold' }}>
@@ -295,25 +317,15 @@ export const ScoreSlider = ({
           onChange={handleChange}
           disabled={disabled}
           style={{
-            // WebKit doesn't support ::-webkit-slider-runnable-track background
-            // with dynamic values in a stylesheet, so we set it inline.
-            // @ts-expect-error -- WebKit vendor style
-            '--track-bg': trackBackground,
-            background: trackBackground,
+            // WebKit doesn't support dynamic values in pseudo-element styles,
+            // so we paint the track gradient inline.
+            backgroundImage: isSet ? trackBackground : 'none',
+            backgroundColor: 'var(--bgColor-neutral-muted, #d0d7de)',
             backgroundSize: '100% 6px',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',
           }}
         />
-        {/* Min / Max labels */}
-        <Box
-          display="flex"
-          justifyContent="space-between"
-          mt={1}
-        >
-          <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.min_value}</Text>
-          <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.max_value}</Text>
-        </Box>
       </Box>
 
       {/* Commenting indicator from other users */}
@@ -351,34 +363,46 @@ export const ScoreSlider = ({
       {!disabled && (
         <Box mt={2}>
           {!commentOpen ? (
-            <Text
-              as="button"
-              onClick={() => {
-                setCommentOpen(true);
-                onCommentFocus?.();
-              }}
-              sx={{
-                fontSize: 0,
-                color: 'fg.muted',
-                cursor: 'pointer',
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                textDecoration: 'underline',
-                textDecorationStyle: 'dotted',
-                ':hover': { color: 'fg.default' },
-              }}
+            <Box
+              p={2}
+              borderWidth={1}
+              borderStyle="solid"
+              borderColor={hasOwnComment ? 'accent.emphasis' : 'border.default'}
+              borderRadius={2}
+              bg={hasOwnComment ? 'accent.subtle' : 'canvas.subtle'}
+              display="flex"
+              justifyContent="space-between"
+              alignItems="center"
+              sx={{ gap: 2, flexWrap: 'wrap' }}
             >
-              + Add comment
-            </Text>
+              <Text sx={{ fontSize: 0, color: hasOwnComment ? 'fg.default' : 'fg.muted' }}>
+                {hasOwnComment ? 'Comment saved for this score.' : 'Optional'}
+              </Text>
+              <Button
+                size="small"
+                variant={hasOwnComment ? 'default' : 'primary'}
+                onClick={() => {
+                  setCommentOpen(true);
+                  onCommentFocus?.();
+                }}
+              >
+                {hasOwnComment ? 'Edit comment' : 'Add comment'}
+              </Button>
+            </Box>
           ) : (
             <Box>
+              <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+                <Text sx={{ fontSize: 0, fontWeight: 'bold', color: 'fg.default' }}>
+                  Score comment
+                </Text>
+                {hasOwnComment && <Label size="small">Saved</Label>}
+              </Box>
               <textarea
                 value={comment}
                 onChange={handleCommentChange}
                 onFocus={onCommentFocus}
                 onBlur={onCommentBlur}
-                placeholder="Your comment…"
+                placeholder="What should other leaders know about this score?"
                 rows={2}
                 style={{
                   width: '100%',

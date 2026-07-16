@@ -1422,8 +1422,8 @@ export const ScoringPage = () => {
               })()}
 
               {/* Criteria sliders */}
-              <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-                {criteria.map((criterion) => {
+              <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
+                {criteria.map((criterion, index) => {
                   // Other users' comments for this criterion
                   const otherComments = (perUserComments[currentPatrol.patrol_id] ?? [])
                     .filter((c) => c.criterion_id === criterion.id && c.user_id !== user?.id);
@@ -1442,6 +1442,7 @@ export const ScoringPage = () => {
                       criterion={criterion}
                       value={scores[criterion.id] ?? null}
                       comment={comments[criterion.id] ?? ''}
+                      isFirst={index === 0}
                       otherComments={otherComments}
                       commentingIndicator={commentingIndicator}
                       onChange={(value) => handleScoreChange(criterion.id, value)}
@@ -1511,8 +1512,8 @@ export const ScoringPage = () => {
               <Label variant="success" size="large">Submitted ✓</Label>
             </Box>
 
-            <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-              {criteria.map((criterion) => {
+            <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
+              {criteria.map((criterion, index) => {
                 const submittedComments = viewingPerUserComments
                   .filter((c) => c.criterion_id === criterion.id);
                 // Use the first comment as the "main" comment display, all go into otherComments
@@ -1522,6 +1523,7 @@ export const ScoringPage = () => {
                     criterion={criterion}
                     value={viewingScores[criterion.id] ?? null}
                     comment=""
+                    isFirst={index === 0}
                     otherComments={submittedComments}
                     onChange={() => {}}
                     onCommentChange={() => {}}

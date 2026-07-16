@@ -37,6 +37,11 @@ export const AdminScorerPage = () => {
       .finally(() => setLoading(false));
   }, [sessionId, userId]);
 
+  useEffect(() => {
+    if (expandedPatrol || patrols.length === 0) return;
+    setExpandedPatrol(patrols[0].patrol_id);
+  }, [patrols, expandedPatrol]);
+
   const togglePatrol = useCallback((patrolId: string) => {
     setExpandedPatrol((prev) => (prev === patrolId ? null : patrolId));
   }, []);
@@ -71,6 +76,9 @@ export const AdminScorerPage = () => {
         <Heading sx={{ fontSize: 3, mb: 1 }}>{displayName}</Heading>
         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
           {sessionName} — Scores &amp; Comments (Read-only)
+        </Text>
+        <Text sx={{ fontSize: 0, color: 'fg.muted', mt: 1, display: 'block' }}>
+          Tap a patrol to review rubric guidance, scores, and comments.
         </Text>
       </Box>
 

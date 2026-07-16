@@ -132,10 +132,13 @@ export const ScoreSlider = ({
   }, [comment]);
 
   const isSet = value !== null;
+  const rubric = criterion.rubric;
   const displayValue = value ?? criterion.min_value;
   const range = criterion.max_value - criterion.min_value;
   const percentage = range > 0 ? ((displayValue - criterion.min_value) / range) * 100 : 0;
-  const activeBand = criterion.rubric?.bands.find((band) => displayValue >= band.min_value && displayValue <= band.max_value);
+  const activeBand = isSet
+    ? criterion.rubric?.bands.find((band) => displayValue >= band.min_value && displayValue <= band.max_value)
+    : undefined;
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,7 +192,7 @@ export const ScoreSlider = ({
         </Text>
       )}
 
-      {criterion.rubric && (
+      {rubric && (
         <Box mb={2}>
           <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ gap: 2, flexWrap: 'wrap' }}>
             {activeBand ? (
@@ -204,16 +207,18 @@ export const ScoreSlider = ({
             <Text
               as="button"
               onClick={() => setGuideOpen((open) => !open)}
+              aria-label={guideOpen ? 'Hide scoring guide' : 'View scoring guide'}
               sx={{
                 fontSize: 0,
                 color: 'accent.fg',
                 cursor: 'pointer',
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                textDecoration: 'underline',
-                textDecorationStyle: 'dotted',
-                ':hover': { color: 'fg.default' },
+                background: 'canvas.default',
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: 'border.default',
+                padding: '6px 10px',
+                borderRadius: 2,
+                ':hover': { color: 'fg.default', bg: 'canvas.subtle' },
               }}
             >
               {guideOpen ? 'Hide scoring guide' : 'View scoring guide'}
@@ -222,13 +227,13 @@ export const ScoreSlider = ({
 
           {guideOpen && (
             <Box mt={2} p={3} bg="canvas.subtle" borderRadius={2} borderWidth={1} borderStyle="solid" borderColor="border.default">
-              {criterion.rubric.checklist.length > 0 && (
+              {rubric.checklist.length > 0 && (
                 <Box mb={3}>
                   <Text sx={{ fontSize: 0, fontWeight: 'bold', mb: 2, display: 'block' }}>
                     What to check
                   </Text>
                   <Box as="ul" sx={{ pl: 3, my: 0 }}>
-                    {criterion.rubric.checklist.map((item) => (
+                    {rubric.checklist.map((item) => (
                       <Box as="li" key={item} sx={{ mb: 1 }}>
                         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{item}</Text>
                       </Box>
@@ -241,11 +246,11 @@ export const ScoreSlider = ({
                 How to score it
               </Text>
               <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-                {criterion.rubric.bands.map((band) => {
+                {rubric.bands.map((band) => {
                   const isActiveBand = activeBand?.label === band.label;
                   return (
                     <Box
-                      key={band.label}
+                      key={`${band.label}-${band.min_value}-${band.max_value}`}
                       p={2}
                       borderRadius={2}
                       borderWidth={1}
@@ -282,6 +287,7 @@ export const ScoreSlider = ({
         <input
           type="range"
           className={`score-slider${!isSet ? ' score-slider--unset' : ''}`}
+          aria-label={`Score for ${criterion.title}`}
           min={criterion.min_value}
           max={criterion.max_value}
           step={1}
@@ -323,7 +329,15 @@ export const ScoreSlider = ({
       {allComments.length > 0 && (
         <Box mt={2} display="flex" flexDirection="column" sx={{ gap: 1 }}>
           {allComments.map((c) => (
-            <Box key={`${c.user_id}-${c.criterion_id}`} p={2} bg="canvas.subtle" borderRadius={2}>
+            <Box
+              key={`${c.user_id}-${c.criterion_id}`}
+              p={2}
+              bg="canvas.subtle"
+              borderRadius={2}
+              borderWidth={1}
+              borderStyle="solid"
+              borderColor="border.default"
+            >
               <Text sx={{ fontSize: 0 }}>
                 <Text sx={{ fontWeight: 'bold', color: 'fg.default' }}>{c.display_name}:</Text>{' '}
                 <Text sx={{ color: 'fg.muted', fontStyle: 'italic' }}>{c.comment}</Text>
@@ -372,7 +386,7 @@ export const ScoreSlider = ({
                   borderRadius: '6px',
                   border: '1px solid var(--borderColor-default, #d0d7de)',
                   backgroundColor: 'var(--bgColor-default, #fff)',
-                  fontSize: '13px',
+                  fontSize: '16px',
                   fontFamily: 'inherit',
                   resize: 'vertical',
                   minHeight: '48px',

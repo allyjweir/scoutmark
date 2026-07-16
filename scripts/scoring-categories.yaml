@@ -1,50 +1,515 @@
-- name: Uniform
+- id: crt-uniform
+  name: Uniform
   description: Shirts, badges, neckies and ID badges.
   min: 0
   max: 10
   order: 0
-- name: Inside Tents
+  rubric:
+    checklist:
+      - "All Scouts: shirt, BA badge sewn on, necker and ID badge."
+      - Lead should be taken from the Patrol Leader.
+      - "Scottish Scouts: kilt, black shoes, lovat green socks with scout green flashes and scout belt."
+      - "International Scouts: look for consistency and use the Patrol Leader as the standard when in doubt."
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Entire patrol dressed correctly.
+          - BA badge sewn on.
+          - Smart appearance.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Most scouts correctly dressed.
+          - Minor issues only, such as a missing belt or untidy necker.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Several scouts not correct.
+          - Dress is inconsistent across the patrol.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Many scouts have incomplete uniform.
+      - label: 1-2
+        title: Not attempted
+        min: 1
+        max: 2
+        bullets:
+          - No obvious attempt to get the patrol into uniform.
+
+- id: crt-inside-tents
+  name: Inside Tents
   description: Tidy and clean, personal kit organised, ground sheet folded back and tidy store tent.
   min: 0
   max: 10
   order: 1
-- name: Tent Structure
+  rubric:
+    checklist:
+      - Interiors should be tidy and clean.
+      - Personal kit should be in bags and bedding rolled up.
+      - Ground sheet should be folded back to form a passage in patrol tents.
+      - The store tent should be tidy, clean and usable for food prep in bad weather.
+      - Food storage should be clearly separated from camp kit.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Interiors are very tidy.
+          - Kit is stored neatly and presented uniformly.
+          - Bedding rolled and passage clear.
+          - Store tent is tidy and ready for use.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Generally tidy.
+          - Only minor clutter present.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Mixed organisation.
+          - Some items are not stored correctly.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Tents are untidy.
+          - Mess and litter visible in tents.
+      - label: 1-2
+        title: Very poor
+        min: 1
+        max: 2
+        bullets:
+          - No attempt to prepare or tidy inside tents.
+
+- id: crt-tent-structure
+  name: Tent Structure
   description: Walls hung and pitched correctly.
   min: 0
   max: 10
   order: 2
-- name: Food Hygiene
+  rubric:
+    checklist:
+      - Walls hung appropriately; if rain is forecast they may be kept down.
+      - Tent should be pitched correctly.
+      - Storm guys and side guys should be tight and aligned.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Guy rope lines are tight and straight.
+          - Correct peg sizes used in each area of the tent.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Good pitching overall.
+          - Only minor rope adjustments required.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Functional but uneven lines.
+          - Some loose ropes or sagging structure.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Barely functional.
+          - Contents could get wet if it rains.
+      - label: 1-2
+        title: Unsafe
+        min: 1
+        max: 2
+        bullets:
+          - Unsafe and needs repitching.
+
+- id: crt-food-hygiene
+  name: Food Hygiene
   description: Food stored off the ground, equipment clean, clean tea towels.
   min: 0
   max: 10
   order: 3
-- name: Structure
+  rubric:
+    checklist:
+      - Food should be raised off the ground.
+      - Utensils and cooking equipment should be clean, dry and stored separately from food.
+      - Meat and dairy products must be returned to subcamp staff after every meal.
+      - Dry goods should be in watertight containers with no excessive food buildup.
+      - Use one dish towel per meal and keep a dirty towel basket or box.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - All food stored correctly.
+          - Cooking equipment is very clean and ready for use.
+          - Food prep surfaces are clean.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Cooking equipment is clean.
+          - Food storage is adequate.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Food scraps visible.
+          - Equipment clean but perhaps wet.
+          - Dirty dish towels are being reused.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Meat or dairy not returned.
+          - Poor hygiene or storage.
+          - Multiple food waste issues visible.
+          - Cooking equipment is not clean.
+      - label: 1-2
+        title: Unsafe
+        min: 1
+        max: 2
+        bullets:
+          - Equipment stored on the ground.
+          - Immediate intervention required for patrol wellbeing.
+
+- id: crt-structure
+  name: Structure
   description: Stable and lashings tight, clean table, good fire, ashes cleared and fire buckets filled.
   min: 0
   max: 10
   order: 4
-- name: Chopping Area
+  rubric:
+    checklist:
+      - Main structure should be stable, tightly lashed and fit for purpose.
+      - Table should be clean with plastic covering in place.
+      - Cover should be secure.
+      - Fire should be stable, level and safely insulated with earth.
+      - Ashes should be cleared unless still hot.
+      - Two red fire buckets should be at least three quarters full with clean water and no debris.
+      - Wash-up gadgets should be present and operational.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Lashings are tight.
+          - Fire pit is clean with ample turf soil.
+          - Wash area is clean and sturdy.
+          - Table is clean and cover secure.
+          - Decorations and notices are tasteful and safe.
+          - Useful wash-up gadgets are in place.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Solid operational structure.
+          - Only minor discrepancies in fire pit, cover or wash-up area.
+          - Minor lashing work required.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Structure is functional but needs improvement to lashings or operational areas.
+          - Ashes left on the fire.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Fire buckets inadequate or contain foreign objects.
+          - Weak structure.
+          - Fire requires more turf for safety.
+          - Lashings need attention.
+          - Table cover is loose.
+      - label: 1-2
+        title: Unsafe
+        min: 1
+        max: 2
+        bullets:
+          - Immediate intervention required to prevent collapse or unsafe fire area.
+
+- id: crt-chopping-area
+  name: Chopping Area
   description: Wood ready for next meal, tidy, tools stored safely and boundary marked.
   min: 0
   max: 10
   order: 5
-- name: General Area
+  rubric:
+    checklist:
+      - Wood should be chopped and ready for the next meal.
+      - Chippings should stay on the mat and the wood should be covered.
+      - Chopping area should be tidy.
+      - Tools should be stored safely, preferably in the store tent.
+      - Boundary should be clearly marked.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Wood is graded and enough for the next meal.
+          - Chopping area is tidy.
+          - Tools stored safely.
+          - Boundary markings are adequate.
+          - Wood would stay dry if it rains.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Good chopping and storage process.
+          - Well organised, with only visible chippings or minor boundary issues.
+          - Plenty of wood, though grading could improve.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Enough wood, but poorly graded.
+          - Boundary fence needs work.
+          - Wood risks getting wet if it rains.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Tools left unguarded or unsafe.
+          - Not enough wood for the next meal.
+          - No attempt at grading.
+          - No proper rain protection for wood.
+      - label: 1-2
+        title: Unsafe
+        min: 1
+        max: 2
+        bullets:
+          - No chopping area marked.
+          - People could easily stray into the chopping area.
+          - No wood available.
+          - Tools left open to the weather.
+          - Area not suitable for the patrol to run a fire safely.
+
+- id: crt-general-area
+  name: General Area
   description: Gate, boundary line (no laundry) and good gadgets.
   min: 0
   max: 10
   order: 6
-- name: Personal Hygiene
+  rubric:
+    checklist:
+      - Gateway should show the patrol name, be functional and safe.
+      - Boundary fence should be fit for purpose, tight and not used as a clothes line.
+      - Camp gadgets should be fit for purpose.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Gateway is safe, well decorated and clear.
+          - Boundary fencing is clear.
+          - Useful gadgets are present and in use.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Gateway is safe but could be improved.
+          - Only minor boundary improvements required.
+          - An attempt has been made at gadgets.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Gateway is functional but minimal.
+          - No real attempt at gadgets.
+          - Boundary fence needs tidying.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Gateway or boundary exists but is not safe.
+          - Intervention needed that day.
+      - label: 1-2
+        title: Missing
+        min: 1
+        max: 2
+        bullets:
+          - No gateway or boundary in place.
+
+- id: crt-personal-hygiene
+  name: Personal Hygiene
   description: Nails and hands clean, teeth brushed and they've had a shower at some point recently.
   min: 0
   max: 10
   order: 7
-- name: Team Work
+  rubric:
+    checklist:
+      - Nails and hands should be clean with evidence of washing.
+      - Teeth should be clean with evidence of brushing.
+      - Overall personal appearance should show that scouts are washing and looking after themselves.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Hands, nails, faces and teeth are clean.
+          - The whole patrol clearly looks after themselves.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Mostly clean, with only minor issues affecting appearance.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Some of the patrol lack basic hygiene, such as dirty hands or unwashed hair.
+          - Washing materials do not seem to be used consistently.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Poor standards across the patrol.
+          - Improvements are required that day.
+      - label: 1-2
+        title: Immediate action
+        min: 1
+        max: 2
+        bullets:
+          - Patrol should not continue morning activities until personal hygiene is addressed.
+
+- id: crt-team-work
+  name: Team Work
   description: PLs leading well, group working together and supporting one another.
   min: 0
   max: 10
   order: 8
-- name: Litter
+  rubric:
+    checklist:
+      - Scottish and overseas Patrol Leaders should communicate and get along.
+      - Scottish patrol should work together with the Patrol Leader leading by example.
+      - Overseas patrol should work together with the Patrol Leader leading by example.
+      - The full patrol should communicate well and work together to get tasks done.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Excellent teamwork.
+          - Patrol Leader leadership is evident.
+          - Scottish and overseas patrols are integrated.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Good teamwork evident.
+          - Only mixed engagement between some members of the joint patrol.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Some evidence that the patrol is not working together consistently for the benefit of the patrol area.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Poor cooperation between patrol members.
+          - Frequent interventions required from the subcamp team.
+          - No evidence of a rota to share roles.
+      - label: 1-2
+        title: Patrol in collapse
+        min: 1
+        max: 2
+        bullets:
+          - Immediate intervention from leaders required to keep the patrol functioning.
+
+- id: crt-litter
+  name: Litter
   description: No litter, tidy behind tents, recycling organised and slop bucket emptied.
   min: 0
   max: 10
   order: 9
+  rubric:
+    checklist:
+      - There should be no litter or food scraps on or in front of the site.
+      - The area behind sleeping tents should be tidy.
+      - Use fresh rubbish bags for inspection.
+      - Recycling should be sorted into the correct waste streams.
+      - Food waste and paper should be burnt where appropriate.
+      - Slop bucket should be emptied daily, with a clean cover and tidy surrounding area.
+    bands:
+      - label: 9-10
+        title: Excellent
+        min: 9
+        max: 10
+        bullets:
+          - Completely litter free.
+          - Recycling is organised.
+          - Slop bucket is empty and clean.
+      - label: 7-8
+        title: Good
+        min: 7
+        max: 8
+        bullets:
+          - Only very minor litter, difficult to find.
+      - label: 5-6
+        title: Fair
+        min: 5
+        max: 6
+        bullets:
+          - Multiple instances of litter visible from a distance.
+          - Slop bucket still contains scraps.
+          - Recycling is mixed with general waste.
+      - label: 3-4
+        title: Poor
+        min: 3
+        max: 4
+        bullets:
+          - Slop bucket not emptied.
+          - Rubbish bags are full or not in place.
+      - label: 1-2
+        title: Severe issue
+        min: 1
+        max: 2
+        bullets:
+          - Campsite resembles a festival site on departure day.
+          - Serious improvements are required before activity sessions.

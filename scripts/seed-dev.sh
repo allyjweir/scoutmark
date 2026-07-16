@@ -42,59 +42,8 @@ $ADMIN create-template \
   -description "Daily camp inspection criteria"
 echo
 
-echo "Adding criteria..."
-$ADMIN add-criterion -template tpl-camp -id crt-uniform \
-  -title "Uniform" \
-  -description "Shirts, badges, neckies and ID badges." \
-  -min 0 -max 10 -order 0
-
-$ADMIN add-criterion -template tpl-camp -id crt-inside-tents \
-  -title "Inside Tents" \
-  -description "Tidy and clean, personal kit organised, ground sheet folded back and tidy store tent." \
-  -min 0 -max 10 -order 1
-
-$ADMIN add-criterion -template tpl-camp -id crt-tent-structure \
-  -title "Tent Structure" \
-  -description "Walls hung and pitched correctly." \
-  -min 0 -max 10 -order 2
-
-$ADMIN add-criterion -template tpl-camp -id crt-food-hygiene \
-  -title "Food Hygiene" \
-  -description "Food stored off the ground, equipment clean, clean tea towels." \
-  -min 0 -max 10 -order 3
-
-$ADMIN add-criterion -template tpl-camp -id crt-structure \
-  -title "Structure" \
-  -description "Stable and lashings tight, clean table, good fire, ashes cleared and fire buckets filled." \
-  -min 0 -max 10 -order 4
-
-$ADMIN add-criterion -template tpl-camp -id crt-chopping-area \
-  -title "Chopping Area" \
-  -description "Wood ready for next meal, tidy, tools stored safely and boundary marked." \
-  -min 0 -max 10 -order 5
-
-$ADMIN add-criterion -template tpl-camp -id crt-general-area \
-  -title "General Area" \
-  -description "Gate, boundary line (no laundry) and good gadgets." \
-  -min 0 -max 10 -order 6
-
-$ADMIN add-criterion -template tpl-camp -id crt-personal-hygiene \
-  -title "Personal Hygiene" \
-  -description "Nails and hands clean, teeth brushed and they've had a shower at some point recently." \
-  -min 0 -max 10 -order 7
-
-$ADMIN add-criterion -template tpl-camp -id crt-team-work \
-  -title "Team Work" \
-  -description "PLs leading well, group working together and supporting one another." \
-  -min 0 -max 10 -order 8
-
-$ADMIN add-criterion -template tpl-camp -id crt-litter \
-  -title "Litter" \
-  -description "No litter, tidy behind tents, recycling organised and slop bucket emptied." \
-  -min 0 -max 10 -order 9
-
-echo "Applying Blair Atholl rubric..."
-$ADMIN apply-ba-rubric
+echo "Upserting criteria and rubric from scripts/scoring-categories.yaml..."
+$ADMIN upsert-ba-criteria
 echo
 
 # ─── Users ───────────────────────────────────────────────────────────

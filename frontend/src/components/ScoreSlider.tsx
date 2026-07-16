@@ -363,46 +363,87 @@ export const ScoreSlider = ({
       {!disabled && (
         <Box mt={2}>
           {!commentOpen ? (
-            <Box
-              p={2}
-              borderWidth={1}
-              borderStyle="solid"
-              borderColor={hasOwnComment ? 'accent.emphasis' : 'border.default'}
-              borderRadius={2}
-              bg={hasOwnComment ? 'accent.subtle' : 'canvas.subtle'}
-              display="flex"
-              justifyContent="space-between"
-              alignItems="center"
-              sx={{ gap: 2, flexWrap: 'wrap' }}
-            >
-              <Text sx={{ fontSize: 0, color: hasOwnComment ? 'fg.default' : 'fg.muted' }}>
-                {hasOwnComment ? 'Comment saved for this score.' : 'Optional'}
-              </Text>
-              <Button
-                size="small"
-                variant={hasOwnComment ? 'default' : 'primary'}
-                onClick={() => {
-                  setCommentOpen(true);
-                  onCommentFocus?.();
-                }}
+            hasOwnComment ? (
+              <Box
+                p={2}
+                borderWidth={1}
+                borderStyle="solid"
+                borderColor="accent.muted"
+                borderRadius={2}
+                bg="accent.subtle"
+                display="flex"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ gap: 2, flexWrap: 'wrap' }}
               >
-                {hasOwnComment ? 'Edit comment' : 'Add comment'}
-              </Button>
-            </Box>
+                <Box sx={{ minWidth: 0, flex: '1 1 260px' }}>
+                  <Text sx={{ fontSize: 0, fontWeight: 'semibold', color: 'fg.default', display: 'block' }}>
+                    Comment added
+                  </Text>
+                  <Text
+                    sx={{
+                      fontSize: 0,
+                      color: 'fg.muted',
+                      display: 'block',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {comment.trim()}
+                  </Text>
+                </Box>
+                <Button
+                  size="medium"
+                  variant="default"
+                  onClick={() => {
+                    setCommentOpen(true);
+                    onCommentFocus?.();
+                  }}
+                >
+                  Edit note
+                </Button>
+              </Box>
+            ) : (
+              <Box
+                p={2}
+                borderWidth={1}
+                borderStyle="dashed"
+                borderColor="border.muted"
+                borderRadius={2}
+                bg="canvas.default"
+                display="flex"
+                justifyContent="space-between"
+                alignItems="center"
+                sx={{ gap: 2, flexWrap: 'wrap' }}
+              >
+                <Text sx={{ fontSize: 0, color: 'fg.muted' }}>Optional note</Text>
+                <Button
+                  size="medium"
+                  variant="primary"
+                  onClick={() => {
+                    setCommentOpen(true);
+                    onCommentFocus?.();
+                  }}
+                >
+                  Add note
+                </Button>
+              </Box>
+            )
           ) : (
             <Box>
               <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
                 <Text sx={{ fontSize: 0, fontWeight: 'bold', color: 'fg.default' }}>
-                  Score comment
+                  Score note
                 </Text>
-                {hasOwnComment && <Label size="small">Saved</Label>}
+                {hasOwnComment && <Label size="small">Saved note</Label>}
               </Box>
               <textarea
                 value={comment}
                 onChange={handleCommentChange}
                 onFocus={onCommentFocus}
                 onBlur={onCommentBlur}
-                placeholder="What should other leaders know about this score?"
+                placeholder="Add an optional note to explain this score."
                 rows={2}
                 style={{
                   width: '100%',
@@ -432,7 +473,7 @@ export const ScoreSlider = ({
                       ':hover': { bg: 'danger.subtle' },
                     }}
                   >
-                    ✕ Remove comment
+                    ✕ Remove note
                   </Text>
                 </Box>
               )}

@@ -92,6 +92,9 @@ $ADMIN add-criterion -template tpl-camp -id crt-litter \
   -title "Litter" \
   -description "No litter, tidy behind tents, recycling organised and slop bucket emptied." \
   -min 0 -max 10 -order 9
+
+echo "Applying Blair Atholl rubric..."
+$ADMIN apply-ba-rubric
 echo
 
 # ─── Users ───────────────────────────────────────────────────────────

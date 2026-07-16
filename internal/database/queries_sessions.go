@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,6 +18,14 @@ type UserPatrolRow struct {
 	SortOrder int
 	SubcampID string
 	Subcamp   string
+}
+
+type CriterionRubricBand struct {
+	Label    string   `json:"label"`
+	Title    string   `json:"title"`
+	MinValue int      `json:"min_value"`
+	MaxValue int      `json:"max_value"`
+	Bullets  []string `json:"bullets"`
 }
 
 // GetSessionPatrolsForUser returns patrols in a session that a user can access.
@@ -201,12 +210,14 @@ type CriterionRow struct {
 	MinValue    int
 	MaxValue    int
 	SortOrder   int
+	RubricChecklist []string
+	RubricBands     []CriterionRubricBand
 }
 
 // GetTemplateCriteria returns all criteria for a template, ordered.
 func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]CriterionRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT id, template_id, title, description, min_value, max_value, sort_order
+		`SELECT id, template_id, title, description, min_value, max_value, sort_order, rubric_checklist, rubric_bands
 		 FROM criteria
 		 WHERE template_id = $1
 		 ORDER BY sort_order ASC`,
@@ -220,8 +231,20 @@ func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]Crit
 	var criteria []CriterionRow
 	for rows.Next() {
 		var c CriterionRow
-		if err := rows.Scan(&c.ID, &c.TemplateID, &c.Title, &c.Description, &c.MinValue, &c.MaxValue, &c.SortOrder); err != nil {
+		var checklistJSON []byte
+		var bandsJSON []byte
+		if err := rows.Scan(&c.ID, &c.TemplateID, &c.Title, &c.Description, &c.MinValue, &c.MaxValue, &c.SortOrder, &checklistJSON, &bandsJSON); err != nil {
 			return nil, fmt.Errorf("scanning criterion: %w", err)
+		}
+		if len(checklistJSON) > 0 {
+			if err := json.Unmarshal(checklistJSON, &c.RubricChecklist); err != nil {
+				return nil, fmt.Errorf("decoding criterion rubric checklist: %w", err)
+			}
+		}
+		if len(bandsJSON) > 0 {
+			if err := json.Unmarshal(bandsJSON, &c.RubricBands); err != nil {
+				return nil, fmt.Errorf("decoding criterion rubric bands: %w", err)
+			}
 		}
 		criteria = append(criteria, c)
 	}

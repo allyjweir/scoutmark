@@ -59,6 +59,29 @@ type criterionJSON struct {
 	MinValue    int    `json:"min_value"`
 	MaxValue    int    `json:"max_value"`
 	SortOrder   int    `json:"sort_order"`
+	Rubric      *criterionRubricJSON `json:"rubric,omitempty"`
+}
+
+type criterionRubricJSON struct {
+	Checklist []string                 `json:"checklist"`
+	Bands     []database.CriterionRubricBand `json:"bands"`
+}
+
+func rubricJSONForCriterion(c database.CriterionRow) *criterionRubricJSON {
+	checklist := c.RubricChecklist
+	bands := c.RubricBands
+	if len(checklist) == 0 && len(bands) == 0 {
+		fallbackChecklist, fallbackBands, ok := database.DefaultCriterionRubric(c.ID)
+		if !ok {
+			return nil
+		}
+		checklist = fallbackChecklist
+		bands = fallbackBands
+	}
+	return &criterionRubricJSON{
+		Checklist: checklist,
+		Bands:     bands,
+	}
 }
 
 type patrolJSON struct {
@@ -235,6 +258,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 				MinValue:    c.MinValue,
 				MaxValue:    c.MaxValue,
 				SortOrder:   c.SortOrder,
+				Rubric:      rubricJSONForCriterion(c),
 			}
 		}),
 	}
@@ -1152,6 +1176,7 @@ func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Reque
 			MinValue:    c.MinValue,
 			MaxValue:    c.MaxValue,
 			SortOrder:   c.SortOrder,
+			Rubric:      rubricJSONForCriterion(c),
 		}
 	})
 

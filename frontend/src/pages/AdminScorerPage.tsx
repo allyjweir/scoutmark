@@ -5,6 +5,8 @@ import {
 } from '@primer/react';
 import * as api from '../lib/api';
 import type { AdminPatrolScores } from '../lib/api';
+import type { Criterion } from '../lib/types';
+import { ScoreSlider } from '../components/ScoreSlider';
 
 export const AdminScorerPage = () => {
   const { sessionId, userId } = useParams<{ sessionId: string; userId: string }>();
@@ -12,7 +14,7 @@ export const AdminScorerPage = () => {
 
   const [displayName, setDisplayName] = useState('');
   const [sessionName, setSessionName] = useState('');
-  const [criteria, setCriteria] = useState<{ id: string; title: string; description: string; min_value: number; max_value: number; sort_order: number }[]>([]);
+  const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [patrols, setPatrols] = useState<AdminPatrolScores[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -151,93 +153,21 @@ export const AdminScorerPage = () => {
                       <Box display="flex" flexDirection="column" sx={{ gap: 3 }} pt={3}>
                         {criteria.map((criterion) => {
                           const value = scoreMap[criterion.id];
-                          const criterionComments = perUserComments.filter(
-                            (c) => c.criterion_id === criterion.id && c.comment.length > 0,
-                          );
-                          const range = criterion.max_value - criterion.min_value;
-                          const pct = range > 0 && value !== undefined
-                            ? ((value - criterion.min_value) / range) * 100
-                            : 0;
+                          const criterionComments = perUserComments
+                            .filter((c) => c.criterion_id === criterion.id && c.comment.length > 0)
+                            .map((c) => ({ ...c, updated_at: '' }));
 
                           return (
-                            <Box key={criterion.id}>
-                              {/* Criterion header */}
-                              <Box display="flex" justifyContent="space-between" alignItems="baseline" mb={1}>
-                                <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
-                                  {criterion.title}
-                                </Text>
-                                <Text
-                                  sx={{
-                                    fontSize: 3,
-                                    fontWeight: 'bold',
-                                    fontVariantNumeric: 'tabular-nums',
-                                    color: 'fg.muted',
-                                  }}
-                                >
-                                  {value !== undefined ? value : '–'}
-                                </Text>
-                              </Box>
-
-                              {criterion.description && (
-                                <Text sx={{ color: 'fg.muted', fontSize: 0, mb: 2, display: 'block' }}>
-                                  {criterion.description}
-                                </Text>
-                              )}
-
-                              {/* Slider (read-only visual) */}
-                              <Box position="relative">
-                                <input
-                                  type="range"
-                                  min={criterion.min_value}
-                                  max={criterion.max_value}
-                                  step={1}
-                                  value={value ?? criterion.min_value}
-                                  disabled
-                                  style={{
-                                    width: '100%',
-                                    height: '48px',
-                                    cursor: 'not-allowed',
-                                    accentColor: 'var(--fgColor-muted, #656d76)',
-                                    opacity: 0.5,
-                                  }}
-                                />
-                                <Box
-                                  position="absolute"
-                                  bottom={0}
-                                  left={0}
-                                  right={0}
-                                  display="flex"
-                                  justifyContent="space-between"
-                                >
-                                  <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.min_value}</Text>
-                                  <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{criterion.max_value}</Text>
-                                </Box>
-                              </Box>
-
-                              {/* Value bar */}
-                              <Box mt={1} height="4px" borderRadius={2} bg="neutral.muted" overflow="hidden">
-                                <Box
-                                  height="100%"
-                                  borderRadius={2}
-                                  bg="neutral.emphasis"
-                                  sx={{ width: `${pct}%`, transition: 'width 0.1s ease-out' }}
-                                />
-                              </Box>
-
-                              {/* Per-user comments */}
-                              {criterionComments.length > 0 && (
-                                <Box mt={2} display="flex" flexDirection="column" sx={{ gap: 1 }}>
-                                  {criterionComments.map((c) => (
-                                    <Box key={`${c.user_id}-${c.criterion_id}`} p={2} bg="canvas.subtle" borderRadius={2}>
-                                      <Text sx={{ fontSize: 0 }}>
-                                        <Text sx={{ fontWeight: 'bold', color: 'fg.default' }}>{c.display_name}:</Text>{' '}
-                                        <Text sx={{ color: 'fg.muted', fontStyle: 'italic' }}>{c.comment}</Text>
-                                      </Text>
-                                    </Box>
-                                  ))}
-                                </Box>
-                              )}
-                            </Box>
+                            <ScoreSlider
+                              key={criterion.id}
+                              criterion={criterion}
+                              value={value ?? null}
+                              comment=""
+                              otherComments={criterionComments}
+                              onChange={() => {}}
+                              onCommentChange={() => {}}
+                              disabled
+                            />
                           );
                         })}
                       </Box>

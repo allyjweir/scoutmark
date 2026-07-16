@@ -1,4 +1,4 @@
-import type { User, Session, Patrol, Draft, Submission, SubmissionScore, Award, PreviousPatrolTotal } from './types';
+import type { User, Session, Patrol, Draft, Submission, SubmissionScore, Award, PreviousPatrolTotal, Criterion } from './types';
 
 const BASE_URL = '/api';
 
@@ -203,7 +203,7 @@ export interface AdminUserScoresResponse {
   user_id: string;
   display_name: string;
   session_name: string;
-  criteria: { id: string; title: string; description: string; min_value: number; max_value: number; sort_order: number }[];
+  criteria: Criterion[];
   patrols: AdminPatrolScores[];
 }
 

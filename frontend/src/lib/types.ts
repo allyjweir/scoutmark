@@ -47,6 +47,20 @@ export interface Criterion {
   min_value: number;
   max_value: number;
   sort_order: number;
+  rubric?: CriterionRubric;
+}
+
+export interface CriterionRubricBand {
+  label: string;
+  title: string;
+  min_value: number;
+  max_value: number;
+  bullets: string[];
+}
+
+export interface CriterionRubric {
+  checklist: string[];
+  bands: CriterionRubricBand[];
 }
 
 export interface Patrol {

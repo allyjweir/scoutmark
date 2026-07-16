@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Box, Text } from '@primer/react';
+import { Box, Label, Text } from '@primer/react';
 import type { Criterion, DraftComment } from '../lib/types';
 
 interface ScoreSliderProps {
@@ -119,6 +119,7 @@ export const ScoreSlider = ({
   disabled,
 }: ScoreSliderProps) => {
   const [commentOpen, setCommentOpen] = useState(comment.length > 0);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   // Inject custom slider CSS once
   useEffect(() => { injectSliderStyles(); }, []);
@@ -134,6 +135,7 @@ export const ScoreSlider = ({
   const displayValue = value ?? criterion.min_value;
   const range = criterion.max_value - criterion.min_value;
   const percentage = range > 0 ? ((displayValue - criterion.min_value) / range) * 100 : 0;
+  const activeBand = criterion.rubric?.bands.find((band) => displayValue >= band.min_value && displayValue <= band.max_value);
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -185,6 +187,94 @@ export const ScoreSlider = ({
         <Text sx={{ color: 'fg.muted', fontSize: 0, mb: 2, display: 'block' }}>
           {criterion.description}
         </Text>
+      )}
+
+      {criterion.rubric && (
+        <Box mb={2}>
+          <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ gap: 2, flexWrap: 'wrap' }}>
+            {activeBand ? (
+              <Label variant="accent" size="small">
+                {activeBand.label} {activeBand.title}
+              </Label>
+            ) : (
+              <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                Score using the guide below if needed.
+              </Text>
+            )}
+            <Text
+              as="button"
+              onClick={() => setGuideOpen((open) => !open)}
+              sx={{
+                fontSize: 0,
+                color: 'accent.fg',
+                cursor: 'pointer',
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                textDecoration: 'underline',
+                textDecorationStyle: 'dotted',
+                ':hover': { color: 'fg.default' },
+              }}
+            >
+              {guideOpen ? 'Hide scoring guide' : 'View scoring guide'}
+            </Text>
+          </Box>
+
+          {guideOpen && (
+            <Box mt={2} p={3} bg="canvas.subtle" borderRadius={2} borderWidth={1} borderStyle="solid" borderColor="border.default">
+              {criterion.rubric.checklist.length > 0 && (
+                <Box mb={3}>
+                  <Text sx={{ fontSize: 0, fontWeight: 'bold', mb: 2, display: 'block' }}>
+                    What to check
+                  </Text>
+                  <Box as="ul" sx={{ pl: 3, my: 0 }}>
+                    {criterion.rubric.checklist.map((item) => (
+                      <Box as="li" key={item} sx={{ mb: 1 }}>
+                        <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{item}</Text>
+                      </Box>
+                    ))}
+                  </Box>
+                </Box>
+              )}
+
+              <Text sx={{ fontSize: 0, fontWeight: 'bold', mb: 2, display: 'block' }}>
+                How to score it
+              </Text>
+              <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+                {criterion.rubric.bands.map((band) => {
+                  const isActiveBand = activeBand?.label === band.label;
+                  return (
+                    <Box
+                      key={band.label}
+                      p={2}
+                      borderRadius={2}
+                      borderWidth={1}
+                      borderStyle="solid"
+                      borderColor={isActiveBand ? 'accent.emphasis' : 'border.default'}
+                      bg={isActiveBand ? 'accent.subtle' : 'canvas.default'}
+                    >
+                      <Box display="flex" alignItems="center" justifyContent="space-between" sx={{ gap: 2, mb: 1, flexWrap: 'wrap' }}>
+                        <Text sx={{ fontSize: 1, fontWeight: 'bold' }}>
+                          {band.label} {band.title}
+                        </Text>
+                        <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                          {band.min_value} to {band.max_value}
+                        </Text>
+                      </Box>
+                      <Box as="ul" sx={{ pl: 3, my: 0 }}>
+                        {band.bullets.map((bullet) => (
+                          <Box as="li" key={bullet} sx={{ mb: 1 }}>
+                            <Text sx={{ fontSize: 0, color: 'fg.muted' }}>{bullet}</Text>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          )}
+        </Box>
       )}
 
       {/* Slider */}

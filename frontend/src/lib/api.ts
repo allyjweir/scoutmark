@@ -195,7 +195,7 @@ export interface AdminPerUserComment {
 export interface AdminPatrolScores {
   patrol_id: string;
   patrol_name: string;
-  scores: { criterion_id: string; value: number; comment: string }[];
+  scores: { criterion_id: string; value: number }[];
   comments?: AdminPerUserComment[];
 }
 

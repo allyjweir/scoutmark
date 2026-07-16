@@ -455,7 +455,7 @@ export const ScoringPage = () => {
           }
         }
         if (Object.keys(saveable).length > 0) {
-          saveDraft(saveable, {});
+          saveDraft(saveable);
         }
 
         // Update patrol total

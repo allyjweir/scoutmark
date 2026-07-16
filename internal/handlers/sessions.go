@@ -82,7 +82,6 @@ type submissionJSON struct {
 type submissionScoreJSON struct {
 	CriterionID string `json:"criterion_id"`
 	Value       int    `json:"value"`
-	Comment     string `json:"comment"`
 }
 
 type draftJSON struct {
@@ -95,7 +94,6 @@ type draftJSON struct {
 type draftScoreJSON struct {
 	CriterionID string `json:"criterion_id"`
 	Value       int    `json:"value"`
-	Comment     string `json:"comment"`
 }
 
 type awardJSON struct {
@@ -407,7 +405,7 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 		PatrolID:  draft.PatrolID,
 		UpdatedAt: draft.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		Scores: lo.Map(scores, func(s database.DraftScoreRow, _ int) draftScoreJSON {
-			return draftScoreJSON{CriterionID: s.CriterionID, Value: s.Value, Comment: s.Comment}
+			return draftScoreJSON{CriterionID: s.CriterionID, Value: s.Value}
 		}),
 	}
 
@@ -459,8 +457,7 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Scores   map[string]int    `json:"scores"`
-		Comments map[string]string `json:"comments"`
+		Scores map[string]int `json:"scores"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid request body")
@@ -493,7 +490,7 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.Int("scores.count", len(req.Scores)))
 
-	submission, err := h.db.CreateSubmission(ctx, user.ID, sessionID, patrolID, req.Scores, req.Comments)
+	submission, err := h.db.CreateSubmission(ctx, user.ID, sessionID, patrolID, req.Scores)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not submit scores")
@@ -785,7 +782,6 @@ func (h *SessionHandler) GetSubmissionScores(w http.ResponseWriter, r *http.Requ
 		return submissionScoreJSON{
 			CriterionID: s.CriterionID,
 			Value:       s.Value,
-			Comment:     s.Comment,
 		}
 	})
 
@@ -1208,7 +1204,6 @@ func (h *SessionHandler) GetAdminUserScores(w http.ResponseWriter, r *http.Reque
 				return submissionScoreJSON{
 					CriterionID: sc.CriterionID,
 					Value:       sc.Value,
-					Comment:     sc.Comment,
 				}
 			}),
 			Comments: commentsByPatrol[s.PatrolID],

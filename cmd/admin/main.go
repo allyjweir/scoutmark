@@ -1232,6 +1232,14 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore,
 		return 0, 0, fmt.Errorf("user %q has no patrols in this session", userID)
 	}
 
+	var displayName string
+	if err := db.QueryRow("SELECT display_name FROM users WHERE id = $1", userID).Scan(&displayName); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, 0, fmt.Errorf("user %q not found", userID)
+		}
+		return 0, 0, fmt.Errorf("looking up user display name: %w", err)
+	}
+
 	scoreRange := maxScore - minScore + 1
 	for _, patrolID := range patrolIDs {
 		commentedSet := map[string]bool{}
@@ -1261,20 +1269,29 @@ func seedScoresForUser(db *sql.DB, sessionID, userID string, minScore, maxScore,
 		if _, err := db.Exec("DELETE FROM submission_scores WHERE submission_id = $1", submissionID); err != nil {
 			return 0, 0, fmt.Errorf("clearing old scores: %w", err)
 		}
+		if _, err := db.Exec("DELETE FROM submission_comments WHERE submission_id = $1", submissionID); err != nil {
+			return 0, 0, fmt.Errorf("clearing old comments: %w", err)
+		}
 
 		for _, criterionID := range criterionIDs {
 			value := minScore + rand.Intn(scoreRange)
-			comment := ""
-			if commentedSet[criterionID] {
-				comment = randomSeedComment()
-			}
 			_, err := db.Exec(
-				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				uuid.New().String(), submissionID, criterionID, value, comment, userID,
+				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+				 VALUES ($1, $2, $3, $4, $5)`,
+				uuid.New().String(), submissionID, criterionID, value, userID,
 			)
 			if err != nil {
 				return 0, 0, fmt.Errorf("inserting score for criterion %s: %w", criterionID, err)
+			}
+
+			if commentedSet[criterionID] {
+				if _, err := db.Exec(
+					`INSERT INTO submission_comments (id, submission_id, criterion_id, user_id, display_name, comment)
+					 VALUES ($1, $2, $3, $4, $5, $6)`,
+					uuid.New().String(), submissionID, criterionID, userID, displayName, randomSeedComment(),
+				); err != nil {
+					return 0, 0, fmt.Errorf("inserting comment for criterion %s: %w", criterionID, err)
+				}
 			}
 		}
 
@@ -1690,8 +1707,8 @@ func seedBAPastScores(tx *sql.Tx, sessionID, userID string, criteria []baCriteri
 		for _, criterion := range criteria {
 			value := 3 + rand.Intn(8)
 			_, err := tx.Exec(
-				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, comment, scored_by)
-				 VALUES ($1, $2, $3, $4, '', $5)`,
+				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+				 VALUES ($1, $2, $3, $4, $5)`,
 				uuid.New().String(), submissionID, criterion.ID, value, userID,
 			)
 			if err != nil {

@@ -70,7 +70,6 @@ type SaveDraftPayload struct {
 	SessionID string            `json:"session_id"`
 	PatrolID  string            `json:"patrol_id"`
 	Scores    map[string]int    `json:"scores"`
-	Comments  map[string]string `json:"comments"`
 }
 
 type DraftSavedPayload struct {
@@ -87,7 +86,6 @@ type DraftUpdatedPayload struct {
 	UserID    string            `json:"user_id"`
 	UserName  string            `json:"user_name"`
 	Scores    map[string]int    `json:"scores"`
-	Comments  map[string]string `json:"comments"`
 	SavedAt   time.Time         `json:"saved_at"`
 }
 
@@ -601,7 +599,7 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 
 	span := tracing.Tracer()
 	_, saveSpan := span.Start(ctx, "ws.save_draft.db")
-	_, err = c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores, payload.Comments)
+	_, err = c.hub.db.SaveDraft(ctx, c.user.ID, payload.SessionID, payload.PatrolID, payload.Scores)
 	saveSpan.End()
 
 	if err != nil {
@@ -629,7 +627,6 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 			UserID:    c.user.ID,
 			UserName:  c.user.DisplayName,
 			Scores:    payload.Scores,
-			Comments:  payload.Comments,
 			SavedAt:   time.Now(),
 		},
 	}, c) // exclude the sender

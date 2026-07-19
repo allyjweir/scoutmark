@@ -10,6 +10,10 @@ import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
 import type { ReactNode } from 'react';
 
+const isCampChiefAccount = (user: { id: string; username: string } | null) => (
+  user?.username === 'campchief' || user?.id === 'usr-campchief'
+);
+
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
   const { user, loading, passwordChangeRequired } = useAuth();
 
@@ -40,6 +44,22 @@ const WebSocketProvider = ({ children }: { children: ReactNode }) => {
   return <div key={user?.id ?? 'anon'}>{children}</div>;
 };
 
+const AdminOnlyRoute = ({ children }: { children: ReactNode }) => {
+  const { user } = useAuth();
+  if (!user?.is_admin || isCampChiefAccount(user)) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+};
+
+const CampChiefOnlyRoute = ({ children }: { children: ReactNode }) => {
+  const { user } = useAuth();
+  if (!isCampChiefAccount(user)) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+};
+
 const AppRoutes = () => (
   <WebSocketProvider>
     <Routes>
@@ -65,7 +85,9 @@ const AppRoutes = () => (
         path="/admin/sessions/:sessionId"
         element={
           <ProtectedRoute>
-            <AdminSessionPage />
+            <AdminOnlyRoute>
+              <AdminSessionPage />
+            </AdminOnlyRoute>
           </ProtectedRoute>
         }
       />
@@ -73,7 +95,19 @@ const AppRoutes = () => (
         path="/admin/sessions/:sessionId/scorer/:userId"
         element={
           <ProtectedRoute>
-            <AdminScorerPage />
+            <AdminOnlyRoute>
+              <AdminScorerPage />
+            </AdminOnlyRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/campchief/sessions/:sessionId"
+        element={
+          <ProtectedRoute>
+            <CampChiefOnlyRoute>
+              <AdminSessionPage />
+            </CampChiefOnlyRoute>
           </ProtectedRoute>
         }
       />

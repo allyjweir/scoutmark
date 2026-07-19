@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box, Heading, Text, Spinner, Flash, Button, Label,
   ProgressBar, CounterLabel,
@@ -32,6 +32,8 @@ const STATUS_LABELS: Record<string, string> = {
 export const AdminSessionPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isCampChiefView = location.pathname.startsWith('/campchief/sessions/');
 
   const [session, setSession] = useState<Session | null>(null);
   const [users, setUsers] = useState<UserProgress[]>([]);
@@ -49,6 +51,7 @@ export const AdminSessionPage = () => {
   const [round2PatrolTotals, setRound2PatrolTotals] = useState<Record<string, number | null>>({});
   const [round2WinnerPatrolId, setRound2WinnerPatrolId] = useState('');
   const [savingRound2Winner, setSavingRound2Winner] = useState(false);
+  const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
 
   // Comments — loaded eagerly, refreshed on WS updates
   const [comments, setComments] = useState<SessionComment[]>([]);
@@ -353,6 +356,31 @@ export const AdminSessionPage = () => {
     }
   }, [sessionId]);
 
+  const selectedRound2Winner = useMemo(
+    () => round2Finalists.find((f) => f.patrol_id === round2WinnerPatrolId),
+    [round2Finalists, round2WinnerPatrolId],
+  );
+
+  const round2AnnouncementText = useMemo(() => {
+    if (!selectedRound2Winner) return '';
+    return `Camp Chief's Pendant Winners: ${selectedRound2Winner.subcamp_name} ${selectedRound2Winner.patrol_name}`;
+  }, [selectedRound2Winner]);
+
+  useEffect(() => {
+    setCopiedAnnouncement(false);
+  }, [round2AnnouncementText]);
+
+  const handleCopyRound2Announcement = useCallback(async () => {
+    if (!round2AnnouncementText) return;
+    try {
+      await navigator.clipboard.writeText(round2AnnouncementText);
+      setCopiedAnnouncement(true);
+      setTimeout(() => setCopiedAnnouncement(false), 1800);
+    } catch {
+      setError('Could not copy announcement text');
+    }
+  }, [round2AnnouncementText]);
+
   const patrolOptionsBySubcamp = useMemo(() => {
     const grouped: Record<string, Patrol[]> = {};
     for (const patrol of sourcePatrols) {
@@ -380,9 +408,20 @@ export const AdminSessionPage = () => {
   }
 
   const isRound2 = session.round_type === 'round2';
-  const modeLabel = isRound2 ? 'Camp Chief Final Round' : 'Subcamp Scoring Round';
-  const progressHeading = isRound2 ? 'Finalist Completion' : 'Overall Completion';
+  const modeLabel = isRound2 ? 'Round 2 (Camp Chief)' : 'Subcamp Scoring Round';
+  const progressHeading = isRound2 ? 'Round 2 Scoring Completion' : 'Overall Completion';
   const rosterHeading = isRound2 ? 'Contributors' : 'Scorers';
+
+  if (isCampChiefView && !isRound2) {
+    return (
+      <Box p={4} textAlign="center">
+        <Flash variant="warning" sx={{ mb: 3 }}>
+          Camp Chief view is only available for Round 2 sessions.
+        </Flash>
+        <Button onClick={() => navigate('/')}>Back to Dashboard</Button>
+      </Box>
+    );
+  }
 
   return (
     <Box display="flex" flexDirection="column" minHeight="100vh" bg="canvas.default">
@@ -501,7 +540,7 @@ export const AdminSessionPage = () => {
       </Box>
 
       {/* Round 2 admin controls */}
-      {session.round_type !== 'round2' && (
+      {!isCampChiefView && session.round_type !== 'round2' && (
         <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
           <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2</Heading>
           <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>
@@ -525,7 +564,10 @@ export const AdminSessionPage = () => {
 
       {session.round_type === 'round2' && (
         <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
-          <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2 Finalists</Heading>
+          <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2: Finalists by Subcamp</Heading>
+          <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>
+            Finalists come from Round 1 results: one finalist patrol per subcamp.
+          </Text>
           {loadingFinalists ? (
             <Text sx={{ fontSize: 1, color: 'fg.muted' }}>Loading finalists...</Text>
           ) : (
@@ -571,7 +613,10 @@ export const AdminSessionPage = () => {
 
       {isRound2 && (
         <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
-          <Heading sx={{ fontSize: 2, mb: 2 }}>Camp Chief Board</Heading>
+          <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2: Select Overall Winner</Heading>
+          <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>
+            Camp Chief chooses the overall winner from these finalists. This is the final decision (no third round).
+          </Text>
           {loadingRound2Board ? (
             <Text sx={{ fontSize: 1, color: 'fg.muted' }}>Loading round 2 progress...</Text>
           ) : (
@@ -639,6 +684,27 @@ export const AdminSessionPage = () => {
               </Box>
             </>
           )}
+        </Box>
+      )}
+
+      {isRound2 && (session.status === 'LOCKED' || session.status === 'CLOSED') && selectedRound2Winner && (
+        <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
+          <Heading sx={{ fontSize: 2, mb: 2 }}>Final Announcement</Heading>
+          <Box
+            p={3}
+            borderWidth={1}
+            borderStyle="solid"
+            borderColor="success.emphasis"
+            borderRadius={2}
+            bg="success.subtle"
+          >
+            <Text sx={{ fontSize: 1, fontWeight: 'bold', display: 'block', mb: 2 }}>
+              {round2AnnouncementText}
+            </Text>
+            <Button size="small" onClick={handleCopyRound2Announcement}>
+              {copiedAnnouncement ? 'Copied ✓' : 'Copy for WhatsApp'}
+            </Button>
+          </Box>
         </Box>
       )}
 

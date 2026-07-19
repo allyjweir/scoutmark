@@ -67,9 +67,9 @@ type ServerMessage struct {
 }
 
 type SaveDraftPayload struct {
-	SessionID string            `json:"session_id"`
-	PatrolID  string            `json:"patrol_id"`
-	Scores    map[string]int    `json:"scores"`
+	SessionID string         `json:"session_id"`
+	PatrolID  string         `json:"patrol_id"`
+	Scores    map[string]int `json:"scores"`
 }
 
 type DraftSavedPayload struct {
@@ -81,12 +81,12 @@ type DraftSavedPayload struct {
 // DraftUpdatedPayload is broadcast to other users when someone saves a draft score.
 // This enables live multiplayer: other users see the new values appear.
 type DraftUpdatedPayload struct {
-	SessionID string            `json:"session_id"`
-	PatrolID  string            `json:"patrol_id"`
-	UserID    string            `json:"user_id"`
-	UserName  string            `json:"user_name"`
-	Scores    map[string]int    `json:"scores"`
-	SavedAt   time.Time         `json:"saved_at"`
+	SessionID string         `json:"session_id"`
+	PatrolID  string         `json:"patrol_id"`
+	UserID    string         `json:"user_id"`
+	UserName  string         `json:"user_name"`
+	Scores    map[string]int `json:"scores"`
+	SavedAt   time.Time      `json:"saved_at"`
 }
 
 type PatrolSubmittedPayload struct {

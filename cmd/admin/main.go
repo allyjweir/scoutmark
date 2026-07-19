@@ -22,9 +22,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	"gopkg.in/yaml.v3"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
 
 	"github.com/allyjweir/scoutmark/internal/database"
 )
@@ -1330,12 +1330,12 @@ func randomSeedComment() string {
 // ─── Blair Atholl Demo Seed ─────────────────────────────────────────
 
 type baCriterion struct {
-	ID          string
-	Title       string
-	Description string
-	MinValue    int
-	MaxValue    int
-	SortOrder   int
+	ID              string
+	Title           string
+	Description     string
+	MinValue        int
+	MaxValue        int
+	SortOrder       int
 	RubricChecklist []string
 	RubricBands     []database.CriterionRubricBand
 }
@@ -1354,12 +1354,12 @@ type yamlCriterionRubric struct {
 }
 
 type yamlScoringCategory struct {
-	ID          string              `yaml:"id"`
-	Name        string              `yaml:"name"`
-	Description string              `yaml:"description"`
-	Min         int                 `yaml:"min"`
-	Max         int                 `yaml:"max"`
-	Order       int                 `yaml:"order"`
+	ID          string               `yaml:"id"`
+	Name        string               `yaml:"name"`
+	Description string               `yaml:"description"`
+	Min         int                  `yaml:"min"`
+	Max         int                  `yaml:"max"`
+	Order       int                  `yaml:"order"`
 	Rubric      *yamlCriterionRubric `yaml:"rubric"`
 }
 

@@ -44,6 +44,11 @@ export const AdminSessionPage = () => {
   const [sourcePatrols, setSourcePatrols] = useState<Patrol[]>([]);
   const [savingFinalistSubcampId, setSavingFinalistSubcampId] = useState<string | null>(null);
   const [linkedRound2SessionId, setLinkedRound2SessionId] = useState<string | null>(null);
+  const [loadingRound2Board, setLoadingRound2Board] = useState(false);
+  const [round2SubmittedPatrolIds, setRound2SubmittedPatrolIds] = useState<Set<string>>(new Set());
+  const [round2PatrolTotals, setRound2PatrolTotals] = useState<Record<string, number | null>>({});
+  const [round2WinnerPatrolId, setRound2WinnerPatrolId] = useState('');
+  const [savingRound2Winner, setSavingRound2Winner] = useState(false);
 
   // Comments — loaded eagerly, refreshed on WS updates
   const [comments, setComments] = useState<SessionComment[]>([]);
@@ -296,6 +301,58 @@ export const AdminSessionPage = () => {
     }
   }, [sessionId, session?.round_type, session?.source_session_id]);
 
+  useEffect(() => {
+    if (!sessionId || session?.round_type !== 'round2') {
+      setRound2SubmittedPatrolIds(new Set());
+      setRound2PatrolTotals({});
+      setRound2WinnerPatrolId('');
+      return;
+    }
+
+    setLoadingRound2Board(true);
+    api.getSession(sessionId)
+      .then(async ({ submissions, awards }) => {
+        const submittedIds = new Set(submissions.map((s) => s.patrol_id));
+        setRound2SubmittedPatrolIds(submittedIds);
+
+        const winner = awards.find((a) => a.award_type === 'best_patrol');
+        setRound2WinnerPatrolId(winner?.patrol_id ?? '');
+
+        const totals = await Promise.all(round2Finalists.map(async (f) => {
+          if (!submittedIds.has(f.patrol_id)) {
+            return [f.patrol_id, null] as const;
+          }
+          try {
+            const { scores } = await api.getSubmissionScores(sessionId, f.patrol_id);
+            const total = scores.reduce((sum, score) => sum + score.value, 0);
+            return [f.patrol_id, total] as const;
+          } catch {
+            return [f.patrol_id, null] as const;
+          }
+        }));
+        setRound2PatrolTotals(Object.fromEntries(totals));
+      })
+      .catch(() => {
+        setRound2SubmittedPatrolIds(new Set());
+        setRound2PatrolTotals({});
+      })
+      .finally(() => setLoadingRound2Board(false));
+  }, [sessionId, session?.round_type, round2Finalists]);
+
+  const handleSetRound2Winner = useCallback(async (patrolId: string) => {
+    if (!sessionId || !patrolId) return;
+    setSavingRound2Winner(true);
+    setError('');
+    try {
+      await api.saveAward(sessionId, 'best_patrol', patrolId);
+      setRound2WinnerPatrolId(patrolId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save winner');
+    } finally {
+      setSavingRound2Winner(false);
+    }
+  }, [sessionId]);
+
   const patrolOptionsBySubcamp = useMemo(() => {
     const grouped: Record<string, Patrol[]> = {};
     for (const patrol of sourcePatrols) {
@@ -512,7 +569,81 @@ export const AdminSessionPage = () => {
         </Box>
       )}
 
+      {isRound2 && (
+        <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
+          <Heading sx={{ fontSize: 2, mb: 2 }}>Camp Chief Board</Heading>
+          {loadingRound2Board ? (
+            <Text sx={{ fontSize: 1, color: 'fg.muted' }}>Loading round 2 progress...</Text>
+          ) : (
+            <>
+              <Box display="flex" flexDirection="column" sx={{ gap: 2, mb: 3 }}>
+                {round2Finalists.map((finalist) => {
+                  const submitted = round2SubmittedPatrolIds.has(finalist.patrol_id);
+                  const total = round2PatrolTotals[finalist.patrol_id];
+                  return (
+                    <Box
+                      key={finalist.subcamp_id}
+                      display="flex"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      p={2}
+                      borderWidth={1}
+                      borderStyle="solid"
+                      borderColor="border.default"
+                      borderRadius={2}
+                    >
+                      <Box>
+                        <Text sx={{ fontWeight: 'bold', fontSize: 1 }}>{finalist.subcamp_name}</Text>
+                        <Text sx={{ fontSize: 0, color: 'fg.muted', display: 'block' }}>{finalist.patrol_name}</Text>
+                      </Box>
+                      <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                        <Label variant={submitted ? 'success' : 'default'}>
+                          {submitted ? 'Submitted' : 'Pending'}
+                        </Label>
+                        <Text sx={{ fontSize: 0, color: 'fg.muted', minWidth: '72px', textAlign: 'right' }}>
+                          {total != null ? `${total} pts` : '—'}
+                        </Text>
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Box>
+
+              <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                <Text sx={{ fontSize: 1, fontWeight: 'bold', minWidth: '140px' }}>Overall Winner</Text>
+                <Box sx={{ flex: 1 }}>
+                  <select
+                    value={round2WinnerPatrolId}
+                    onChange={(e) => handleSetRound2Winner(e.target.value)}
+                    disabled={savingRound2Winner || session.status === 'LOCKED' || session.status === 'CLOSED'}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--borderColor-default, #d0d7de)',
+                      backgroundColor: 'var(--bgColor-default, #fff)',
+                      fontSize: '14px',
+                    }}
+                  >
+                    <option value="">Select overall winner...</option>
+                    {round2Finalists.map((finalist) => (
+                      <option key={finalist.patrol_id} value={finalist.patrol_id}>
+                        {`${finalist.subcamp_name} - ${finalist.patrol_name}`}
+                        {round2PatrolTotals[finalist.patrol_id] != null
+                          ? ` (${round2PatrolTotals[finalist.patrol_id]} pts)`
+                          : ''}
+                      </option>
+                    ))}
+                  </select>
+                </Box>
+              </Box>
+            </>
+          )}
+        </Box>
+      )}
+
       {/* Per-user progress */}
+      {!isRound2 && (
       <Box flex={1} p={3} overflow="auto">
         <Heading sx={{ fontSize: 2, mb: 3 }}>
           {rosterHeading} ({users.length})
@@ -753,6 +884,7 @@ export const AdminSessionPage = () => {
           </Box>
         )}
       </Box>
+      )}
     </Box>
   );
 };

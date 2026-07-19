@@ -26,6 +26,7 @@ export const ScoringPage = () => {
   const [comments, setComments] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [unlockingSession, setUnlockingSession] = useState(false);
   const [error, setError] = useState('');
   const [view, setView] = useState<View>('scoring');
   const [jumpedFromSummary, setJumpedFromSummary] = useState(false);
@@ -794,6 +795,24 @@ export const ScoringPage = () => {
     setShowConfirmFinalise(true);
   }, []);
 
+  const handleAdminUnlockFromLockScreen = useCallback(async () => {
+    if (!sessionId || !user?.is_admin) return;
+    setUnlockingSession(true);
+    setError('');
+    try {
+      await api.unlockSession(sessionId);
+      const refreshed = await api.getSession(sessionId);
+      setSession(refreshed.session);
+      setPatrols(refreshed.patrols);
+      setSubmissions(refreshed.submissions);
+      setLockState(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not unlock session');
+    } finally {
+      setUnlockingSession(false);
+    }
+  }, [sessionId, user?.is_admin]);
+
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
 
   if (loading) {
@@ -853,6 +872,12 @@ export const ScoringPage = () => {
           maxWidth="480px"
           sx={{ width: '100%', textAlign: 'center' }}
         >
+          {error && (
+            <Flash variant="danger" sx={{ mb: 3 }}>
+              {error}
+            </Flash>
+          )}
+
           <Text sx={{ fontSize: 4, display: 'block', mb: 3 }}>🔒</Text>
           <Heading sx={{ fontSize: 3, mb: 2 }}>
             {lockState.kind === 'session' ? 'Session Locked' : 'Subcamp Finalised'}
@@ -886,9 +911,22 @@ export const ScoringPage = () => {
             administrator. An admin can reopen the session to allow further changes.
           </Text>
 
-          <Button onClick={() => navigate('/')} size="large" sx={{ width: '100%' }}>
-            Back to Dashboard
-          </Button>
+          <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+            {user?.is_admin && lockState.kind === 'session' && (
+              <Button
+                onClick={handleAdminUnlockFromLockScreen}
+                disabled={unlockingSession}
+                variant="default"
+                size="large"
+                sx={{ width: '100%' }}
+              >
+                {unlockingSession ? 'Unlocking…' : 'Unlock Session'}
+              </Button>
+            )}
+            <Button onClick={() => navigate('/')} size="large" sx={{ width: '100%' }}>
+              Back to Dashboard
+            </Button>
+          </Box>
         </Box>
       </Box>
     );

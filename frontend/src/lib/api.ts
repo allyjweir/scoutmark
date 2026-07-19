@@ -227,6 +227,36 @@ export const unlockSession = async (
     method: 'POST',
   });
 
+export interface Round2Finalist {
+  subcamp_id: string;
+  subcamp_name: string;
+  patrol_id: string;
+  patrol_name: string;
+  selection_source: string;
+}
+
+export const ensureRound2 = async (
+  sessionId: string,
+): Promise<{ session: Session }> =>
+  request(`/admin/sessions/${sessionId}/round2`, {
+    method: 'POST',
+  });
+
+export const getRound2Finalists = async (
+  sessionId: string,
+): Promise<{ finalists: Round2Finalist[] }> =>
+  request(`/admin/sessions/${sessionId}/round2/finalists`);
+
+export const setRound2Finalist = async (
+  sessionId: string,
+  subcampId: string,
+  patrolId: string,
+): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/round2/finalists/${subcampId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ patrol_id: patrolId }),
+  });
+
 // ─── Per-User Comments ──────────────────────────────────────────────
 
 export interface DraftCommentAPI {

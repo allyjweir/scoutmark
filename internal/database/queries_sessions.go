@@ -220,13 +220,13 @@ func (d *DB) UnlockSession(ctx context.Context, sessionID string) error {
 
 // CriterionRow represents a single scoring criterion.
 type CriterionRow struct {
-	ID          string
-	TemplateID  string
-	Title       string
-	Description string
-	MinValue    int
-	MaxValue    int
-	SortOrder   int
+	ID              string
+	TemplateID      string
+	Title           string
+	Description     string
+	MinValue        int
+	MaxValue        int
+	SortOrder       int
 	RubricChecklist []string
 	RubricBands     []CriterionRubricBand
 }

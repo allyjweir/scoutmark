@@ -35,7 +35,79 @@ export const DashboardPage = () => {
       .finally(() => setLoading(false));
   }, []);
 
-  const grouped = groupBy(sessions, 'status');
+  const isRegularSession = (session: Session) => (session.round_type ?? 'regular') === 'regular';
+  const visibleSessions = user?.is_admin ? sessions : sessions.filter(isRegularSession);
+  const sessionsById = sessions.reduce<Record<string, Session>>((acc, session) => {
+    acc[session.id] = session;
+    return acc;
+  }, {});
+  const round2BySource = sessions
+    .filter((s) => (s.round_type ?? 'regular') === 'round2' && s.source_session_id)
+    .reduce<Record<string, Session>>((acc, session) => {
+      acc[session.source_session_id as string] = session;
+      return acc;
+    }, {});
+
+  const RECENT_WINNER_WINDOW_MS = 6 * 60 * 60 * 1000;
+  const recentRound2Winner = sessions
+    .filter((s) => {
+      if ((s.round_type ?? 'regular') !== 'round2') return false;
+      if (!s.locked_at) return false;
+      if (!s.winner_patrol_name || !s.winner_subcamp_name) return false;
+      const lockedAtMs = new Date(s.locked_at).getTime();
+      if (Number.isNaN(lockedAtMs)) return false;
+      const ageMs = Date.now() - lockedAtMs;
+      return ageMs >= 0 && ageMs <= RECENT_WINNER_WINDOW_MS;
+    })
+    .sort((a, b) => new Date(b.locked_at as string).getTime() - new Date(a.locked_at as string).getTime())[0];
+  const recentWinnerSourceSession = recentRound2Winner?.source_session_id
+    ? sessionsById[recentRound2Winner.source_session_id]
+    : undefined;
+  const recentWinnerDateLabel = recentWinnerSourceSession?.name
+    ?? (recentRound2Winner?.locked_at
+      ? new Date(recentRound2Winner.locked_at).toLocaleDateString(undefined, {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      })
+      : 'today');
+
+  const leaderNoteFor = (session: Session): string | undefined => {
+    if (user?.is_admin) return undefined;
+    const linkedRound2 = round2BySource[session.id];
+    if (!linkedRound2) return undefined;
+
+    if (linkedRound2.status === 'ACTIVE' || linkedRound2.status === 'UPCOMING') {
+      return 'Camp Chief is selecting overall best patrol.';
+    }
+
+    if (linkedRound2.status === 'LOCKED' || linkedRound2.status === 'CLOSED') {
+      if (linkedRound2.winner_patrol_name && linkedRound2.winner_subcamp_name) {
+        return `Overall winner: ${linkedRound2.winner_subcamp_name} - ${linkedRound2.winner_patrol_name}.`;
+      }
+      return 'Camp Chief has finalised overall scoring.';
+    }
+
+    return undefined;
+  };
+
+  const isFinalising = (session: Session): boolean => {
+    if ((session.round_type ?? 'regular') !== 'regular') return false;
+    const linkedRound2 = round2BySource[session.id];
+    if (!linkedRound2) return false;
+    return linkedRound2.status === 'ACTIVE' || linkedRound2.status === 'UPCOMING';
+  };
+
+  const hasOverallWinnerSelected = (session: Session): boolean => {
+    const linkedRound2 = round2BySource[session.id];
+    if (!linkedRound2) return false;
+    if (linkedRound2.status !== 'LOCKED' && linkedRound2.status !== 'CLOSED') return false;
+    return Boolean(linkedRound2.winner_patrol_name && linkedRound2.winner_subcamp_name);
+  };
+
+  const finalisingSessions = sortBy(visibleSessions.filter(isFinalising), 'ends_at').reverse();
+
+  const grouped = groupBy(visibleSessions.filter((session) => !isFinalising(session)), 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
   const lockedSessions = sortBy(grouped['LOCKED'] ?? [], 'starts_at');
@@ -80,6 +152,12 @@ export const DashboardPage = () => {
         </Flash>
       )}
 
+      {recentRound2Winner && (
+        <Flash variant="success" sx={{ mb: 3, py: 2 }}>
+          🏆 Overall best patrol for <strong>{recentWinnerDateLabel}</strong>: <strong>{recentRound2Winner.winner_subcamp_name} - {recentRound2Winner.winner_patrol_name}</strong>
+        </Flash>
+      )}
+
       {/* Admin quick-access */}
       {user?.is_admin && (activeSessions.length > 0 || closedSessions.length > 0) && (
         <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
@@ -114,6 +192,25 @@ export const DashboardPage = () => {
               session={session}
               onClick={() => handleSessionClick(session)}
               recentlyFinalised={session.user_finalised}
+              note={leaderNoteFor(session)}
+            />
+          ))}
+        </Box>
+      )}
+
+      {/* Upcoming Sessions */}
+      {finalisingSessions.length > 0 && (
+        <Box mb={4}>
+          <Heading sx={{ fontSize: 2, mb: 2, color: 'attention.fg' }}>
+            Finalising
+          </Heading>
+          {finalisingSessions.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              onClick={() => handleSessionClick(session)}
+              recentlyFinalised={session.user_finalised}
+              note={leaderNoteFor(session)}
             />
           ))}
         </Box>
@@ -143,6 +240,7 @@ export const DashboardPage = () => {
               session={session}
               onClick={() => handleSessionClick(session)}
               recentlyFinalised={session.user_finalised}
+              note={leaderNoteFor(session)}
             />
           ))}
         </Box>
@@ -159,7 +257,8 @@ export const DashboardPage = () => {
               <SessionCard
                 session={session}
                 onClick={() => handleSessionClick(session)}
-                recentlyFinalised={session.user_finalised}
+                recentlyFinalised={session.user_finalised && !hasOverallWinnerSelected(session)}
+                note={leaderNoteFor(session)}
               />
               <Box display="flex" justifyContent="flex-end" mt={-1} mb={2} px={1}>
                 <Button
@@ -179,7 +278,7 @@ export const DashboardPage = () => {
         </Box>
       )}
 
-      {sessions.length === 0 && (
+      {visibleSessions.length === 0 && (
         <Box textAlign="center" py={6}>
           <Text sx={{ color: 'fg.muted', fontSize: 2 }}>
             No sessions available yet.

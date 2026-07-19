@@ -69,6 +69,18 @@ export const ScoringPage = () => {
 
   const currentPatrol = patrols[currentPatrolIndex];
   const criteria = session?.criteria ?? [];
+  const patrolLabel = (patrol: Patrol): string => {
+    if (session?.round_type === 'round2') {
+      return patrol.subcamp || patrol.name;
+    }
+    return patrol.name;
+  };
+  const patrolTitle = (patrol: Patrol): string => {
+    if (session?.round_type === 'round2' && patrol.subcamp) {
+      return `${patrol.subcamp} - ${patrol.name}`;
+    }
+    return patrol.name;
+  };
 
   // Keep ref in sync
   useEffect(() => {
@@ -991,7 +1003,7 @@ export const ScoringPage = () => {
                   >
                     <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
                       <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
-                        {patrol.name}
+                        {patrolLabel(patrol)}
                       </Text>
                       {commentCount > 0 && (
                         <Text sx={{ fontSize: 0, color: 'fg.muted' }}>💬 {commentCount}</Text>
@@ -1068,7 +1080,7 @@ export const ScoringPage = () => {
                           <option value="">Select patrol…</option>
                           {patrols.map((p) => (
                             <option key={p.patrol_id} value={p.patrol_id}>
-                              {p.name}
+                              {session.round_type === 'round2' && p.subcamp ? `${p.subcamp} - ${p.name}` : p.name}
                               {patrolTotals[p.patrol_id] != null ? ` (${patrolTotals[p.patrol_id]} pts)` : ''}
                             </option>
                           ))}
@@ -1342,7 +1354,7 @@ export const ScoringPage = () => {
                     }}
                     title={hasPresence ? activeUsers.map(u => `${u.user_name} ${u.mode}`).join(', ') : undefined}
                   >
-                    {patrol.name}
+                    {patrolLabel(patrol)}
                     {patrolCommentCount > 0 && (
                       <Text sx={{ ml: 1, fontSize: 0, opacity: 0.8 }}>💬{patrolCommentCount}</Text>
                     )}
@@ -1395,7 +1407,7 @@ export const ScoringPage = () => {
           {currentPatrol && (
             <Box flex={1} p={3} overflow="auto">
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-                <Heading sx={{ fontSize: 3 }}>{currentPatrol.name}</Heading>
+                <Heading sx={{ fontSize: 3 }}>{patrolTitle(currentPatrol)}</Heading>
                 {isCurrentSubmitted && (
                   <Label variant="success" size="large">Submitted ✓</Label>
                 )}
@@ -1508,7 +1520,7 @@ export const ScoringPage = () => {
         <>
           <Box flex={1} p={3} overflow="auto">
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-              <Heading sx={{ fontSize: 3 }}>{currentPatrol.name}</Heading>
+              <Heading sx={{ fontSize: 3 }}>{patrolTitle(currentPatrol)}</Heading>
               <Label variant="success" size="large">Submitted ✓</Label>
             </Box>
 

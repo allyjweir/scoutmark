@@ -40,6 +40,8 @@ type sessionJSON struct {
 	Name              string          `json:"name"`
 	RoundType         string          `json:"round_type"`
 	SourceSessionID   *string         `json:"source_session_id,omitempty"`
+	WinnerPatrolName  *string         `json:"winner_patrol_name,omitempty"`
+	WinnerSubcampName *string         `json:"winner_subcamp_name,omitempty"`
 	StartsAt          string          `json:"starts_at"`
 	EndsAt            string          `json:"ends_at"`
 	Status            string          `json:"status"`
@@ -55,17 +57,17 @@ type sessionJSON struct {
 }
 
 type criterionJSON struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	MinValue    int    `json:"min_value"`
-	MaxValue    int    `json:"max_value"`
-	SortOrder   int    `json:"sort_order"`
+	ID          string               `json:"id"`
+	Title       string               `json:"title"`
+	Description string               `json:"description"`
+	MinValue    int                  `json:"min_value"`
+	MaxValue    int                  `json:"max_value"`
+	SortOrder   int                  `json:"sort_order"`
 	Rubric      *criterionRubricJSON `json:"rubric,omitempty"`
 }
 
 type criterionRubricJSON struct {
-	Checklist []string                 `json:"checklist"`
+	Checklist []string                       `json:"checklist"`
 	Bands     []database.CriterionRubricBand `json:"bands"`
 }
 
@@ -179,6 +181,19 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		h.maybeEnsureRound2(ctx, &sessions[i])
 	}
 
+	winnerBySessionID := map[string]*database.Round2WinnerRow{}
+	for _, s := range sessions {
+		if s.RoundType != "round2" {
+			continue
+		}
+		winner, err := h.db.GetRound2Winner(ctx, s.ID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			continue
+		}
+		winnerBySessionID[s.ID] = winner
+	}
+
 	// Look up which sessions this user has fully finalised
 	finalisedSet, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID, user.IsAdmin)
 	if err != nil {
@@ -190,6 +205,13 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	span.SetAttributes(attribute.Int("sessions.count", len(sessions)))
 
 	result := lo.Map(sessions, func(s database.SessionDetailRow, _ int) sessionJSON {
+		var winnerPatrolName *string
+		var winnerSubcampName *string
+		if winner := winnerBySessionID[s.ID]; winner != nil {
+			winnerPatrolName = &winner.PatrolName
+			winnerSubcampName = &winner.SubcampName
+		}
+
 		return sessionJSON{
 			ID:                s.ID,
 			EventID:           s.EventID,
@@ -198,6 +220,8 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			Name:              s.Name,
 			RoundType:         s.RoundType,
 			SourceSessionID:   s.SourceSessionID,
+			WinnerPatrolName:  winnerPatrolName,
+			WinnerSubcampName: winnerSubcampName,
 			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
 			EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
 			Status:            s.ComputeStatus(),
@@ -295,6 +319,15 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 				Rubric:      rubricJSONForCriterion(c),
 			}
 		}),
+	}
+	if session.RoundType == "round2" {
+		winner, err := h.db.GetRound2Winner(ctx, session.ID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+		} else if winner != nil {
+			sessionResult.WinnerPatrolName = &winner.PatrolName
+			sessionResult.WinnerSubcampName = &winner.SubcampName
+		}
 	}
 
 	patrolResult := lo.Map(patrols, func(p database.UserPatrolRow, _ int) patrolJSON {

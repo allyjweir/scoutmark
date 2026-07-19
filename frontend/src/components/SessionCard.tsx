@@ -6,6 +6,7 @@ interface SessionCardProps {
   onClick?: () => void;
   disabled?: boolean;
   recentlyFinalised?: boolean;
+  note?: string;
 }
 
 const STATUS_LABELS: Record<string, { variant: 'default' | 'primary' | 'secondary' | 'accent' | 'success' | 'attention' | 'severe' | 'danger' | 'done' | 'sponsors'; text: string }> = {
@@ -40,7 +41,7 @@ const formatTimeLeft = (endsAtIso: string): string => {
   return `Locks in ${minutes}m`;
 };
 
-export const SessionCard = ({ session, onClick, disabled, recentlyFinalised }: SessionCardProps) => {
+export const SessionCard = ({ session, onClick, disabled, recentlyFinalised, note }: SessionCardProps) => {
   const statusConfig = STATUS_LABELS[session.status] ?? STATUS_LABELS.CLOSED;
 
   return (
@@ -91,6 +92,12 @@ export const SessionCard = ({ session, onClick, disabled, recentlyFinalised }: S
       {session.status === 'LOCKED' && session.locked_at && (
         <Text sx={{ color: 'fg.muted', fontSize: 0, mt: 1 }}>
           Locked by {session.locked_by_name || 'admin'} at {formatTime(session.locked_at)}
+        </Text>
+      )}
+
+      {note && (
+        <Text sx={{ color: 'accent.fg', fontSize: 0, mt: 1, fontWeight: 'semibold' }}>
+          {note}
         </Text>
       )}
     </Box>

@@ -18,6 +18,13 @@ type Round2FinalistRow struct {
 	SelectionSource string
 }
 
+type Round2WinnerRow struct {
+	PatrolID    string
+	PatrolName  string
+	SubcampID   string
+	SubcampName string
+}
+
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
@@ -254,6 +261,58 @@ func (d *DB) SetRound2Finalist(ctx context.Context, sessionID, subcampID, patrol
 
 		return nil
 	})
+}
+
+// GetRound2Winner returns the current round2 winner selection if present.
+func (d *DB) GetRound2Winner(ctx context.Context, sessionID string) (*Round2WinnerRow, error) {
+	row := d.QueryRowContext(ctx,
+		`SELECT sa.patrol_id, p.name, sc.id, sc.name
+		 FROM session_awards sa
+		 JOIN patrols p ON p.id = sa.patrol_id
+		 JOIN subcamps sc ON sc.id = p.subcamp_id
+		 WHERE sa.session_id = $1
+		   AND sa.award_type = 'best_patrol'
+		 ORDER BY sa.updated_at DESC
+		 LIMIT 1`,
+		sessionID,
+	)
+
+	var winner Round2WinnerRow
+	if err := row.Scan(&winner.PatrolID, &winner.PatrolName, &winner.SubcampID, &winner.SubcampName); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying round 2 winner: %w", err)
+	}
+
+	return &winner, nil
+}
+
+// GetRound2WinnerForSourceSession returns the winner selected in the linked round2
+// session for a regular source session, if one exists.
+func (d *DB) GetRound2WinnerForSourceSession(ctx context.Context, sourceSessionID string) (*Round2WinnerRow, error) {
+	row := d.QueryRowContext(ctx,
+		`SELECT sa.patrol_id, p.name, sc.id, sc.name
+		 FROM sessions s
+		 JOIN session_awards sa ON sa.session_id = s.id AND sa.award_type = 'best_patrol'
+		 JOIN patrols p ON p.id = sa.patrol_id
+		 JOIN subcamps sc ON sc.id = p.subcamp_id
+		 WHERE s.source_session_id = $1
+		   AND s.round_type = 'round2'
+		 ORDER BY sa.updated_at DESC
+		 LIMIT 1`,
+		sourceSessionID,
+	)
+
+	var winner Round2WinnerRow
+	if err := row.Scan(&winner.PatrolID, &winner.PatrolName, &winner.SubcampID, &winner.SubcampName); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying round 2 winner for source session: %w", err)
+	}
+
+	return &winner, nil
 }
 
 func loadSourceSessionForRound2(ctx context.Context, tx *sql.Tx, sessionID string) (*sourceSessionInfo, error) {

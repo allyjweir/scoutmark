@@ -146,10 +146,18 @@ func (d *DB) UserOwnsSessionPatrol(ctx context.Context, userID, sessionID, patro
 	row := d.QueryRowContext(ctx,
 		`SELECT COUNT(*)
 		 FROM users u
+		 JOIN sessions s ON s.id = $2
 		 JOIN patrols p ON p.id = $3
 		 JOIN session_subcamps ss ON ss.session_id = $2 AND ss.subcamp_id = p.subcamp_id
 		 WHERE u.id = $1
-		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id))`,
+		   AND (
+		     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $2)
+		     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $2 AND sp.patrol_id = p.id)
+		   )
+		   AND (
+		     (s.round_type = 'round2' AND u.is_admin = TRUE)
+		     OR (s.round_type <> 'round2' AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id)))
+		   )`,
 		userID, sessionID, patrolID,
 	)
 	var count int
@@ -164,9 +172,13 @@ func (d *DB) UserCanAccessSession(ctx context.Context, userID, sessionID string)
 	row := d.QueryRowContext(ctx,
 		`SELECT COUNT(*)
 		 FROM users u
+		 JOIN sessions s ON s.id = $2
 		 JOIN session_subcamps ss ON ss.session_id = $2
 		 WHERE u.id = $1
-		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = ss.subcamp_id))`,
+		   AND (
+		     (s.round_type = 'round2' AND u.is_admin = TRUE)
+		     OR (s.round_type <> 'round2' AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = ss.subcamp_id)))
+		   )`,
 		userID, sessionID,
 	)
 	var count int

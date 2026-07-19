@@ -441,6 +441,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			 FROM patrols p
 			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
 			 WHERE p.subcamp_id = $2
+			   AND (
+			     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
+			     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+			   )
 			 ORDER BY p.sort_order ASC, p.name ASC`,
 			sessionID, resolvedSubcampID,
 		)
@@ -597,7 +601,11 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 			`SELECT p.id
 			 FROM patrols p
 			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
-			 WHERE p.subcamp_id = $2`,
+			 WHERE p.subcamp_id = $2
+			   AND (
+			     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
+			     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+			   )`,
 			sessionID, subcampID,
 		)
 		if err != nil {

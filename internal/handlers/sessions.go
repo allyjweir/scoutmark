@@ -38,6 +38,8 @@ type sessionJSON struct {
 	EventName         string          `json:"event_name"`
 	TemplateID        string          `json:"template_id"`
 	Name              string          `json:"name"`
+	RoundType         string          `json:"round_type"`
+	SourceSessionID   *string         `json:"source_session_id,omitempty"`
 	StartsAt          string          `json:"starts_at"`
 	EndsAt            string          `json:"ends_at"`
 	Status            string          `json:"status"`
@@ -124,6 +126,30 @@ type awardJSON struct {
 	PatrolID  string `json:"patrol_id"`
 }
 
+type round2FinalistJSON struct {
+	SubcampID       string `json:"subcamp_id"`
+	SubcampName     string `json:"subcamp_name"`
+	PatrolID        string `json:"patrol_id"`
+	PatrolName      string `json:"patrol_name"`
+	SelectionSource string `json:"selection_source"`
+}
+
+func (h *SessionHandler) maybeEnsureRound2(ctx context.Context, session *database.SessionDetailRow) {
+	if session == nil {
+		return
+	}
+	if session.RoundType != "regular" || !session.AwardBestPatrol {
+		return
+	}
+	status := session.ComputeStatus()
+	if status != "CLOSED" && status != "LOCKED" {
+		return
+	}
+	if _, err := h.db.EnsureRound2ForSourceSession(ctx, session.ID); err != nil {
+		tracing.RecordError(ctx, err)
+	}
+}
+
 func formatOptionalTime(t *time.Time) *string {
 	if t == nil {
 		return nil
@@ -149,6 +175,9 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not fetch sessions")
 		return
 	}
+	for i := range sessions {
+		h.maybeEnsureRound2(ctx, &sessions[i])
+	}
 
 	// Look up which sessions this user has fully finalised
 	finalisedSet, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID, user.IsAdmin)
@@ -167,6 +196,8 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			EventName:         s.EventName,
 			TemplateID:        s.TemplateID,
 			Name:              s.Name,
+			RoundType:         s.RoundType,
+			SourceSessionID:   s.SourceSessionID,
 			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
 			EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
 			Status:            s.ComputeStatus(),
@@ -202,6 +233,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
+	h.maybeEnsureRound2(ctx, session)
 
 	// Fetch criteria for the session's template
 	criteria, err := h.db.GetTemplateCriteria(ctx, session.TemplateID)
@@ -240,6 +272,8 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		EventName:         session.EventName,
 		TemplateID:        session.TemplateID,
 		Name:              session.Name,
+		RoundType:         session.RoundType,
+		SourceSessionID:   session.SourceSessionID,
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
@@ -319,6 +353,9 @@ func (h *SessionHandler) LockSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not lock session")
 		return
 	}
+	if _, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID); err != nil {
+		tracing.RecordError(ctx, err)
+	}
 
 	lockedSession, err := h.db.GetSession(ctx, sessionID)
 	if err != nil {
@@ -374,6 +411,108 @@ func (h *SessionHandler) UnlockSession(w http.ResponseWriter, r *http.Request) {
 		BroadcastSessionUnlocked(sessionID string)
 	}); ok {
 		fb.BroadcastSessionUnlocked(sessionID)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// EnsureRound2 handles POST /api/admin/sessions/{session_id}/round2
+// Creates round 2 for a closed regular session if it does not already exist.
+func (h *SessionHandler) EnsureRound2(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	round2, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not create round 2 session")
+		return
+	}
+	if round2 == nil {
+		writeError(w, r, http.StatusBadRequest, "round 2 not eligible yet or no finalists available")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session": sessionJSON{
+			ID:                round2.ID,
+			EventID:           round2.EventID,
+			EventName:         round2.EventName,
+			TemplateID:        round2.TemplateID,
+			Name:              round2.Name,
+			RoundType:         round2.RoundType,
+			SourceSessionID:   round2.SourceSessionID,
+			StartsAt:          round2.StartsAt.Format("2006-01-02T15:04:05Z"),
+			EndsAt:            round2.EndsAt.Format("2006-01-02T15:04:05Z"),
+			Status:            round2.ComputeStatus(),
+			LockedAt:          formatOptionalTime(round2.LockedAt),
+			LockedBy:          round2.LockedBy,
+			LockedByName:      round2.LockedByName,
+			CreatedAt:         round2.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			PreviousSessionID: round2.PreviousSessionID,
+			AwardBestPatrol:   round2.AwardBestPatrol,
+			AwardMostImproved: round2.AwardMostImproved,
+		},
+	})
+}
+
+// GetRound2Finalists handles GET /api/admin/sessions/{session_id}/round2/finalists
+func (h *SessionHandler) GetRound2Finalists(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.RoundType != "round2" {
+		writeError(w, r, http.StatusBadRequest, "session is not round 2")
+		return
+	}
+
+	finalists, err := h.db.GetRound2Finalists(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch round 2 finalists")
+		return
+	}
+
+	result := lo.Map(finalists, func(f database.Round2FinalistRow, _ int) round2FinalistJSON {
+		return round2FinalistJSON{
+			SubcampID:       f.SubcampID,
+			SubcampName:     f.SubcampName,
+			PatrolID:        f.PatrolID,
+			PatrolName:      f.PatrolName,
+			SelectionSource: f.SelectionSource,
+		}
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"finalists": result})
+}
+
+// SetRound2Finalist handles PUT /api/admin/sessions/{session_id}/round2/finalists/{subcamp_id}
+func (h *SessionHandler) SetRound2Finalist(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+	subcampID := r.PathValue("subcamp_id")
+
+	var req struct {
+		PatrolID string `json:"patrol_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.PatrolID == "" {
+		writeError(w, r, http.StatusBadRequest, "patrol_id is required")
+		return
+	}
+
+	if err := h.db.SetRound2Finalist(ctx, sessionID, subcampID, req.PatrolID); err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -627,6 +766,88 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if session.RoundType == "round2" {
+		if !user.IsAdmin {
+			writeError(w, r, http.StatusForbidden, "only admins can finalise round 2 scoring")
+			return
+		}
+
+		patrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, true)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not fetch round 2 finalists")
+			return
+		}
+
+		subcampSet := map[string]bool{}
+		subcampIDs := make([]string, 0)
+		for _, patrol := range patrols {
+			if subcampSet[patrol.SubcampID] {
+				continue
+			}
+			subcampSet[patrol.SubcampID] = true
+			subcampIDs = append(subcampIDs, patrol.SubcampID)
+		}
+
+		allNewSubmissions := make([]database.SubmissionRow, 0)
+		for _, subcampID := range subcampIDs {
+			newSubmissions, err := h.db.FinaliseSession(ctx, user.ID, sessionID, subcampID)
+			if err != nil {
+				tracing.RecordError(ctx, err)
+				writeError(w, r, http.StatusInternalServerError, "could not finalise round 2 session")
+				return
+			}
+			allNewSubmissions = append(allNewSubmissions, newSubmissions...)
+		}
+
+		if err := h.db.LockSession(ctx, sessionID, user.ID); err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not lock round 2 session")
+			return
+		}
+
+		patrolIDs := lo.Map(patrols, func(p database.UserPatrolRow, _ int) string { return p.PatrolID })
+		allSubmissions, err := h.db.GetSubmissionsForPatrols(ctx, sessionID, patrolIDs)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not fetch round 2 submissions")
+			return
+		}
+
+		result := lo.Map(allSubmissions, func(s database.SubmissionRow, _ int) submissionJSON {
+			return submissionJSON{
+				ID:          s.ID,
+				PatrolID:    s.PatrolID,
+				PatrolName:  s.PatrolName,
+				SubmittedBy: s.SubmittedBy,
+				Locked:      s.Locked,
+				SubmittedAt: s.SubmittedAt.Format("2006-01-02T15:04:05Z"),
+			}
+		})
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"submissions":     result,
+			"finalised_count": len(allNewSubmissions),
+			"round2_closed":   true,
+		})
+
+		if h.broadcaster != nil {
+			h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+		}
+		if fb, ok := h.broadcaster.(interface {
+			BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string)
+		}); ok {
+			fb.BroadcastSessionLocked(
+				sessionID,
+				user.ID,
+				user.DisplayName,
+				time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+				session.EndsAt.Format("2006-01-02T15:04:05Z"),
+			)
+		}
+		return
+	}
+
 	var req struct {
 		SubcampID string `json:"subcamp_id"`
 	}
@@ -679,6 +900,21 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	autoLocked := false
+	fullySubmitted, err := h.db.IsSessionFullySubmitted(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+	} else if fullySubmitted {
+		if err := h.db.LockSession(ctx, sessionID, user.ID); err != nil {
+			tracing.RecordError(ctx, err)
+		} else {
+			autoLocked = true
+			if _, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID); err != nil {
+				tracing.RecordError(ctx, err)
+			}
+		}
+	}
+
 	span.SetAttributes(
 		attribute.Int("finalised.count", len(newSubmissions)),
 		attribute.Int("total.submissions", len(allSubmissions)),
@@ -698,6 +934,7 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"submissions":     result,
 		"finalised_count": len(newSubmissions),
+		"auto_locked":     autoLocked,
 	})
 
 	// Broadcast updated progress to WebSocket subscribers
@@ -717,6 +954,19 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		)
+	}
+	if autoLocked {
+		if fb, ok := h.broadcaster.(interface {
+			BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string)
+		}); ok {
+			fb.BroadcastSessionLocked(
+				sessionID,
+				user.ID,
+				user.DisplayName,
+				time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+				session.EndsAt.Format("2006-01-02T15:04:05Z"),
+			)
+		}
 	}
 }
 
@@ -910,6 +1160,8 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 		EventID:           session.EventID,
 		EventName:         session.EventName,
 		Name:              session.Name,
+		RoundType:         session.RoundType,
+		SourceSessionID:   session.SourceSessionID,
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),

@@ -111,20 +111,20 @@ const AppRoutes = () => (
         }
       />
       <Route
+        path="/patrols"
+        element={
+          <ProtectedRoute>
+            <PatrolOverviewPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/sessions/:sessionId/scores"
         element={
           <ProtectedRoute>
             <AdminOnlyRoute>
               <AdminPatrolScoresPage />
             </AdminOnlyRoute>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/patrols"
-        element={
-          <ProtectedRoute>
-            <PatrolOverviewPage />
           </ProtectedRoute>
         }
       />

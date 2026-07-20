@@ -159,7 +159,6 @@ type patrolHistoryJSON struct {
 func patrolHistoryScoreKey(submissionID, criterionID string) string {
 	return submissionID + ":" + criterionID
 }
-
 type draftJSON struct {
 	ID        string           `json:"id"`
 	PatrolID  string           `json:"patrol_id"`

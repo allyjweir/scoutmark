@@ -67,7 +67,7 @@ export const PatrolOverviewPage = () => {
               <Box>
                 <Text sx={{ display: 'block', fontWeight: 'bold', fontSize: 2 }}>{patrol.name}</Text>
                 <Text sx={{ color: 'fg.muted', fontSize: 0 }}>
-                  {patrol.sessions.length} {patrol.sessions.length === 1 ? 'scored session' : 'scored sessions'}
+                  {patrol.sessions.length} {patrol.sessions.length === 1 ? 'session with scores' : 'sessions with scores'}
                 </Text>
               </Box>
               <Text sx={{ color: 'fg.muted', fontSize: 2 }}>›</Text>

@@ -76,6 +76,7 @@ export const getSession = async (sessionId: string): Promise<{
 }> => request(`/sessions/${sessionId}`);
 
 export interface PatrolHistoryComment {
+  id: string;
   display_name: string;
   comment: string;
 }

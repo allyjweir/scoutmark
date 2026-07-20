@@ -186,6 +186,7 @@ type PatrolHistoryRow struct {
 
 // PatrolHistoryCommentRow represents a comment made on a historical score.
 type PatrolHistoryCommentRow struct {
+	ID           string
 	SubmissionID string
 	CriterionID  string
 	DisplayName  string
@@ -193,12 +194,16 @@ type PatrolHistoryCommentRow struct {
 }
 
 // GetPatrolHistory returns the patrols a user can access and their submitted scores.
-func (d *DB) GetPatrolHistory(ctx context.Context, userID string, isAdmin bool) ([]PatrolHistoryRow, []PatrolHistoryCommentRow, error) {
-	scope := `p.subcamp_id = (SELECT subcamp_id FROM users WHERE id = $1)`
-	args := []any{userID}
-	if isAdmin {
-		scope = "TRUE"
-		args = nil
+func (d *DB) GetPatrolHistory(ctx context.Context, subcampID *string, isAdmin bool) ([]PatrolHistoryRow, []PatrolHistoryCommentRow, error) {
+	if !isAdmin && subcampID == nil {
+		return []PatrolHistoryRow{}, []PatrolHistoryCommentRow{}, nil
+	}
+
+	scope := "TRUE"
+	var args []any
+	if !isAdmin {
+		scope = `p.subcamp_id = $1`
+		args = []any{*subcampID}
 	}
 
 	rows, err := d.QueryContext(ctx,
@@ -236,7 +241,7 @@ func (d *DB) GetPatrolHistory(ctx context.Context, userID string, isAdmin bool) 
 	}
 
 	commentRows, err := d.QueryContext(ctx,
-		`SELECT sc.submission_id, sc.criterion_id, sc.display_name, sc.comment
+		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.display_name, sc.comment
 		 FROM submission_comments sc
 		 JOIN submissions sb ON sb.id = sc.submission_id
 		 JOIN patrols p ON p.id = sb.patrol_id
@@ -252,7 +257,7 @@ func (d *DB) GetPatrolHistory(ctx context.Context, userID string, isAdmin bool) 
 	var comments []PatrolHistoryCommentRow
 	for commentRows.Next() {
 		var comment PatrolHistoryCommentRow
-		if err := commentRows.Scan(&comment.SubmissionID, &comment.CriterionID, &comment.DisplayName, &comment.Comment); err != nil {
+		if err := commentRows.Scan(&comment.ID, &comment.SubmissionID, &comment.CriterionID, &comment.DisplayName, &comment.Comment); err != nil {
 			return nil, nil, fmt.Errorf("scanning patrol history comment: %w", err)
 		}
 		comments = append(comments, comment)

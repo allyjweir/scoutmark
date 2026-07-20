@@ -335,9 +335,8 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		session := &patrol.Sessions[sessionIndex]
-		session.Total += *row.Value
-		session.Scores = append(session.Scores, patrolHistoryScoreJSON{
+		patrol.Sessions[sessionIndex].Total += *row.Value
+		patrol.Sessions[sessionIndex].Scores = append(patrol.Sessions[sessionIndex].Scores, patrolHistoryScoreJSON{
 			CriterionID:    *row.CriterionID,
 			CriterionTitle: *row.CriterionTitle,
 			MinValue:       *row.CriterionMin,

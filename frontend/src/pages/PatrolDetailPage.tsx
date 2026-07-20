@@ -83,7 +83,7 @@ export const PatrolDetailPage = () => {
                 >
                   <Box>
                     <Text sx={{ display: 'block', fontWeight: 'bold' }}>{session.name}</Text>
-                    <Text sx={{ color: 'fg.muted', fontSize: 0 }}>{dateLabel(session.starts_at)}</Text>
+                    <Text sx={{ color: 'fg.muted', fontSize: 0 }}>Submitted {dateLabel(session.submitted_at)}</Text>
                   </Box>
                   <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
                     {commentCount > 0 && <CounterLabel>💬 {commentCount}</CounterLabel>}

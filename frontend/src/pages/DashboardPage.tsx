@@ -163,6 +163,13 @@ export const DashboardPage = () => {
         </Flash>
       )}
 
+      <Box mb={4}>
+        <Button onClick={() => navigate('/patrols')} sx={{ width: '100%', justifyContent: 'space-between' }}>
+          <span>View patrols &amp; score history</span>
+          <span>›</span>
+        </Button>
+      </Box>
+
       {/* Admin quick-access */}
       {user?.is_admin && !isCampChiefAccount && (activeSessions.length > 0 || closedSessions.length > 0) && (
         <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">

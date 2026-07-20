@@ -8,6 +8,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
 import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
+import { PatrolOverviewPage } from './pages/PatrolOverviewPage';
+import { PatrolDetailPage } from './pages/PatrolDetailPage';
 import type { ReactNode } from 'react';
 
 const isCampChiefAccount = (user: { id: string; username: string } | null) => (
@@ -78,6 +80,22 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <ScoringPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/patrols"
+        element={
+          <ProtectedRoute>
+            <PatrolOverviewPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/patrols/:patrolId"
+        element={
+          <ProtectedRoute>
+            <PatrolDetailPage />
           </ProtectedRoute>
         }
       />

@@ -30,9 +30,42 @@ subcamps:
       - id: pat-morrison-3
         name: Site 3
         sort_order: 3
+      - id: pat-morrison-4
+        name: Site 4
+        sort_order: 4
+      - id: pat-morrison-5
+        name: Site 5
+        sort_order: 5
+      - id: pat-morrison-6
+        name: Site 6
+        sort_order: 6
+      - id: pat-morrison-7
+        name: Site 7
+        sort_order: 7
+      - id: pat-morrison-8
+        name: Site 8
+        sort_order: 8
+      - id: pat-morrison-9
+        name: Site 9
+        sort_order: 9
+      - id: pat-morrison-10
+        name: Site 10
+        sort_order: 10
+      - id: pat-morrison-11
+        name: Site 11
+        sort_order: 11
+      - id: pat-morrison-12
+        name: Site 12
+        sort_order: 12
+      - id: pat-morrison-13
+        name: Site 13
+        sort_order: 13
+      - id: pat-morrison-14
+        name: Site 14
+        sort_order: 14
 
   - id: sub-mcdonald
-    name: McDonald
+    name: MacDonald
     sort_order: 2
     patrols:
       - id: pat-mcdonald-1
@@ -44,6 +77,39 @@ subcamps:
       - id: pat-mcdonald-3
         name: Site 3
         sort_order: 3
+      - id: pat-mcdonald-4
+        name: Site 4
+        sort_order: 4
+      - id: pat-mcdonald-5
+        name: Site 5
+        sort_order: 5
+      - id: pat-mcdonald-6
+        name: Site 6
+        sort_order: 6
+      - id: pat-mcdonald-7
+        name: Site 7
+        sort_order: 7
+      - id: pat-mcdonald-8
+        name: Site 8
+        sort_order: 8
+      - id: pat-mcdonald-9
+        name: Site 9
+        sort_order: 9
+      - id: pat-mcdonald-10
+        name: Site 10
+        sort_order: 10
+      - id: pat-mcdonald-11
+        name: Site 11
+        sort_order: 11
+      - id: pat-mcdonald-12
+        name: Site 12
+        sort_order: 12
+      - id: pat-mcdonald-13
+        name: Site 13
+        sort_order: 13
+      - id: pat-mcdonald-14
+        name: Site 14
+        sort_order: 14
 
   - id: sub-robertson
     name: Robertson
@@ -58,6 +124,39 @@ subcamps:
       - id: pat-robertson-3
         name: Site 3
         sort_order: 3
+      - id: pat-robertson-4
+        name: Site 4
+        sort_order: 4
+      - id: pat-robertson-5
+        name: Site 5
+        sort_order: 5
+      - id: pat-robertson-6
+        name: Site 6
+        sort_order: 6
+      - id: pat-robertson-7
+        name: Site 7
+        sort_order: 7
+      - id: pat-robertson-8
+        name: Site 8
+        sort_order: 8
+      - id: pat-robertson-9
+        name: Site 9
+        sort_order: 9
+      - id: pat-robertson-10
+        name: Site 10
+        sort_order: 10
+      - id: pat-robertson-11
+        name: Site 11
+        sort_order: 11
+      - id: pat-robertson-12
+        name: Site 12
+        sort_order: 12
+      - id: pat-robertson-13
+        name: Site 13
+        sort_order: 13
+      - id: pat-robertson-14
+        name: Site 14
+        sort_order: 14
 
   - id: sub-stewart
     name: Stewart
@@ -72,23 +171,89 @@ subcamps:
       - id: pat-stewart-3
         name: Site 3
         sort_order: 3
+      - id: pat-stewart-4
+        name: Site 4
+        sort_order: 4
+      - id: pat-stewart-5
+        name: Site 5
+        sort_order: 5
+      - id: pat-stewart-6
+        name: Site 6
+        sort_order: 6
+      - id: pat-stewart-7
+        name: Site 7
+        sort_order: 7
+      - id: pat-stewart-8
+        name: Site 8
+        sort_order: 8
+      - id: pat-stewart-9
+        name: Site 9
+        sort_order: 9
+      - id: pat-stewart-10
+        name: Site 10
+        sort_order: 10
+      - id: pat-stewart-11
+        name: Site 11
+        sort_order: 11
+      - id: pat-stewart-12
+        name: Site 12
+        sort_order: 12
+      - id: pat-stewart-13
+        name: Site 13
+        sort_order: 13
+      - id: pat-stewart-14
+        name: Site 14
+        sort_order: 14
 
   - id: sub-murray
     name: Murray
     sort_order: 5
     patrols:
       - id: pat-murray-1
-        name: Site 1
+        name: Ace of Spades
         sort_order: 1
       - id: pat-murray-2
-        name: Site 2
+        name: 2 of Hearts
         sort_order: 2
       - id: pat-murray-3
-        name: Site 3
+        name: 3 of Clubs
         sort_order: 3
+      - id: pat-murray-4
+        name: 4 of Diamonds
+        sort_order: 4
+      - id: pat-murray-5
+        name: 5 of Spades
+        sort_order: 5
+      - id: pat-murray-6
+        name: 6 of Hearts
+        sort_order: 6
+      - id: pat-murray-7
+        name: 7 of Clubs
+        sort_order: 7
+      - id: pat-murray-8
+        name: 8 of Diamonds
+        sort_order: 8
+      - id: pat-murray-9
+        name: 9 of Spades
+        sort_order: 9
+      - id: pat-murray-10
+        name: 10 of Hearts
+        sort_order: 10
+      - id: pat-murray-11
+        name: Jack of Clubs
+        sort_order: 11
+      - id: pat-murray-12
+        name: Queen of Diamonds
+        sort_order: 12
+      - id: pat-murray-13
+        name: King of Spades
+        sort_order: 13
+      - id: pat-murray-14
+        name: Joker
+        sort_order: 14
 
   - id: sub-mclean
-    name: McLean
+    name: MacLean
     sort_order: 6
     patrols:
       - id: pat-mclean-1
@@ -100,3 +265,36 @@ subcamps:
       - id: pat-mclean-3
         name: Site 3
         sort_order: 3
+      - id: pat-mclean-4
+        name: Site 4
+        sort_order: 4
+      - id: pat-mclean-5
+        name: Site 5
+        sort_order: 5
+      - id: pat-mclean-6
+        name: Site 6
+        sort_order: 6
+      - id: pat-mclean-7
+        name: Site 7
+        sort_order: 7
+      - id: pat-mclean-8
+        name: Site 8
+        sort_order: 8
+      - id: pat-mclean-9
+        name: Site 9
+        sort_order: 9
+      - id: pat-mclean-10
+        name: Site 10
+        sort_order: 10
+      - id: pat-mclean-11
+        name: Site 11
+        sort_order: 11
+      - id: pat-mclean-12
+        name: Site 12
+        sort_order: 12
+      - id: pat-mclean-13
+        name: Site 13
+        sort_order: 13
+      - id: pat-mclean-14
+        name: Site 14
+        sort_order: 14

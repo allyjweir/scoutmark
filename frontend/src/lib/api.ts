@@ -75,6 +75,39 @@ export const getSession = async (sessionId: string): Promise<{
   awards: Award[];
 }> => request(`/sessions/${sessionId}`);
 
+export interface PatrolHistoryComment {
+  display_name: string;
+  comment: string;
+}
+
+export interface PatrolHistoryScore {
+  criterion_id: string;
+  criterion_title: string;
+  min_value: number;
+  max_value: number;
+  value: number;
+  comments: PatrolHistoryComment[];
+}
+
+export interface PatrolHistorySession {
+  id: string;
+  name: string;
+  starts_at: string;
+  submitted_at: string;
+  total: number;
+  scores: PatrolHistoryScore[];
+}
+
+export interface PatrolHistory {
+  patrol_id: string;
+  name: string;
+  sort_order: number;
+  sessions: PatrolHistorySession[];
+}
+
+export const getPatrolHistory = async (): Promise<{ patrols: PatrolHistory[] }> =>
+  request('/patrols/history');
+
 // ─── Drafts ─────────────────────────────────────────────────────────
 
 export const getDraft = async (sessionId: string, patrolId: string): Promise<{ draft: Draft | null }> =>

@@ -596,6 +596,15 @@ func (c *Client) handleSaveDraft(ctx context.Context, msg ClientMessage) {
 		c.sendError(msg.RequestID, "FORBIDDEN", "you are not assigned to this patrol")
 		return
 	}
+	locked, err := c.hub.db.IsPatrolScoringLocked(ctx, payload.SessionID, payload.PatrolID)
+	if err != nil {
+		c.sendError(msg.RequestID, "INTERNAL_ERROR", "could not check subcamp lock")
+		return
+	}
+	if locked {
+		c.sendError(msg.RequestID, "SUBCAMP_LOCKED", "your subcamp scoring is locked")
+		return
+	}
 
 	span := tracing.Tracer()
 	_, saveSpan := span.Start(ctx, "ws.save_draft.db")

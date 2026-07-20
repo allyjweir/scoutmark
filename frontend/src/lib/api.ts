@@ -257,6 +257,71 @@ export const setRound2Finalist = async (
     body: JSON.stringify({ patrol_id: patrolId }),
   });
 
+export interface AdminSubcamp {
+  id: string;
+  name: string;
+  locked_at?: string | null;
+  locked_by?: string | null;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  display_name: string;
+  is_admin: boolean;
+  subcamp_id: string | null;
+  subcamp_name: string | null;
+}
+
+export const updateAdminSession = async (
+  sessionId: string,
+  startsAt: string,
+  endsAt: string,
+): Promise<{ session: Session }> =>
+  request(`/admin/sessions/${sessionId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
+  });
+
+export const getAdminSessionSubcamps = async (
+  sessionId: string,
+): Promise<{ subcamps: AdminSubcamp[] }> =>
+  request(`/admin/sessions/${sessionId}/subcamps`);
+
+export const lockAdminSessionSubcamp = async (sessionId: string, subcampId: string): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/subcamps/${subcampId}/lock`, { method: 'POST' });
+
+export const unlockAdminSessionSubcamp = async (sessionId: string, subcampId: string): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/subcamps/${subcampId}/unlock`, { method: 'POST' });
+
+export const listAdminUsers = async (): Promise<{ users: AdminUser[] }> => request('/admin/users');
+export const listAdminSubcamps = async (): Promise<{ subcamps: AdminSubcamp[] }> => request('/admin/subcamps');
+
+export const createAdminUser = async (user: {
+  username: string;
+  display_name: string;
+  password: string;
+  subcamp_id: string;
+  is_admin: boolean;
+}): Promise<AdminUser> =>
+  request('/admin/users', { method: 'POST', body: JSON.stringify(user) });
+
+export const resetAdminUserPassword = async (userId: string, password: string): Promise<{ status: string }> =>
+  request(`/admin/users/${userId}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password }),
+  });
+
+export const updateAdminPatrolScores = async (
+  sessionId: string,
+  patrolId: string,
+  scores: Record<string, number>,
+): Promise<{ ok: boolean }> =>
+  request(`/admin/sessions/${sessionId}/patrols/${patrolId}/scores`, {
+    method: 'PUT',
+    body: JSON.stringify({ scores, confirmed: true }),
+  });
+
 // ─── Per-User Comments ──────────────────────────────────────────────
 
 export interface DraftCommentAPI {

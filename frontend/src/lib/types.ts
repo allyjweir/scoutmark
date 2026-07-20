@@ -5,6 +5,7 @@ export interface User {
   username: string;
   display_name: string;
   is_admin: boolean;
+  is_camp_chief: boolean;
   subcamp_id?: string;
   password_change_required?: boolean;
 }

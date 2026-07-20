@@ -5,9 +5,14 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+var ErrUserNotFound = errors.New("user not found")
 
 // UserRow represents a user record from the database.
 type UserRow struct {
@@ -16,9 +21,80 @@ type UserRow struct {
 	PasswordHash           string
 	DisplayName            string
 	IsAdmin                bool
+	IsCampChief            bool
 	SubcampID              *string
 	PasswordChangeRequired bool
 	CreatedAt              time.Time
+}
+
+// AdminUserRow is the user data safe to return from admin user management APIs.
+type AdminUserRow struct {
+	ID          string
+	Username    string
+	DisplayName string
+	IsAdmin     bool
+	SubcampID   *string
+	SubcampName *string
+}
+
+func (d *DB) ListUsers(ctx context.Context) ([]AdminUserRow, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT u.id, u.username, u.display_name, u.is_admin, u.subcamp_id, sc.name
+		 FROM users u LEFT JOIN subcamps sc ON sc.id = u.subcamp_id
+		 ORDER BY u.display_name ASC, u.username ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying users: %w", err)
+	}
+	defer rows.Close()
+	var users []AdminUserRow
+	for rows.Next() {
+		var user AdminUserRow
+		if err := rows.Scan(&user.ID, &user.Username, &user.DisplayName, &user.IsAdmin, &user.SubcampID, &user.SubcampName); err != nil {
+			return nil, fmt.Errorf("scanning user: %w", err)
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (d *DB) CreateUser(ctx context.Context, username, passwordHash, displayName, subcampID string, isAdmin bool) (*AdminUserRow, error) {
+	id := uuid.NewString()
+	row := d.QueryRowContext(ctx,
+		`INSERT INTO users (id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required)
+		 VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+		 RETURNING id, username, display_name, is_admin, subcamp_id`,
+		id, username, passwordHash, displayName, isAdmin, subcampID,
+	)
+	user := &AdminUserRow{}
+	if err := row.Scan(&user.ID, &user.Username, &user.DisplayName, &user.IsAdmin, &user.SubcampID); err != nil {
+		return nil, fmt.Errorf("creating user: %w", err)
+	}
+	if user.SubcampID != nil {
+		if err := d.QueryRowContext(ctx, `SELECT name FROM subcamps WHERE id = $1`, *user.SubcampID).Scan(&user.SubcampName); err != nil {
+			return nil, fmt.Errorf("getting user subcamp: %w", err)
+		}
+	}
+	return user, nil
+}
+
+// AdminSetUserPassword always requires the account to choose a new password at next sign-in.
+func (d *DB) AdminSetUserPassword(ctx context.Context, userID, passwordHash string) error {
+	result, err := d.ExecContext(ctx,
+		`UPDATE users SET password_hash = $1, password_change_required = TRUE WHERE id = $2`,
+		passwordHash, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("resetting user password: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking password reset: %w", err)
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
 }
 
 // SessionRow represents a user session (auth token) record.
@@ -32,12 +108,12 @@ type SessionRow struct {
 // GetUserByUsername fetches a user by their username.
 func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required, created_at FROM users WHERE username = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, is_camp_chief, subcamp_id, password_change_required, created_at FROM users WHERE username = $1",
 		username,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.IsCampChief, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -50,12 +126,12 @@ func (d *DB) GetUserByUsername(ctx context.Context, username string) (*UserRow, 
 // GetUserByID fetches a user by their ID.
 func (d *DB) GetUserByID(ctx context.Context, id string) (*UserRow, error) {
 	row := d.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required, created_at FROM users WHERE id = $1",
+		"SELECT id, username, password_hash, display_name, is_admin, is_camp_chief, subcamp_id, password_change_required, created_at FROM users WHERE id = $1",
 		id,
 	)
 
 	u := &UserRow{}
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.DisplayName, &u.IsAdmin, &u.IsCampChief, &u.SubcampID, &u.PasswordChangeRequired, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

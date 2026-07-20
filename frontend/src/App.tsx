@@ -8,11 +8,11 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ScoringPage } from './pages/ScoringPage';
 import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
+import { AdminDashboardPage } from './pages/AdminDashboardPage';
+import { AdminPatrolScoresPage } from './pages/AdminPatrolScoresPage';
 import type { ReactNode } from 'react';
 
-const isCampChiefAccount = (user: { id: string; username: string } | null) => (
-  user?.username === 'campchief' || user?.id === 'usr-campchief'
-);
+const isCampChiefAccount = (user: { is_camp_chief: boolean } | null) => user?.is_camp_chief === true;
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
   const { user, loading, passwordChangeRequired } = useAuth();
@@ -78,6 +78,26 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <ScoringPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminOnlyRoute>
+              <AdminDashboardPage />
+            </AdminOnlyRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/sessions/:sessionId/scores"
+        element={
+          <ProtectedRoute>
+            <AdminOnlyRoute>
+              <AdminPatrolScoresPage />
+            </AdminOnlyRoute>
           </ProtectedRoute>
         }
       />

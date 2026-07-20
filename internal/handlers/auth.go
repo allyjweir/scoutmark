@@ -38,6 +38,7 @@ type userJSON struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
 	IsAdmin     bool   `json:"is_admin"`
+	IsCampChief bool   `json:"is_camp_chief"`
 	SubcampID   string `json:"subcamp_id,omitempty"`
 }
 
@@ -99,6 +100,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Username:    user.Username,
 			DisplayName: user.DisplayName,
 			IsAdmin:     user.IsAdmin,
+			IsCampChief: user.IsCampChief,
 			SubcampID:   lo.FromPtr(user.SubcampID),
 		},
 	})
@@ -151,6 +153,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
 		IsAdmin:     user.IsAdmin,
+		IsCampChief: user.IsCampChief,
 		SubcampID:   lo.FromPtr(user.SubcampID),
 	})
 }

@@ -142,6 +142,10 @@ type patrolHistoryJSON struct {
 	Sessions  []patrolHistorySessionJSON `json:"sessions"`
 }
 
+func patrolHistoryScoreKey(submissionID, criterionID string) string {
+	return submissionID + ":" + criterionID
+}
+
 type draftJSON struct {
 	ID        string           `json:"id"`
 	PatrolID  string           `json:"patrol_id"`
@@ -288,7 +292,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 
 	commentsByScore := make(map[string][]patrolHistoryCommentJSON)
 	for _, comment := range comments {
-		key := comment.SubmissionID + ":" + comment.CriterionID
+		key := patrolHistoryScoreKey(comment.SubmissionID, comment.CriterionID)
 		commentsByScore[key] = append(commentsByScore[key], patrolHistoryCommentJSON{
 			ID:          comment.ID,
 			DisplayName: comment.DisplayName,
@@ -297,7 +301,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 	}
 
 	patrolsByID := make(map[string]*patrolHistoryJSON)
-	sessionsByID := make(map[string]*patrolHistorySessionJSON)
+	sessionsByID := make(map[string]int)
 	patrols := make([]*patrolHistoryJSON, 0)
 	for _, row := range rows {
 		patrol, ok := patrolsByID[row.PatrolID]
@@ -315,7 +319,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		session, ok := sessionsByID[*row.SubmissionID]
+		sessionIndex, ok := sessionsByID[*row.SubmissionID]
 		if !ok {
 			patrol.Sessions = append(patrol.Sessions, patrolHistorySessionJSON{
 				ID:          *row.SessionID,
@@ -324,13 +328,14 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 				SubmittedAt: row.SubmittedAt.UTC().Format(time.RFC3339),
 				Scores:      []patrolHistoryScoreJSON{},
 			})
-			session = &patrol.Sessions[len(patrol.Sessions)-1]
-			sessionsByID[*row.SubmissionID] = session
+			sessionIndex = len(patrol.Sessions) - 1
+			sessionsByID[*row.SubmissionID] = sessionIndex
 		}
 		if row.CriterionID == nil || row.CriterionTitle == nil || row.CriterionMin == nil || row.CriterionMax == nil || row.Value == nil {
 			continue
 		}
 
+		session := &patrol.Sessions[sessionIndex]
 		session.Total += *row.Value
 		session.Scores = append(session.Scores, patrolHistoryScoreJSON{
 			CriterionID:    *row.CriterionID,
@@ -338,7 +343,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 			MinValue:       *row.CriterionMin,
 			MaxValue:       *row.CriterionMax,
 			Value:          *row.Value,
-			Comments:       commentsByScore[*row.SubmissionID+":"+*row.CriterionID],
+			Comments:       commentsByScore[patrolHistoryScoreKey(*row.SubmissionID, *row.CriterionID)],
 		})
 	}
 

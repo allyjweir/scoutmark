@@ -102,8 +102,8 @@ export const PatrolDetailPage = () => {
                             {score.value}/{score.max_value}
                           </Text>
                         </Box>
-                        {score.comments.map((comment, index) => (
-                          <Box key={`${comment.display_name}-${index}`} mt={2} pl={2} borderLeftWidth={2} borderLeftStyle="solid" borderLeftColor="accent.muted">
+                        {score.comments.map((comment) => (
+                          <Box key={comment.id} mt={2} pl={2} borderLeftWidth={2} borderLeftStyle="solid" borderLeftColor="accent.muted">
                             <Text sx={{ fontSize: 0, fontWeight: 'bold' }}>{comment.display_name}</Text>
                             <Text sx={{ display: 'block', fontSize: 1 }}>{comment.comment}</Text>
                           </Box>

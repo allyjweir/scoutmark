@@ -126,6 +126,7 @@ type submissionScoreJSON struct {
 }
 
 type patrolHistoryCommentJSON struct {
+	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Comment     string `json:"comment"`
 }
@@ -292,7 +293,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 	defer span.End()
 	span.SetAttributes(attribute.String("user.id", user.ID))
 
-	rows, comments, err := h.db.GetPatrolHistory(ctx, user.ID, user.IsAdmin)
+	rows, comments, err := h.db.GetPatrolHistory(ctx, user.SubcampID, user.IsAdmin)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch patrol history")
@@ -303,6 +304,7 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 	for _, comment := range comments {
 		key := comment.SubmissionID + ":" + comment.CriterionID
 		commentsByScore[key] = append(commentsByScore[key], patrolHistoryCommentJSON{
+			ID:          comment.ID,
 			DisplayName: comment.DisplayName,
 			Comment:     comment.Comment,
 		})
@@ -332,8 +334,8 @@ func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request
 			patrol.Sessions = append(patrol.Sessions, patrolHistorySessionJSON{
 				ID:          *row.SessionID,
 				Name:        *row.SessionName,
-				StartsAt:    row.SessionStartsAt.Format("2006-01-02T15:04:05Z"),
-				SubmittedAt: row.SubmittedAt.Format("2006-01-02T15:04:05Z"),
+				StartsAt:    row.SessionStartsAt.UTC().Format(time.RFC3339),
+				SubmittedAt: row.SubmittedAt.UTC().Format(time.RFC3339),
 				Scores:      []patrolHistoryScoreJSON{},
 			})
 			session = &patrol.Sessions[len(patrol.Sessions)-1]

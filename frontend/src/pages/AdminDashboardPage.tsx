@@ -6,15 +6,15 @@ import type { AdminSubcamp, AdminUser } from '../lib/api';
 import * as api from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 
-const MILLISECONDS_PER_MINUTE = 60_000;
+const toUTCDateTimeLocal = (value: string) => new Date(value).toISOString().slice(0, 16);
+const nowUTCDateTimeLocal = () => new Date().toISOString().slice(0, 16);
 
-const localTime = (value: string) => {
-  const date = new Date(value);
-  const offset = date.getTimezoneOffset() * MILLISECONDS_PER_MINUTE;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+const asUTCISO = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.length === 16) return `${trimmed}:00Z`;
+  if (trimmed.endsWith('Z')) return trimmed;
+  return `${trimmed}Z`;
 };
-
-const asISO = (value: string) => new Date(value).toISOString();
 
 export const AdminDashboardPage = () => {
   const navigate = useNavigate();
@@ -65,7 +65,7 @@ export const AdminDashboardPage = () => {
     setSaving(session.id);
     setError('');
     try {
-      const { session: updated } = await api.updateAdminSession(session.id, asISO(startsAt), asISO(endsAt));
+      const { session: updated } = await api.updateAdminSession(session.id, asUTCISO(startsAt), asUTCISO(endsAt));
       setSessions((items) => items.map((item) => item.id === updated.id ? updated : item));
       setNotice(`${session.name} timing updated.`);
     } catch (err) {
@@ -193,9 +193,26 @@ const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onL
   onToggle: () => void; onSave: (session: Session, starts: string, ends: string) => void;
   onLock: (sessionId: string, subcamp: AdminSubcamp) => void; onScores: () => void;
 }) => {
-  const [startsAt, setStartsAt] = useState(localTime(session.starts_at));
-  const [endsAt, setEndsAt] = useState(localTime(session.ends_at));
-  useEffect(() => { setStartsAt(localTime(session.starts_at)); setEndsAt(localTime(session.ends_at)); }, [session.starts_at, session.ends_at]);
+  const sessionStartsAt = toUTCDateTimeLocal(session.starts_at);
+  const sessionEndsAt = toUTCDateTimeLocal(session.ends_at);
+  const [startsAt, setStartsAt] = useState(sessionStartsAt);
+  const [endsAt, setEndsAt] = useState(sessionEndsAt);
+  useEffect(() => { setStartsAt(sessionStartsAt); setEndsAt(sessionEndsAt); }, [sessionStartsAt, sessionEndsAt]);
+
+  const hasScheduleChanges = startsAt !== sessionStartsAt || endsAt !== sessionEndsAt;
+
+  const openNow = () => {
+    const nextStartsAt = nowUTCDateTimeLocal();
+    setStartsAt(nextStartsAt);
+    onSave(session, nextStartsAt, endsAt);
+  };
+
+  const closeNow = () => {
+    const nextEndsAt = nowUTCDateTimeLocal();
+    setEndsAt(nextEndsAt);
+    onSave(session, startsAt, nextEndsAt);
+  };
+
   return <Box borderWidth={1} borderStyle="solid" borderColor="border.default" borderRadius={2} overflow="hidden">
     <Box p={3} display="flex" justifyContent="space-between" alignItems="center">
       <Box><Text sx={{ fontWeight: 'bold', display: 'block' }}>{session.name}</Text><Text sx={{ fontSize: 0, color: 'fg.muted' }}>{session.event_name}</Text></Box>
@@ -204,8 +221,15 @@ const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onL
     {open && <Box p={3} borderTopWidth={1} borderTopStyle="solid" borderTopColor="border.default" bg="canvas.subtle">
       <FormControl sx={{ mb: 2 }}><FormControl.Label>Opens</FormControl.Label><TextInput type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} /></FormControl>
       <FormControl sx={{ mb: 2 }}><FormControl.Label>Closes</FormControl.Label><TextInput type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} /></FormControl>
-      <Box display="flex" sx={{ gap: 2 }} mb={2}><Button size="small" onClick={() => setStartsAt(localTime(new Date().toISOString()))}>Open now</Button><Button size="small" onClick={() => setEndsAt(localTime(new Date().toISOString()))}>Close now</Button></Box>
-      <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }} mb={3}><Button size="small" onClick={() => onSave(session, startsAt, endsAt)} disabled={busy === session.id}>Save schedule</Button><Button size="small" onClick={onScores}>Edit patrol scores</Button></Box>
+      <Box mb={3} p={2} borderWidth={1} borderStyle="solid" borderColor="border.default" borderRadius={2} bg="canvas.default">
+        <Text sx={{ fontSize: 0, color: 'fg.muted', display: 'block', mb: 2 }}>Quick actions</Text>
+        <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }}>
+          <Button size="small" onClick={openNow} disabled={busy === session.id}>Open now</Button>
+          <Button size="small" onClick={closeNow} disabled={busy === session.id}>Close now</Button>
+          <Button size="small" onClick={onScores}>Edit patrol scores</Button>
+        </Box>
+      </Box>
+      {hasScheduleChanges && <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }} mb={3}><Button size="small" onClick={() => onSave(session, startsAt, endsAt)} disabled={busy === session.id}>Save schedule</Button></Box>}
       <Heading sx={{ fontSize: 1, mb: 2 }}>Subcamp scoring</Heading>
       <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>{subcamps.map((subcamp) => <Box key={subcamp.id} display="flex" justifyContent="space-between" alignItems="center"><Text sx={{ fontSize: 1 }}>{subcamp.name}{subcamp.locked_at ? ` — locked${subcamp.locked_by ? ` by ${subcamp.locked_by}` : ''}` : ''}</Text><Button size="small" variant={subcamp.locked_at ? 'default' : 'danger'} disabled={busy === `${session.id}:${subcamp.id}`} onClick={() => onLock(session.id, subcamp)}>{subcamp.locked_at ? 'Unlock' : 'Lock'}</Button></Box>)}</Box>
     </Box>}

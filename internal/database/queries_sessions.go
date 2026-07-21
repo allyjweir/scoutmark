@@ -233,7 +233,10 @@ func (d *DB) UpdateSessionTimes(ctx context.Context, sessionID string, startsAt,
 }
 
 // SubcampRow is a subcamp available for user assignment.
-type SubcampRow struct{ ID, Name string }
+type SubcampRow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
 
 func (d *DB) ListSubcamps(ctx context.Context) ([]SubcampRow, error) {
 	rows, err := d.QueryContext(ctx, `SELECT id, name FROM subcamps ORDER BY name ASC`)
@@ -254,10 +257,10 @@ func (d *DB) ListSubcamps(ctx context.Context) ([]SubcampRow, error) {
 
 // SessionSubcampRow includes lock state for a session's participating subcamps.
 type SessionSubcampRow struct {
-	ID       string
-	Name     string
-	LockedAt *time.Time
-	LockedBy *string
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	LockedAt *time.Time `json:"locked_at,omitempty"`
+	LockedBy *string    `json:"locked_by,omitempty"`
 }
 
 func (d *DB) ListSessionSubcamps(ctx context.Context, sessionID string) ([]SessionSubcampRow, error) {
@@ -283,7 +286,9 @@ func (d *DB) ListSessionSubcamps(ctx context.Context, sessionID string) ([]Sessi
 
 func (d *DB) LockSessionSubcamp(ctx context.Context, sessionID, subcampID, userID string) error {
 	result, err := d.ExecContext(ctx, `INSERT INTO session_subcamp_locks (session_id, subcamp_id, locked_by)
-		SELECT $1, $2, $3 WHERE EXISTS (SELECT 1 FROM session_subcamps WHERE session_id = $1 AND subcamp_id = $2)
+		SELECT v.session_id, v.subcamp_id, v.locked_by
+		FROM (SELECT $1::varchar(36) AS session_id, $2::varchar(36) AS subcamp_id, $3::varchar(36) AS locked_by) v
+		WHERE EXISTS (SELECT 1 FROM session_subcamps WHERE session_id = v.session_id AND subcamp_id = v.subcamp_id)
 		ON CONFLICT (session_id, subcamp_id) DO UPDATE SET locked_at = NOW(), locked_by = EXCLUDED.locked_by`, sessionID, subcampID, userID)
 	if err != nil {
 		return fmt.Errorf("locking session subcamp: %w", err)

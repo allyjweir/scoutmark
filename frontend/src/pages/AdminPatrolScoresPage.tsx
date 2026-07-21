@@ -30,6 +30,29 @@ export const AdminPatrolScoresPage = () => {
 
   const submitted = useMemo(() => new Set(submissions.map((submission) => submission.patrol_id)), [submissions]);
   const selectedPatrol = patrols.find((patrol) => patrol.patrol_id === selected);
+  const patrolsBySubcamp = useMemo(() => {
+    const groups = new Map<string, Patrol[]>();
+    for (const patrol of patrols) {
+      const name = patrol.subcamp?.trim() || 'Unassigned';
+      const existing = groups.get(name) ?? [];
+      existing.push(patrol);
+      groups.set(name, existing);
+    }
+    return Array.from(groups.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([subcampName, subcampPatrols]) => {
+        const submittedCount = subcampPatrols.filter((patrol) => submitted.has(patrol.patrol_id)).length;
+        const totalCount = subcampPatrols.length;
+        const unsubmittedCount = totalCount - submittedCount;
+        return {
+          subcampName,
+          subcampPatrols,
+          submittedCount,
+          unsubmittedCount,
+          totalCount,
+        };
+      });
+  }, [patrols, submitted]);
 
   const selectPatrol = async (patrolId: string) => {
     if (!sessionId) return;
@@ -68,10 +91,15 @@ export const AdminPatrolScoresPage = () => {
     <Text sx={{ color: 'fg.muted', fontSize: 1, display: 'block', mb: 3 }}>Manual patrol score corrections</Text>
     {error && <Flash variant="danger" sx={{ mb: 3 }}>{error}</Flash>}
     {notice && <Flash variant="success" sx={{ mb: 3 }}>{notice}</Flash>}
-    {!selected ? <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-      {patrols.map((patrol) => <Box key={patrol.patrol_id} p={3} borderWidth={1} borderStyle="solid" borderColor="border.default" borderRadius={2} display="flex" justifyContent="space-between" alignItems="center">
-        <Box><Text sx={{ fontWeight: 'bold', display: 'block' }}>{patrol.subcamp ? `${patrol.subcamp} — ` : ''}{patrol.name}</Text><Text sx={{ fontSize: 0, color: 'fg.muted' }}>{submitted.has(patrol.patrol_id) ? 'Submitted scores' : 'No submitted scores'}</Text></Box>
-        <Button size="small" disabled={!submitted.has(patrol.patrol_id)} onClick={() => selectPatrol(patrol.patrol_id)}>Edit</Button>
+    {!selected ? <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
+      {patrolsBySubcamp.map(({ subcampName, subcampPatrols, submittedCount, unsubmittedCount, totalCount }) => <Box key={subcampName}>
+        <Heading sx={{ fontSize: 1, mb: 2 }}>{`${subcampName} (${submittedCount} submitted, ${unsubmittedCount} unsubmitted, ${totalCount} total)`}</Heading>
+        <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+          {subcampPatrols.map((patrol) => <Box key={patrol.patrol_id} p={3} borderWidth={1} borderStyle="solid" borderColor="border.default" borderRadius={2} display="flex" justifyContent="space-between" alignItems="center">
+            <Box><Text sx={{ fontWeight: 'bold', display: 'block' }}>{patrol.name}</Text><Text sx={{ fontSize: 0, color: 'fg.muted' }}>{submitted.has(patrol.patrol_id) ? 'Submitted scores' : 'No submitted scores'}</Text></Box>
+            <Button size="small" disabled={!submitted.has(patrol.patrol_id)} onClick={() => selectPatrol(patrol.patrol_id)}>Edit</Button>
+          </Box>)}
+        </Box>
       </Box>)}
     </Box> : <Box>
       <Button size="small" onClick={() => setSelected(null)} sx={{ mb: 3 }}>Choose another patrol</Button>

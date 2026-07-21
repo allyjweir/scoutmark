@@ -116,6 +116,14 @@ export const DashboardPage = () => {
 
   const handleSessionClick = (session: Session) => {
     if (session.status === 'ACTIVE' || session.status === 'LOCKED' || session.status === 'CLOSED') {
+      if (user?.is_admin) {
+        if (isCampChiefAccount && (session.round_type ?? 'regular') === 'round2') {
+          navigate(`/campchief/sessions/${session.id}`);
+          return;
+        }
+        navigate(`/admin/sessions/${session.id}`);
+        return;
+      }
       if (isCampChiefAccount && (session.round_type ?? 'regular') === 'round2') {
         navigate(`/campchief/sessions/${session.id}`);
         return;

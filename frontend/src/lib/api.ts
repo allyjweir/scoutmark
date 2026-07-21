@@ -146,7 +146,7 @@ export interface UserAward {
 export interface PatrolProgress {
   patrol_id: string;
   patrol_name: string;
-  status: 'not_started' | 'drafting' | 'submitted';
+  status: 'not_started' | 'drafting' | 'complete' | 'submitted';
 }
 
 export interface UserProgress {

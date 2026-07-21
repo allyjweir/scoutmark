@@ -460,31 +460,45 @@ type UserProgressRow struct {
 	PatrolID    string
 	PatrolName  string
 	SortOrder   int
-	Status      string // "not_started", "drafting", "submitted"
+	Status      string // "not_started", "drafting", "complete", "submitted"
 }
 
 // GetSessionProgress returns the scoring progress for all users assigned patrols in a session.
 // Drafts are shared (no user_id), so drafting status is per-patrol not per-user.
 func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserProgressRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT u.id, u.display_name, sc.id, sc.name, p.id, p.name, p.sort_order,
+		`WITH criteria_total AS (
+			SELECT COUNT(*)::int AS total
+			FROM sessions sess
+			JOIN criteria c ON c.template_id = sess.template_id
+			WHERE sess.id = $1
+		)
+		SELECT u.id, u.display_name, sc.id, sc.name, p.id, p.name, p.sort_order,
 		        CASE
 		          WHEN s.id IS NOT NULL THEN 'submitted'
-		          WHEN dr.id IS NOT NULL THEN 'drafting'
+		          WHEN COALESCE(ds.scored_count, 0) >= ct.total AND ct.total > 0 THEN 'complete'
+		          WHEN COALESCE(ds.score_count, 0) > 0 THEN 'drafting'
 		          ELSE 'not_started'
 		        END AS status
 		 FROM users u
 		 JOIN subcamps sc ON sc.id = u.subcamp_id
 		 JOIN session_subcamps ss ON ss.subcamp_id = sc.id AND ss.session_id = $1
+		 CROSS JOIN criteria_total ct
 		 JOIN patrols p ON p.subcamp_id = sc.id
 		  AND (
 		    NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
 		    OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
 		  )
 		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = p.id
-		 LEFT JOIN drafts dr ON dr.session_id = $2 AND dr.patrol_id = p.id
+		 LEFT JOIN LATERAL (
+		   SELECT COUNT(*)::int AS score_count,
+		          COUNT(*) FILTER (WHERE dsc.value > 0)::int AS scored_count
+		   FROM drafts d
+		   JOIN draft_scores dsc ON dsc.draft_id = d.id
+		   WHERE d.session_id = $1 AND d.patrol_id = p.id
+		 ) ds ON TRUE
 		 ORDER BY sc.name ASC, u.display_name ASC, p.sort_order ASC, p.name ASC`,
-		sessionID, sessionID,
+		sessionID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying session progress: %w", err)

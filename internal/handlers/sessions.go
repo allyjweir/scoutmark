@@ -58,6 +58,7 @@ type sessionJSON struct {
 	StartsAt          string          `json:"starts_at"`
 	EndsAt            string          `json:"ends_at"`
 	Status            string          `json:"status"`
+	OwnSubcampLocked  bool            `json:"own_subcamp_locked,omitempty"`
 	LockedAt          *string         `json:"locked_at,omitempty"`
 	LockedBy          *string         `json:"locked_by,omitempty"`
 	LockedByName      *string         `json:"locked_by_name,omitempty"`
@@ -303,6 +304,16 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("submissions.count", len(submissions)),
 	)
 
+	ownSubcampLocked := false
+	if user.SubcampID != nil {
+		ownSubcampLocked, err = h.db.IsSubcampScoringLocked(ctx, sessionID, *user.SubcampID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not check subcamp lock")
+			return
+		}
+	}
+
 	sessionResult := sessionJSON{
 		ID:                session.ID,
 		EventID:           session.EventID,
@@ -314,6 +325,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
+		OwnSubcampLocked:  ownSubcampLocked,
 		LockedAt:          formatOptionalTime(session.LockedAt),
 		LockedBy:          session.LockedBy,
 		LockedByName:      session.LockedByName,

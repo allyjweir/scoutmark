@@ -23,6 +23,7 @@ export interface Session {
   starts_at: string;
   ends_at: string;
   status: 'UPCOMING' | 'ACTIVE' | 'LOCKED' | 'CLOSED';
+  own_subcamp_locked?: boolean;
   locked_at?: string;
   locked_by?: string;
   locked_by_name?: string;

@@ -640,7 +640,7 @@ func (h *SessionHandler) CompleteFinalisingSession(w http.ResponseWriter, r *htt
 	locked := false
 	if round2.LockedAt == nil {
 		if status := round2.ComputeStatus(); status != "ACTIVE" && status != "UPCOMING" {
-			writeError(w, r, http.StatusBadRequest, "linked round 2 session cannot be completed")
+			writeError(w, r, http.StatusBadRequest, "linked round 2 session must be active or upcoming to be completed")
 			return
 		}
 		user := auth.UserFromContext(ctx)

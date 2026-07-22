@@ -119,14 +119,25 @@ export const DashboardPage = () => {
   const grouped = groupBy(visibleSessions.filter((session) => !isFinalising(session)), 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
-  const completedFinalisingSessions = (grouped['LOCKED'] ?? []).filter(isFinalisingComplete);
-  const lockedSessions = sortBy((grouped['LOCKED'] ?? []).filter((session) => !isFinalisingComplete(session)), 'starts_at');
+  const { completedFinalisingSessions, lockedSessions: uncompletedFinalisingSessions } = (grouped['LOCKED'] ?? []).reduce<{
+    completedFinalisingSessions: Session[];
+    lockedSessions: Session[];
+  }>((result, session) => {
+    if (isFinalisingComplete(session)) {
+      result.completedFinalisingSessions.push(session);
+    } else {
+      result.lockedSessions.push(session);
+    }
+    return result;
+  }, { completedFinalisingSessions: [], lockedSessions: [] });
+  const lockedSessions = sortBy(uncompletedFinalisingSessions, 'starts_at');
   const closedSessions = sortBy([...(grouped['CLOSED'] ?? []), ...completedFinalisingSessions], 'ends_at').reverse();
 
   const handleCompleteFinalising = async () => {
     if (!finalisingSession) return;
     setCompletingFinalising(true);
     setError('');
+    setCompletionMessage('');
     try {
       const { round2_session: round2Session } = await api.completeFinalisingSession(finalisingSession.id);
       setSessions((current) => current.map((session) => (

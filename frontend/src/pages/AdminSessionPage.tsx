@@ -59,6 +59,7 @@ export const AdminSessionPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [locking, setLocking] = useState(false);
+  const [finalisingSubcampId, setFinalisingSubcampId] = useState<string | null>(null);
   const [creatingRound2, setCreatingRound2] = useState(false);
   const [round2Finalists, setRound2Finalists] = useState<Round2Finalist[]>([]);
   const [loadingFinalists, setLoadingFinalists] = useState(false);
@@ -242,6 +243,23 @@ export const AdminSessionPage = () => {
       setLocking(false);
     }
   }, [sessionId, session, applyUsers]);
+
+  const handleFinaliseSubcamp = useCallback(async (subcampId: string) => {
+    if (!sessionId) return;
+    setFinalisingSubcampId(subcampId);
+    setError('');
+
+    try {
+      await api.finaliseSession(sessionId, subcampId);
+      const progress = await api.getSessionProgress(sessionId);
+      setSession(progress.session);
+      applyUsers(progress.users);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not finalise subcamp');
+    } finally {
+      setFinalisingSubcampId(null);
+    }
+  }, [sessionId, applyUsers]);
 
   const handleEnsureRound2 = useCallback(async () => {
     if (!sessionId) return;
@@ -752,6 +770,19 @@ export const AdminSessionPage = () => {
                 <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
                   {subcamp.submittedCount} finalised · {subcamp.completeCount} complete · {subcamp.draftingCount + subcamp.notStartedCount} incomplete
                 </Text>
+              </Box>
+              <Box px={3} pb={3}>
+                <Button
+                  size="small"
+                  onClick={() => handleFinaliseSubcamp(subcamp.subcampId)}
+                  disabled={
+                    finalisingSubcampId !== null
+                    || session.status !== 'ACTIVE'
+                    || subcamp.submittedCount === subcamp.patrols.length
+                  }
+                >
+                  {finalisingSubcampId === subcamp.subcampId ? 'Finalising...' : 'Finalise on behalf'}
+                </Button>
               </Box>
 
               <Box

@@ -128,9 +128,11 @@ export const submitScores = async (
 
 export const finaliseSession = async (
   sessionId: string,
+  subcampId?: string,
 ): Promise<{ submissions: Submission[]; finalised_count: number }> =>
   request(`/sessions/${sessionId}/finalise`, {
     method: 'POST',
+    body: subcampId ? JSON.stringify({ subcamp_id: subcampId }) : undefined,
   });
 
 export const listSubmissions = async (sessionId: string): Promise<{ submissions: Submission[] }> =>

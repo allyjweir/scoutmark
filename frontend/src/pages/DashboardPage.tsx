@@ -119,7 +119,7 @@ export const DashboardPage = () => {
   const grouped = groupBy(visibleSessions.filter((session) => !isFinalising(session)), 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
-  const { completedFinalisingSessions, lockedSessions: uncompletedFinalisingSessions } = (grouped['LOCKED'] ?? []).reduce<{
+  const { completedFinalisingSessions, lockedSessions: lockedSessionsNotCompleted } = (grouped['LOCKED'] ?? []).reduce<{
     completedFinalisingSessions: Session[];
     lockedSessions: Session[];
   }>((result, session) => {
@@ -130,7 +130,7 @@ export const DashboardPage = () => {
     }
     return result;
   }, { completedFinalisingSessions: [], lockedSessions: [] });
-  const lockedSessions = sortBy(uncompletedFinalisingSessions, 'starts_at');
+  const lockedSessions = sortBy(lockedSessionsNotCompleted, 'starts_at');
   const closedSessions = sortBy([...(grouped['CLOSED'] ?? []), ...completedFinalisingSessions], 'ends_at').reverse();
 
   const handleCompleteFinalising = async () => {

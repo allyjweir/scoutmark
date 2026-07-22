@@ -202,7 +202,7 @@ echo
 echo "═══════════════════════════════════════════════"
 echo "  ✓ Development database seeded successfully!"
 echo ""
-echo "  Users:    campchief (admin), morrison, macdonald,"
+echo "  Users:    campchief, morrison, macdonald,"
 echo "            maclean, murray, robertson, stewart,"
 echo "            stacey, ally, iona"
 echo "  Password: $PASSWORD"

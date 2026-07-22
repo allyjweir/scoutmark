@@ -150,6 +150,7 @@ func createUser() error {
 	flagPassword := fs.String("password", "", "Password (non-interactive mode)")
 	flagDisplay := fs.String("display-name", "", "Display name (non-interactive mode)")
 	flagAdmin := fs.Bool("admin", false, "Make admin user (non-interactive mode)")
+	flagCampChief := fs.Bool("camp-chief", false, "Make Camp Chief user (non-interactive mode)")
 	flagSubcamp := fs.String("subcamp", "", "Subcamp ID (optional; ignored for admin users)")
 	flagID := fs.String("id", "", "User ID (default: auto-generated UUID)")
 	flagForcePasswordChange := fs.Bool("force-password-change", false, "Require password change on first login")
@@ -159,7 +160,7 @@ func createUser() error {
 	}
 
 	var username, password, displayName, subcampID string
-	var isAdmin, forcePasswordChange bool
+	var isAdmin, isCampChief, forcePasswordChange bool
 
 	if *flagUsername != "" {
 		// Non-interactive (flag-driven) mode for scripting
@@ -167,6 +168,7 @@ func createUser() error {
 		password = *flagPassword
 		displayName = *flagDisplay
 		isAdmin = *flagAdmin
+		isCampChief = *flagCampChief
 		subcampID = *flagSubcamp
 		forcePasswordChange = *flagForcePasswordChange
 		if password == "" {
@@ -243,8 +245,11 @@ func createUser() error {
 		return fmt.Errorf("user %q already exists", username)
 	}
 
-	if isAdmin {
+	if isAdmin || isCampChief {
 		subcampID = ""
+	}
+	if isCampChief {
+		isAdmin = false
 	}
 	if subcampID != "" {
 		var subcampExists bool
@@ -260,9 +265,14 @@ func createUser() error {
 	if userID == "" {
 		userID = uuid.New().String()
 	}
+	if userID == "usr-campchief" {
+		isAdmin = false
+		isCampChief = true
+		subcampID = ""
+	}
 	_, err = db.Exec(
-		"INSERT INTO users (id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-		userID, username, string(hash), displayName, isAdmin, nullableString(subcampID), forcePasswordChange,
+		"INSERT INTO users (id, username, password_hash, display_name, is_admin, is_camp_chief, subcamp_id, password_change_required) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+		userID, username, string(hash), displayName, isAdmin, isCampChief, nullableString(subcampID), forcePasswordChange,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting user: %w", err)
@@ -274,6 +284,7 @@ func createUser() error {
 	fmt.Printf("  Username:                  %s\n", username)
 	fmt.Printf("  Display name:              %s\n", displayName)
 	fmt.Printf("  Admin:                     %v\n", isAdmin)
+	fmt.Printf("  Camp Chief:                %v\n", isCampChief)
 	fmt.Printf("  Subcamp:                   %s\n", emptyAsDash(subcampID))
 	fmt.Printf("  Force password change:     %v\n", forcePasswordChange)
 	return nil

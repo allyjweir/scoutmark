@@ -1166,12 +1166,6 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// GetCampChiefSessionProgress returns read-only scoring progress for a Camp
-	// Chief. Regular sessions are deliberately exposed only through this endpoint.
-	func (h *SessionHandler) GetCampChiefSessionProgress(w http.ResponseWriter, r *http.Request) {
-		h.GetSessionProgress(w, r)
-	}
-
 	// Fetch progress rows
 	progress, err := h.db.GetSessionProgress(ctx, sessionID)
 	if err != nil {
@@ -1335,6 +1329,12 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 		"users":    flatUsersWithAwards,
 		"subcamps": subcampsWithAwards,
 	})
+}
+
+// GetCampChiefSessionProgress returns read-only scoring progress for a Camp
+// Chief. Regular sessions are deliberately exposed only through this endpoint.
+func (h *SessionHandler) GetCampChiefSessionProgress(w http.ResponseWriter, r *http.Request) {
+	h.GetSessionProgress(w, r)
 }
 
 // SaveAward handles POST /api/sessions/{session_id}/awards

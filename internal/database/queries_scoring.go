@@ -612,8 +612,9 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 	return submissions, err
 }
 
-// ReviseSession converts submissions back into shared drafts. Camp Chief
-// revision covers every finalist in their round two session.
+// ReviseSession converts submissions back into shared drafts. userID scopes
+// regular-session revision; it is ignored when Camp Chief revision covers every
+// finalist in their round two session.
 func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string, allPatrols bool) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
 		var patrolRows *sql.Rows
@@ -697,6 +698,8 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string, allPat
 		awardQuery := "DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2"
 		awardArgs := []any{userID, sessionID}
 		if allPatrols {
+			// A round two revision invalidates the single Camp Chief winner as
+			// well as any award choices made while the finalists were being scored.
 			awardQuery = "DELETE FROM session_awards WHERE session_id = $1"
 			awardArgs = []any{sessionID}
 		}

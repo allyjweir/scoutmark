@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -354,6 +355,9 @@ func renameUser() error {
 
 	result, err := db.Exec("UPDATE users SET username = $1 WHERE username = $2", *newUsername, *username)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("user %q already exists", *newUsername)
+		}
 		return fmt.Errorf("renaming user: %w", err)
 	}
 	rows, err := result.RowsAffected()
@@ -487,6 +491,11 @@ func formatQueryValue(value any) string {
 		return string(bytes)
 	}
 	return fmt.Sprint(value)
+}
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func createSubcamp() error {

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/lib/pq"
+)
 
 func TestFormatQueryValue(t *testing.T) {
 	tests := []struct {
@@ -20,5 +25,17 @@ func TestFormatQueryValue(t *testing.T) {
 				t.Errorf("formatQueryValue(%v) = %q, want %q", test.value, got, test.want)
 			}
 		})
+	}
+}
+
+func TestIsUniqueViolation(t *testing.T) {
+	if !isUniqueViolation(&pq.Error{Code: "23505"}) {
+		t.Error("unique violation was not detected")
+	}
+	if isUniqueViolation(&pq.Error{Code: "23503"}) {
+		t.Error("foreign key violation was detected as unique")
+	}
+	if isUniqueViolation(errors.New("not a PostgreSQL error")) {
+		t.Error("non-PostgreSQL error was detected as unique")
 	}
 }

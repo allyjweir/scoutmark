@@ -1089,7 +1089,8 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "camp chief can only revise round 2 sessions")
 		return
 	}
-	if err := h.db.ReviseSession(ctx, user.ID, sessionID, user.IsCampChief); err != nil {
+	reviseAllPatrols := user.IsCampChief
+	if err := h.db.ReviseSession(ctx, user.ID, sessionID, reviseAllPatrols); err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not revise session")
 		return

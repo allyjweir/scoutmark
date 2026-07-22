@@ -616,19 +616,32 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 // revision covers every finalist in their round two session.
 func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string, allPatrols bool) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
-		query := `SELECT p.id
-			 FROM patrols p
-			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
-			 WHERE (
-			     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
-			     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
-			 )`
-		args := []any{sessionID}
-		if !allPatrols {
-			query += ` AND p.subcamp_id = (SELECT subcamp_id FROM users WHERE id = $2)`
-			args = append(args, userID)
+		var patrolRows *sql.Rows
+		var err error
+		if allPatrols {
+			patrolRows, err = tx.QueryContext(ctx,
+				`SELECT p.id
+				 FROM patrols p
+				 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
+				 WHERE (
+				   NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
+				   OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+				 )`,
+				sessionID,
+			)
+		} else {
+			patrolRows, err = tx.QueryContext(ctx,
+				`SELECT p.id
+				 FROM patrols p
+				 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
+				 WHERE p.subcamp_id = (SELECT subcamp_id FROM users WHERE id = $2)
+				   AND (
+				     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
+				     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+				   )`,
+				sessionID, userID,
+			)
 		}
-		patrolRows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("querying session patrols: %w", err)
 		}

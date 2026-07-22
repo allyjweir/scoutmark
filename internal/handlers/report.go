@@ -121,14 +121,6 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	pendantWinnerText := ""
-	if winner, err := h.db.GetRound2WinnerForSourceSession(ctx, sessionID); err != nil {
-		writeError(w, r, http.StatusInternalServerError, "failed to load overall winner")
-		return
-	} else if winner != nil {
-		pendantWinnerText = fmt.Sprintf("Camp Chief's Pendant Winners: %s %s", winner.SubcampName, winner.PatrolName)
-	}
-
 	// Generate PDF
 	pdf := fpdf.New("L", "mm", "A4", "") // landscape for wide tables
 	pdf.SetAutoPageBreak(true, 15)
@@ -234,13 +226,6 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 			pdf.CellFormat(criteriaColW, 6, fmt.Sprintf("%d", val), "1", 0, "C", false, 0, "")
 		}
 		pdf.CellFormat(totalColW, 6, fmt.Sprintf("%d", pe.total), "1", 1, "C", false, 0, "")
-	}
-
-	// Winner line directly under the summary table.
-	pdf.Ln(4)
-	if pendantWinnerText != "" {
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(0, 4, truncate(pendantWinnerText, 120), "", 1, "L", false, 0, "")
 	}
 
 	// ─── Footer with generation timestamp ───────────────────────

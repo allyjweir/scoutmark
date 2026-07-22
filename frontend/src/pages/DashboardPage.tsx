@@ -44,13 +44,6 @@ export const DashboardPage = () => {
     acc[session.id] = session;
     return acc;
   }, {});
-  const round2BySource = sessions
-    .filter((s) => (s.round_type ?? 'regular') === 'round2' && s.source_session_id)
-    .reduce<Record<string, Session>>((acc, session) => {
-      acc[session.source_session_id as string] = session;
-      return acc;
-    }, {});
-
   const RECENT_WINNER_WINDOW_MS = 6 * 60 * 60 * 1000;
   const recentRound2Winner = sessions
     .filter((s) => {
@@ -75,42 +68,7 @@ export const DashboardPage = () => {
       })
       : 'today');
 
-  const leaderNoteFor = (session: Session): string | undefined => {
-    if (user?.is_admin) return undefined;
-    const linkedRound2 = round2BySource[session.id];
-    if (!linkedRound2) return undefined;
-
-    if (linkedRound2.status === 'ACTIVE' || linkedRound2.status === 'UPCOMING') {
-      return 'Camp Chief is selecting overall best patrol.';
-    }
-
-    if (linkedRound2.status === 'LOCKED' || linkedRound2.status === 'CLOSED') {
-      if (linkedRound2.winner_patrol_name && linkedRound2.winner_subcamp_name) {
-        return `Overall winner: ${linkedRound2.winner_subcamp_name} - ${linkedRound2.winner_patrol_name}.`;
-      }
-      return 'Camp Chief has finalised overall scoring.';
-    }
-
-    return undefined;
-  };
-
-  const isFinalising = (session: Session): boolean => {
-    if ((session.round_type ?? 'regular') !== 'regular') return false;
-    const linkedRound2 = round2BySource[session.id];
-    if (!linkedRound2) return false;
-    return linkedRound2.status === 'ACTIVE' || linkedRound2.status === 'UPCOMING';
-  };
-
-  const hasOverallWinnerSelected = (session: Session): boolean => {
-    const linkedRound2 = round2BySource[session.id];
-    if (!linkedRound2) return false;
-    if (linkedRound2.status !== 'LOCKED' && linkedRound2.status !== 'CLOSED') return false;
-    return Boolean(linkedRound2.winner_patrol_name && linkedRound2.winner_subcamp_name);
-  };
-
-  const finalisingSessions = sortBy(visibleSessions.filter(isFinalising), 'ends_at').reverse();
-
-  const grouped = groupBy(visibleSessions.filter((session) => !isFinalising(session)), 'status');
+  const grouped = groupBy(visibleSessions, 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
   const lockedSessions = sortBy(grouped['LOCKED'] ?? [], 'starts_at');
@@ -207,25 +165,6 @@ export const DashboardPage = () => {
               session={session}
               onClick={() => handleSessionClick(session)}
               recentlyFinalised={session.user_finalised}
-              note={leaderNoteFor(session)}
-            />
-          ))}
-        </Box>
-      )}
-
-      {/* Upcoming Sessions */}
-      {finalisingSessions.length > 0 && (
-        <Box mb={4}>
-          <Heading sx={{ fontSize: 2, mb: 2, color: 'attention.fg' }}>
-            Finalising
-          </Heading>
-          {finalisingSessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              onClick={() => handleSessionClick(session)}
-              recentlyFinalised={session.user_finalised}
-              note={leaderNoteFor(session)}
             />
           ))}
         </Box>
@@ -255,7 +194,6 @@ export const DashboardPage = () => {
               session={session}
               onClick={() => handleSessionClick(session)}
               recentlyFinalised={session.user_finalised}
-              note={leaderNoteFor(session)}
             />
           ))}
         </Box>
@@ -272,8 +210,7 @@ export const DashboardPage = () => {
               <SessionCard
                 session={session}
                 onClick={() => handleSessionClick(session)}
-                recentlyFinalised={session.user_finalised && !hasOverallWinnerSelected(session)}
-                note={leaderNoteFor(session)}
+                recentlyFinalised={session.user_finalised}
               />
               <Box display="flex" justifyContent="flex-end" mt={-1} mb={2} px={1}>
                 <Button

@@ -202,6 +202,24 @@ func (d *DB) LockSession(ctx context.Context, sessionID, lockedByUserID string) 
 	return nil
 }
 
+// LockSessionIfUnlocked marks a session as locked if it has not already been locked.
+func (d *DB) LockSessionIfUnlocked(ctx context.Context, sessionID, lockedByUserID string) (bool, error) {
+	result, err := d.ExecContext(ctx,
+		`UPDATE sessions
+		 SET locked_at = NOW(), locked_by = $2
+		 WHERE id = $1 AND locked_at IS NULL`,
+		sessionID, lockedByUserID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("locking session: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("checking locked session: %w", err)
+	}
+	return affected > 0, nil
+}
+
 // UnlockSession clears a previously applied session-level lock.
 func (d *DB) UnlockSession(ctx context.Context, sessionID string) error {
 	_, err := d.ExecContext(ctx,

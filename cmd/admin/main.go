@@ -37,7 +37,9 @@ Usage:
 Commands:
   create-user       Create a new user (interactive or with flags)
   change-password   Change a user's password
+  rename-user       Rename a user
   list-users        List all users
+  query             Execute an arbitrary PostgreSQL query
 	create-subcamp    Create a subcamp
 	update-subcamp    Update a subcamp name
   create-event      Create an event
@@ -72,8 +74,12 @@ func main() {
 		err = createUser()
 	case "change-password":
 		err = changePassword()
+	case "rename-user":
+		err = renameUser()
 	case "list-users":
 		err = listUsers()
+	case "query":
+		err = query()
 	case "create-subcamp":
 		err = createSubcamp()
 	case "update-subcamp":
@@ -328,6 +334,40 @@ func changePassword() error {
 	return nil
 }
 
+func renameUser() error {
+	fs := flag.NewFlagSet("rename-user", flag.ExitOnError)
+	username := fs.String("username", "", "Current username (required)")
+	newUsername := fs.String("new-username", "", "New username (required)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *username == "" || *newUsername == "" {
+		return fmt.Errorf("required flags: -username, -new-username")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	result, err := db.Exec("UPDATE users SET username = $1 WHERE username = $2", *newUsername, *username)
+	if err != nil {
+		return fmt.Errorf("renaming user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking result: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %q not found", *username)
+	}
+
+	fmt.Printf("\n✓ User %q renamed to %q\n", *username, *newUsername)
+	return nil
+}
+
 func listUsers() error {
 	db, err := connectDB()
 	if err != nil {
@@ -372,6 +412,81 @@ func listUsers() error {
 	w.Flush()
 	fmt.Printf("\n%d user(s)\n", count)
 	return nil
+}
+
+func query() error {
+	fs := flag.NewFlagSet("query", flag.ExitOnError)
+	sqlQuery := fs.String("sql", "", "PostgreSQL query to execute (required)")
+
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		return err
+	}
+	if *sqlQuery == "" {
+		return fmt.Errorf("required flag: -sql")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	rows, err := db.Query(*sqlQuery)
+	if err != nil {
+		return fmt.Errorf("executing query: %w", err)
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("getting query columns: %w", err)
+	}
+	if len(columns) == 0 {
+		fmt.Println("✓ Query executed")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, strings.Join(columns, "\t"))
+	fmt.Fprintln(w, strings.Repeat("──\t", len(columns)-1)+"──")
+
+	values := make([]any, len(columns))
+	destinations := make([]any, len(columns))
+	for i := range values {
+		destinations[i] = &values[i]
+	}
+
+	count := 0
+	for rows.Next() {
+		if err := rows.Scan(destinations...); err != nil {
+			return fmt.Errorf("scanning query result: %w", err)
+		}
+		formatted := make([]string, len(values))
+		for i, value := range values {
+			formatted[i] = formatQueryValue(value)
+		}
+		fmt.Fprintln(w, strings.Join(formatted, "\t"))
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading query result: %w", err)
+	}
+
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("writing query result: %w", err)
+	}
+	fmt.Printf("\n%d row(s)\n", count)
+	return nil
+}
+
+func formatQueryValue(value any) string {
+	if value == nil {
+		return "NULL"
+	}
+	if bytes, ok := value.([]byte); ok {
+		return string(bytes)
+	}
+	return fmt.Sprint(value)
 }
 
 func createSubcamp() error {

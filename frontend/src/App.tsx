@@ -12,8 +12,6 @@ import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminPatrolScoresPage } from './pages/AdminPatrolScoresPage';
 import { PatrolOverviewPage } from './pages/PatrolOverviewPage';
 import { PatrolDetailPage } from './pages/PatrolDetailPage';
-import { AdminDashboardPage } from './pages/AdminDashboardPage';
-import { AdminPatrolScoresPage } from './pages/AdminPatrolScoresPage';
 import type { ReactNode } from 'react';
 
 const isCampChiefAccount = (user: { is_camp_chief: boolean } | null) => user?.is_camp_chief === true;

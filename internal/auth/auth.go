@@ -90,7 +90,32 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := UserFromContext(r.Context())
-		if user == nil || !user.IsAdmin {
+		if user == nil || !user.IsAdmin || user.IsCampChief {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireAdminOrCampChief permits administrative users and the dedicated Camp
+// Chief role. Handlers must still scope Camp Chief actions to round two.
+func RequireAdminOrCampChief(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := UserFromContext(r.Context())
+		if user == nil || (!user.IsAdmin && !user.IsCampChief) {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequireCampChief permits only the dedicated Camp Chief role.
+func RequireCampChief(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := UserFromContext(r.Context())
+		if user == nil || !user.IsCampChief {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
 		}

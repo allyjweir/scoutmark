@@ -10,6 +10,7 @@ import { AdminSessionPage } from './pages/AdminSessionPage';
 import { AdminScorerPage } from './pages/AdminScorerPage';
 import { AdminDashboardPage } from './pages/AdminDashboardPage';
 import { AdminPatrolScoresPage } from './pages/AdminPatrolScoresPage';
+import { CampChiefProgressPage } from './pages/CampChiefProgressPage';
 import type { ReactNode } from 'react';
 
 const isCampChiefAccount = (user: { is_camp_chief: boolean } | null) => user?.is_camp_chief === true;
@@ -123,6 +124,26 @@ const AppRoutes = () => (
       />
       <Route
         path="/campchief/sessions/:sessionId"
+        element={
+          <ProtectedRoute>
+            <CampChiefOnlyRoute>
+              <AdminSessionPage />
+            </CampChiefOnlyRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/campchief/progress"
+        element={
+          <ProtectedRoute>
+            <CampChiefOnlyRoute>
+              <CampChiefProgressPage />
+            </CampChiefOnlyRoute>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/campchief/progress/:sessionId"
         element={
           <ProtectedRoute>
             <CampChiefOnlyRoute>

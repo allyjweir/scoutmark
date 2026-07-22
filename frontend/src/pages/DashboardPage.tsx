@@ -37,7 +37,9 @@ export const DashboardPage = () => {
 
   const isRegularSession = (session: Session) => (session.round_type ?? 'regular') === 'regular';
   const isCampChiefAccount = user?.is_camp_chief === true;
-  const visibleSessions = user?.is_admin ? sessions : sessions.filter(isRegularSession);
+  const visibleSessions = isCampChiefAccount
+    ? sessions.filter((session) => !isRegularSession(session))
+    : user?.is_admin ? sessions : sessions.filter(isRegularSession);
   const sessionsById = sessions.reduce<Record<string, Session>>((acc, session) => {
     acc[session.id] = session;
     return acc;
@@ -178,6 +180,18 @@ export const DashboardPage = () => {
             🛡️ Admin
           </Heading>
           <Button onClick={() => navigate('/admin')}>Open admin dashboard</Button>
+        </Box>
+      )}
+
+      {isCampChiefAccount && (
+        <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
+          <Heading sx={{ fontSize: 1, mb: 2, color: 'accent.fg' }}>
+            Camp Chief
+          </Heading>
+          <Text sx={{ fontSize: 1, color: 'fg.muted', display: 'block', mb: 2 }}>
+            Review scoring progress across all subcamps before finalising round two.
+          </Text>
+          <Button onClick={() => navigate('/campchief/progress')}>View regular scoring progress</Button>
         </Box>
       )}
 

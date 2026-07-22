@@ -53,6 +53,7 @@ export const AdminSessionPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const isCampChiefView = location.pathname.startsWith('/campchief/sessions/');
+  const isCampChiefProgressView = location.pathname.startsWith('/campchief/progress/');
 
   const [session, setSession] = useState<Session | null>(null);
   const [users, setUsers] = useState<UserProgress[]>([]);
@@ -79,14 +80,17 @@ export const AdminSessionPage = () => {
   useEffect(() => {
     if (!sessionId) return;
 
-    api.getSessionProgress(sessionId)
+    const getProgress = isCampChiefProgressView
+      ? api.getCampChiefSessionProgress
+      : api.getSessionProgress;
+    getProgress(sessionId)
       .then((progress) => {
         setSession(progress.session);
         applyUsers(progress.users);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [sessionId, applyUsers]);
+  }, [sessionId, applyUsers, isCampChiefProgressView]);
 
   // Live updates via WebSocket
   const handleWSMessage = useCallback((msg: WSServerMessage) => {
@@ -441,6 +445,12 @@ export const AdminSessionPage = () => {
             {modeLabel}
           </Text>
           <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+            {isRound2 && isCampChiefView && (
+              <Button size="small" onClick={() => navigate(`/sessions/${session.id}`)}>
+                Score Finalists
+              </Button>
+            )}
+            {!isCampChiefProgressView && (
             <Button
               size="small"
               variant={session.status === 'LOCKED' ? 'default' : 'danger'}
@@ -449,6 +459,7 @@ export const AdminSessionPage = () => {
             >
               {locking ? 'Working...' : session.status === 'LOCKED' ? 'Unlock Session' : 'Lock Session'}
             </Button>
+            )}
             <Box
               sx={{
                 width: 8, height: 8, borderRadius: '50%',
@@ -539,7 +550,7 @@ export const AdminSessionPage = () => {
       </Box>
 
       {/* Round 2 admin controls */}
-      {!isCampChiefView && session.round_type !== 'round2' && (
+      {!isCampChiefView && !isCampChiefProgressView && session.round_type !== 'round2' && (
         <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
           <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2</Heading>
           <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>

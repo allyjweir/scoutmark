@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"math/rand"
 	"time"
 
@@ -120,6 +121,7 @@ func (d *DB) EnsureRound2ForSourceSession(ctx context.Context, sourceSessionID s
 			if patrolID == "" {
 				continue
 			}
+			log.Printf("round 2 finalist selected: source_session=%s subcamp=%s patrol=%s mechanism=%s", source.ID, subcampID, patrolID, pickSource)
 			picks = append(picks, finalistPick{subcampID: subcampID, patrolID: patrolID, source: pickSource})
 		}
 

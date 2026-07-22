@@ -180,6 +180,11 @@ export const getSessionProgress = async (
 ): Promise<{ session: Session; users: UserProgress[]; subcamps?: SubcampProgress[] }> =>
   request(`/admin/sessions/${sessionId}/progress`);
 
+export const getCampChiefSessionProgress = async (
+  sessionId: string,
+): Promise<{ session: Session; users: UserProgress[]; subcamps?: SubcampProgress[] }> =>
+  request(`/camp-chief/sessions/${sessionId}/progress`);
+
 export const getSessionComments = async (
   sessionId: string,
 ): Promise<{ comments: SessionComment[] }> =>

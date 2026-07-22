@@ -8,7 +8,7 @@ This document describes the three user variants currently used in Scoutmark and 
 |---|---|---|
 | Standard Scorer | `is_admin = false` | Scores regular sessions only |
 | Admin | `is_admin = true` and not Camp Chief account | Full admin tools plus scoring views |
-| Camp Chief | Account with `username = campchief` or `id = usr-campchief` | Round 2 leadership/finalisation flow only |
+| Camp Chief | `is_camp_chief = true` | Round 2 leadership/finalisation plus read-only regular-session progress |
 
 ## 1. Standard Scorer
 
@@ -64,12 +64,8 @@ A signed-in user where `is_admin` is true, except the dedicated Camp Chief accou
 
 ### Identification
 
-Special-cased account detected by either:
-
-- `username === "campchief"`, or
-- `id === "usr-campchief"`
-
-This account may have `is_admin = true`, but it is intentionally treated as its own variant.
+A dedicated account where `is_camp_chief` is true. Camp Chief accounts do not
+have an admin flag or subcamp assignment.
 
 ### What They Can Do
 
@@ -77,6 +73,9 @@ This account may have `is_admin = true`, but it is intentionally treated as its 
 - For round 2 sessions, navigation is routed to Camp Chief view:
   - `/campchief/sessions/:sessionId`
 - Use round 2 finalisation workflow in `AdminSessionPage` with Camp Chief-specific guard behavior.
+- Score round 2 finalists using the standard scoring flow.
+- Open read-only regular-session progress across all subcamps:
+  - `/campchief/progress`
 
 ### What They Cannot Do
 
@@ -88,8 +87,8 @@ This account may have `is_admin = true`, but it is intentionally treated as its 
 
 ### Dashboard Behavior
 
-- Keeps regular session behavior.
-- For round 2 sessions, clicks open Camp Chief route instead of standard scoring route.
+- Shows round 2 sessions only.
+- Provides a separate read-only regular-session progress view.
 
 ## Shared Gate for All Variants
 

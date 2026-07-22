@@ -282,7 +282,8 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch user's patrols
-	patrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, user.IsAdmin)
+	canViewAllPatrols := user.IsAdmin || (user.IsCampChief && session.RoundType == "round2")
+	patrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, canViewAllPatrols)
 	if err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not fetch patrols")
@@ -405,6 +406,10 @@ func (h *SessionHandler) LockSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "only active sessions can be locked")
 		return
 	}
+	if user.IsCampChief && session.RoundType != "round2" {
+		writeError(w, r, http.StatusForbidden, "camp chief can only manage round 2 sessions")
+		return
+	}
 
 	if err := h.db.LockSession(ctx, sessionID, user.ID); err != nil {
 		tracing.RecordError(ctx, err)
@@ -448,6 +453,11 @@ func (h *SessionHandler) UnlockSession(w http.ResponseWriter, r *http.Request) {
 	session, err := h.db.GetSession(ctx, sessionID)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	user := auth.UserFromContext(ctx)
+	if user.IsCampChief && session.RoundType != "round2" {
+		writeError(w, r, http.StatusForbidden, "camp chief can only manage round 2 sessions")
 		return
 	}
 
@@ -831,8 +841,8 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	}
 
 	if session.RoundType == "round2" {
-		if !user.IsAdmin {
-			writeError(w, r, http.StatusForbidden, "only admins can finalise round 2 scoring")
+		if !user.IsAdmin && !user.IsCampChief {
+			writeError(w, r, http.StatusForbidden, "only admins or camp chief can finalise round 2 scoring")
 			return
 		}
 
@@ -1075,7 +1085,11 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.ReviseSession(ctx, user.ID, sessionID); err != nil {
+	if user.IsCampChief && session.RoundType != "round2" {
+		writeError(w, r, http.StatusForbidden, "camp chief can only revise round 2 sessions")
+		return
+	}
+	if err := h.db.ReviseSession(ctx, user.ID, sessionID, user.IsCampChief); err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not revise session")
 		return
@@ -1150,6 +1164,12 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
+	}
+
+	// GetCampChiefSessionProgress returns read-only scoring progress for a Camp
+	// Chief. Regular sessions are deliberately exposed only through this endpoint.
+	func (h *SessionHandler) GetCampChiefSessionProgress(w http.ResponseWriter, r *http.Request) {
+		h.GetSessionProgress(w, r)
 	}
 
 	// Fetch progress rows

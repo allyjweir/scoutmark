@@ -612,31 +612,25 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 	return submissions, err
 }
 
-// ReviseSession converts all submissions for a user's subcamp patrols back into shared drafts.
-func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error {
+// ReviseSession converts submissions back into shared drafts. Camp Chief
+// revision covers every finalist in their round two session.
+func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string, allPatrols bool) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
-		// Get the user's subcamp
-		var subcampID string
-		if err := tx.QueryRowContext(ctx,
-			"SELECT subcamp_id FROM users WHERE id = $1", userID,
-		).Scan(&subcampID); err != nil {
-			return fmt.Errorf("querying user subcamp: %w", err)
-		}
-
-		// Get patrols in the user's subcamp that are included in this session
-		patrolRows, err := tx.QueryContext(ctx,
-			`SELECT p.id
+		query := `SELECT p.id
 			 FROM patrols p
 			 JOIN session_subcamps ss ON ss.session_id = $1 AND ss.subcamp_id = p.subcamp_id
-			 WHERE p.subcamp_id = $2
-			   AND (
+			 WHERE (
 			     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
 			     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
-			   )`,
-			sessionID, subcampID,
-		)
+			 )`
+		args := []any{sessionID}
+		if !allPatrols {
+			query += ` AND p.subcamp_id = (SELECT subcamp_id FROM users WHERE id = $2)`
+			args = append(args, userID)
+		}
+		patrolRows, err := tx.QueryContext(ctx, query, args...)
 		if err != nil {
-			return fmt.Errorf("querying subcamp patrols: %w", err)
+			return fmt.Errorf("querying session patrols: %w", err)
 		}
 		var patrolIDs []string
 		for patrolRows.Next() {
@@ -687,10 +681,13 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 		}
 
 		// Delete award selections when revising
-		_, err = tx.ExecContext(ctx,
-			"DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2",
-			userID, sessionID,
-		)
+		awardQuery := "DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2"
+		awardArgs := []any{userID, sessionID}
+		if allPatrols {
+			awardQuery = "DELETE FROM session_awards WHERE session_id = $1"
+			awardArgs = []any{sessionID}
+		}
+		_, err = tx.ExecContext(ctx, awardQuery, awardArgs...)
 		if err != nil {
 			return fmt.Errorf("deleting awards during revise: %w", err)
 		}

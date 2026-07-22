@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box, Heading, Text, Spinner, Flash, Button, Label,
@@ -13,20 +13,39 @@ import type {
   WSSessionUnlockedPayload,
 } from '../lib/types';
 import * as api from '../lib/api';
-import type { UserProgress, SessionComment, Round2Finalist } from '../lib/api';
+import type { UserProgress, Round2Finalist } from '../lib/api';
 import { useSessionSubscription } from '../hooks/useWebSocket';
 import { SessionStatusBanner } from '../components/SessionStatusBanner';
 
-const STATUS_COLORS: Record<string, string> = {
-  submitted: 'success.emphasis',
-  drafting: 'attention.emphasis',
-  not_started: 'neutral.muted',
+type PatrolDisplayState = 'incomplete' | 'complete' | 'finalised';
+
+const DISPLAY_STATE_COLORS: Record<PatrolDisplayState, string> = {
+  incomplete: 'attention.emphasis',
+  complete: 'accent.emphasis',
+  finalised: 'success.emphasis',
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  submitted: '✓',
-  drafting: '…',
-  not_started: '–',
+const DISPLAY_STATE_LABELS: Record<PatrolDisplayState, string> = {
+  incomplete: '!',
+  complete: '✓',
+  finalised: '✓',
+};
+
+const displayStateForPatrol = (
+  overallStatus: 'submitted' | 'complete' | 'drafting' | 'not_started',
+): PatrolDisplayState => {
+  if (overallStatus === 'submitted') return 'finalised';
+  if (overallStatus === 'complete') return 'complete';
+  return 'incomplete';
+};
+
+const aggregatePatrolStatus = (
+  statuses: Array<'submitted' | 'complete' | 'drafting' | 'not_started'>,
+): 'submitted' | 'complete' | 'drafting' | 'not_started' => {
+  if (statuses.every((s) => s === 'submitted')) return 'submitted';
+  if (statuses.every((s) => s === 'submitted' || s === 'complete')) return 'complete';
+  if (statuses.some((s) => s === 'submitted' || s === 'complete' || s === 'drafting')) return 'drafting';
+  return 'not_started';
 };
 
 export const AdminSessionPage = () => {
@@ -52,67 +71,18 @@ export const AdminSessionPage = () => {
   const [round2WinnerPatrolId, setRound2WinnerPatrolId] = useState('');
   const [savingRound2Winner, setSavingRound2Winner] = useState(false);
   const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
-
-  // Comments — loaded eagerly, refreshed on WS updates
-  const [comments, setComments] = useState<SessionComment[]>([]);
-
-  // Per-scorer expanded comments toggle
-  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set());
-
-  // Track which users changed on the last refresh
-  const [changedUserIds, setChangedUserIds] = useState<Set<string>>(new Set());
-  const prevSnapshotRef = useRef<Record<string, string>>({});
-
-  const snapshotUsers = (u: UserProgress[]) => {
-    const snap: Record<string, string> = {};
-    for (const user of u) {
-      snap[user.user_id] = user.patrols.map((p) => `${p.patrol_id}:${p.status}`).join(',');
-    }
-    return snap;
-  };
-
-  const applyUsers = useCallback((incoming: UserProgress[], isInitial = false) => {
-    if (!isInitial) {
-      const prev = prevSnapshotRef.current;
-      const next = snapshotUsers(incoming);
-      const changed = new Set<string>();
-      for (const user of incoming) {
-        if (prev[user.user_id] !== next[user.user_id]) {
-          changed.add(user.user_id);
-        }
-      }
-      if (changed.size > 0) {
-        setChangedUserIds(changed);
-        setTimeout(() => setChangedUserIds(new Set()), 2000);
-      }
-    }
-    prevSnapshotRef.current = snapshotUsers(incoming);
+  const applyUsers = useCallback((incoming: UserProgress[]) => {
     setUsers(incoming);
   }, []);
 
-  // Fetch comments
-  const loadComments = useCallback(async () => {
-    if (!sessionId) return;
-    try {
-      const { comments: c } = await api.getSessionComments(sessionId);
-      setComments(c ?? []);
-    } catch {
-      // ignore
-    }
-  }, [sessionId]);
-
-  // Initial load — progress + comments in parallel
+  // Initial load
   useEffect(() => {
     if (!sessionId) return;
 
-    Promise.all([
-      api.getSessionProgress(sessionId),
-      api.getSessionComments(sessionId).catch(() => ({ comments: [] as SessionComment[] })),
-    ])
-      .then(([progress, commentsResult]) => {
+    api.getSessionProgress(sessionId)
+      .then((progress) => {
         setSession(progress.session);
-        applyUsers(progress.users, true);
-        setComments(commentsResult.comments ?? []);
+        applyUsers(progress.users);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -124,7 +94,6 @@ export const AdminSessionPage = () => {
       const payload = msg.payload as WSProgressUpdatedPayload;
       if (payload.session_id === sessionId) {
         applyUsers(payload.users as UserProgress[]);
-        loadComments();
       }
       return;
     }
@@ -161,48 +130,79 @@ export const AdminSessionPage = () => {
         });
       }
     }
-  }, [sessionId, applyUsers, loadComments]);
+  }, [sessionId, applyUsers]);
 
   useSessionSubscription(sessionId, handleWSMessage);
 
-  // Toggle a scorer's comments dropdown
-  const toggleUserComments = useCallback((userId: string) => {
-    setExpandedUsers((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  }, []);
-
-  // Group comments by user → patrol
-  const commentsByUser = useMemo(() => {
-    const map: Record<string, Record<string, { patrolName: string; items: SessionComment[] }>> = {};
-    for (const c of comments) {
-      if (!map[c.user_id]) map[c.user_id] = {};
-      if (!map[c.user_id][c.patrol_id]) {
-        map[c.user_id][c.patrol_id] = { patrolName: c.patrol_name, items: [] };
+  const subcampProgress = useMemo(() => {
+    const groups: Record<string, { subcampName: string; patrols: Record<string, { patrolName: string; statuses: Array<'submitted' | 'complete' | 'drafting' | 'not_started'> }> }> = {};
+    for (const user of users) {
+      const id = user.subcamp_id || 'unassigned';
+      const name = user.subcamp_name || 'Unassigned';
+      if (!groups[id]) {
+        groups[id] = { subcampName: name, patrols: {} };
       }
-      map[c.user_id][c.patrol_id].items.push(c);
+      for (const patrol of user.patrols) {
+        if (!groups[id].patrols[patrol.patrol_id]) {
+          groups[id].patrols[patrol.patrol_id] = { patrolName: patrol.patrol_name, statuses: [] };
+        }
+        groups[id].patrols[patrol.patrol_id].statuses.push(patrol.status);
+      }
     }
-    return map;
-  }, [comments]);
 
-  // Comment count per user
-  const commentCountByUser = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const c of comments) {
-      counts[c.user_id] = (counts[c.user_id] || 0) + 1;
-    }
-    return counts;
-  }, [comments]);
+    return Object.entries(groups)
+      .sort((a, b) => a[1].subcampName.localeCompare(b[1].subcampName))
+      .map(([subcampId, group]) => {
+        const patrols = Object.entries(group.patrols)
+          .map(([patrolId, patrol]) => {
+            const statuses = patrol.statuses;
+            const overallStatus = aggregatePatrolStatus(statuses);
+            return {
+              patrolId,
+              patrolName: patrol.patrolName,
+              overallStatus,
+            };
+          })
+          .sort((a, b) => a.patrolName.localeCompare(b.patrolName));
+
+        const submittedCount = patrols.filter((p) => p.overallStatus === 'submitted').length;
+        const completeCount = patrols.filter((p) => p.overallStatus === 'complete').length;
+        const draftingCount = patrols.filter((p) => p.overallStatus === 'drafting').length;
+        const notStartedCount = patrols.length - submittedCount - completeCount - draftingCount;
+
+        return {
+          subcampId,
+          subcampName: group.subcampName,
+          patrols,
+          submittedCount,
+          completeCount,
+          draftingCount,
+          notStartedCount,
+        };
+      });
+  }, [users]);
 
   // Overall stats
   const stats = useMemo(() => {
+    if ((session?.round_type ?? 'regular') !== 'round2') {
+      const totalPatrols = subcampProgress.reduce((sum, subcamp) => sum + subcamp.patrols.length, 0);
+      const submitted = subcampProgress.reduce((sum, subcamp) => sum + subcamp.submittedCount, 0);
+      const complete = subcampProgress.reduce((sum, subcamp) => sum + subcamp.completeCount, 0);
+      const drafting = subcampProgress.reduce((sum, subcamp) => sum + subcamp.draftingCount, 0);
+      const incomplete = drafting + (totalPatrols - submitted - complete - drafting);
+      return {
+        totalPatrols,
+        submitted,
+        complete,
+        drafting: incomplete,
+        notStarted: 0,
+        percentComplete: totalPatrols > 0 ? Math.round((submitted / totalPatrols) * 100) : 0,
+      };
+    }
+
     let totalPatrols = 0;
     let submitted = 0;
     let drafting = 0;
-
     for (const user of users) {
       for (const patrol of user.patrols) {
         totalPatrols++;
@@ -214,24 +214,12 @@ export const AdminSessionPage = () => {
     return {
       totalPatrols,
       submitted,
+      complete: 0,
       drafting,
       notStarted: totalPatrols - submitted - drafting,
       percentComplete: totalPatrols > 0 ? Math.round((submitted / totalPatrols) * 100) : 0,
     };
-  }, [users]);
-
-  const usersGroupedBySubcamp = useMemo(() => {
-    const groups: Record<string, { subcampName: string; users: UserProgress[] }> = {};
-    for (const user of users) {
-      const id = user.subcamp_id || 'unassigned';
-      const name = user.subcamp_name || 'Unassigned';
-      if (!groups[id]) {
-        groups[id] = { subcampName: name, users: [] };
-      }
-      groups[id].users.push(user);
-    }
-    return Object.entries(groups).sort((a, b) => a[1].subcampName.localeCompare(b[1].subcampName));
-  }, [users]);
+  }, [session?.round_type, subcampProgress, users]);
 
   const handleLockToggle = useCallback(async () => {
     if (!sessionId || !session) return;
@@ -247,7 +235,7 @@ export const AdminSessionPage = () => {
 
       const progress = await api.getSessionProgress(sessionId);
       setSession(progress.session);
-      applyUsers(progress.users, true);
+      applyUsers(progress.users);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not update session lock');
     } finally {
@@ -410,7 +398,7 @@ export const AdminSessionPage = () => {
   const isRound2 = session.round_type === 'round2';
   const modeLabel = isRound2 ? 'Round 2 (Camp Chief)' : 'Subcamp Scoring Round';
   const progressHeading = isRound2 ? 'Round 2 Scoring Completion' : 'Overall Completion';
-  const rosterHeading = isRound2 ? 'Contributors' : 'Scorers';
+  const rosterHeading = isRound2 ? 'Contributors' : 'Subcamp progress';
 
   if (isCampChiefView && !isRound2) {
     return (
@@ -522,7 +510,18 @@ export const AdminSessionPage = () => {
               }}
             />
             <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-              In progress: {stats.drafting}
+              Incomplete: {stats.drafting}
+            </Text>
+          </Box>
+          <Box display="flex" alignItems="center" sx={{ gap: 1 }}>
+            <Box
+              sx={{
+                width: 10, height: 10, borderRadius: '50%',
+                bg: 'accent.emphasis',
+              }}
+            />
+            <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+              Complete: {stats.complete}
             </Text>
           </Box>
           <Box display="flex" alignItems="center" sx={{ gap: 1 }}>
@@ -708,244 +707,102 @@ export const AdminSessionPage = () => {
         </Box>
       )}
 
-      {/* Per-user progress */}
+      {/* Subcamp progress */}
       {!isRound2 && (
       <Box flex={1} p={3} overflow="auto">
         <Heading sx={{ fontSize: 2, mb: 3 }}>
-          {rosterHeading} ({users.length})
+          {rosterHeading} ({subcampProgress.length})
         </Heading>
 
         <Box display="flex" flexDirection="column" sx={{ gap: 4 }}>
-          {usersGroupedBySubcamp.map(([subcampId, group]) => (
-            <Box key={subcampId}>
+          {subcampProgress.map((subcamp) => (
+            <Box key={subcamp.subcampId}>
               <Heading sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>
-                {group.subcampName}
+                {subcamp.subcampName}
               </Heading>
 
-              <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
-                {group.users.map((user) => {
-            const userSubmitted = user.patrols.filter(
-              (p) => p.status === 'submitted',
-            ).length;
-            const userTotal = user.patrols.length;
-            const userDone = userSubmitted === userTotal;
-            const justChanged = changedUserIds.has(user.user_id);
-            const userCommentCount = commentCountByUser[user.user_id] || 0;
-            const isExpanded = expandedUsers.has(user.user_id);
-            const userCommentsByPatrol = commentsByUser[user.user_id] || {};
-
-                  return (
               <Box
-                key={user.user_id}
                 borderWidth={1}
                 borderStyle="solid"
-                borderColor={userDone ? 'success.emphasis' : 'border.default'}
+                borderColor={subcamp.notStartedCount === 0 && subcamp.draftingCount === 0 ? 'success.emphasis' : 'border.default'}
                 borderRadius={2}
-                bg={userDone ? 'success.subtle' : 'canvas.default'}
+                bg={subcamp.notStartedCount === 0 && subcamp.draftingCount === 0 ? 'success.subtle' : 'canvas.default'}
                 overflow="hidden"
-                sx={{
-                  '@keyframes cardFlash': {
-                    '0%': { backgroundColor: 'var(--bgColor-accent-emphasis, #0969da)' },
-                    '100%': { backgroundColor: 'transparent' },
-                  },
-                  animation: justChanged
-                    ? 'cardFlash 2s ease-out forwards'
-                    : 'none',
-                  transition: 'box-shadow 0.6s ease-out',
-                  boxShadow: justChanged
-                    ? '0 0 0 2px var(--bgColor-accent-emphasis, #0969da)'
-                    : 'none',
-                }}
               >
-                {/* User header */}
-                <Box
-                  p={3}
-                  display="flex"
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
-                  <Box>
-                    <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>
-                      {user.display_name}
-                    </Text>
-                  </Box>
-                  <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
-                    <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-                      {userSubmitted}/{userTotal}
-                    </Text>
-                    {userDone ? (
-                      <Label variant="success">Complete ✓</Label>
-                    ) : userSubmitted > 0 || user.patrols.some((p) => p.status === 'drafting') ? (
-                      <Label variant="attention">In Progress</Label>
-                    ) : (
-                      <Label>Not Started</Label>
-                    )}
-                  </Box>
+              <Box
+                p={3}
+                display="flex"
+                justifyContent="space-between"
+                alignItems="center"
+              >
+                <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                  <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                    {subcamp.submittedCount}/{subcamp.patrols.length}
+                  </Text>
+                  {subcamp.submittedCount === subcamp.patrols.length ? (
+                    <Label variant="success">Complete ✓</Label>
+                  ) : subcamp.completeCount > 0 ? (
+                    <Label variant="accent">Complete</Label>
+                  ) : subcamp.draftingCount > 0 || subcamp.notStartedCount > 0 ? (
+                    <Label variant="attention">Incomplete</Label>
+                  ) : (
+                    <Label>Not Started</Label>
+                  )}
                 </Box>
-
-                {/* Patrol grid */}
-                <Box
-                  px={3}
-                  pb={3}
-                  display="flex"
-                  flexWrap="wrap"
-                  sx={{ gap: 1 }}
-                >
-                  {user.patrols.map((patrol) => (
-                    <Box
-                      key={patrol.patrol_id}
-                      title={`${patrol.patrol_name}: ${patrol.status.replace('_', ' ')}`}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        px: 2,
-                        py: 1,
-                        borderRadius: 2,
-                        fontSize: 0,
-                        fontWeight: 'bold',
-                        bg: STATUS_COLORS[patrol.status],
-                        color: patrol.status === 'not_started' ? 'fg.muted' : 'fg.onEmphasis',
-                        minWidth: '60px',
-                        textAlign: 'center',
-                      }}
-                    >
-                      <Text sx={{ fontSize: 0, mr: 1, color: 'inherit' }}>
-                        {patrol.patrol_name.length > 8
-                          ? patrol.patrol_name.slice(0, 8) + '…'
-                          : patrol.patrol_name}
-                      </Text>
-                      <Text sx={{ fontSize: 0, color: 'inherit' }}>
-                        {STATUS_LABELS[patrol.status]}
-                      </Text>
-                    </Box>
-                  ))}
-                </Box>
-
-                {/* Award winners (shown when user has finalised and has awards) */}
-                {userDone && user.awards && user.awards.length > 0 && (
-                  <Box
-                    px={3}
-                    pb={3}
-                    borderTopWidth={1}
-                    borderTopStyle="solid"
-                    borderTopColor="border.default"
-                    pt={2}
-                  >
-                    <Text sx={{ fontSize: 0, color: 'fg.muted', fontWeight: 'bold', mb: 1, display: 'block' }}>
-                      🏆 Awards
-                    </Text>
-                    <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }}>
-                      {user.awards.map((award) => (
-                        <Box
-                          key={award.award_type}
-                          display="flex"
-                          alignItems="center"
-                          sx={{ gap: 1 }}
-                        >
-                          <Text sx={{ fontSize: 0 }}>
-                            {award.award_type === 'best_patrol' ? '🥇' : '📈'}
-                          </Text>
-                          <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-                            {award.award_type === 'best_patrol' ? 'Best:' : 'Most Improved:'}
-                          </Text>
-                          <Label variant="accent" size="small">
-                            {award.patrol_name || award.patrol_id}
-                          </Label>
-                        </Box>
-                      ))}
-                    </Box>
-                  </Box>
-                )}
-
-                {/* Per-scorer comments dropdown */}
-                {userCommentCount > 0 && (
-                  <Box
-                    borderTopWidth={1}
-                    borderTopStyle="solid"
-                    borderTopColor="border.default"
-                  >
-                    <Box
-                      as="button"
-                      onClick={() => toggleUserComments(user.user_id)}
-                      sx={{
-                        width: '100%',
-                        px: 3,
-                        py: 2,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        bg: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        ':hover': { bg: 'canvas.subtle' },
-                      }}
-                    >
-                      <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
-                        <Text sx={{ fontSize: 1, fontWeight: 'bold' }}>💬 Comments</Text>
-                        <CounterLabel>{userCommentCount}</CounterLabel>
-                      </Box>
-                      <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-                        {isExpanded ? '▲' : '▼'}
-                      </Text>
-                    </Box>
-
-                    {isExpanded && (
-                      <Box px={3} pb={3}>
-                        <Box display="flex" flexDirection="column" sx={{ gap: 3 }}>
-                          {Object.entries(userCommentsByPatrol).map(([patrolId, { patrolName, items }]) => (
-                            <Box key={patrolId}>
-                              <Box display="flex" alignItems="center" sx={{ gap: 2 }} mb={2}>
-                                <Text sx={{ fontWeight: 'bold', fontSize: 1 }}>
-                                  {patrolName}
-                                </Text>
-                                <CounterLabel>{items.length}</CounterLabel>
-                              </Box>
-
-                              <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-                                {items.map((c, i) => (
-                                  <Box
-                                    key={`${c.criterion_id}-${i}`}
-                                    p={2}
-                                    borderWidth={1}
-                                    borderStyle="solid"
-                                    borderColor="border.default"
-                                    borderRadius={2}
-                                    bg="canvas.subtle"
-                                  >
-                                    <Box display="flex" justifyContent="space-between" alignItems="baseline" mb={1}>
-                                      <Text sx={{ fontSize: 0, fontWeight: 'bold', color: 'fg.default' }}>
-                                        {c.criterion_title}
-                                      </Text>
-                                      <Text sx={{ fontSize: 0, color: 'fg.muted', fontVariantNumeric: 'tabular-nums' }}>
-                                        Score: {c.value}/10
-                                      </Text>
-                                    </Box>
-                                    <Text sx={{ fontSize: 1, display: 'block', color: 'fg.default' }}>
-                                      &ldquo;{c.comment}&rdquo;
-                                    </Text>
-                                  </Box>
-                                ))}
-                              </Box>
-                            </Box>
-                          ))}
-                        </Box>
-                      </Box>
-                    )}
-                  </Box>
-                )}
+                <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+                  {subcamp.submittedCount} finalised · {subcamp.completeCount} complete · {subcamp.draftingCount + subcamp.notStartedCount} incomplete
+                </Text>
               </Box>
-                  );
-                })}
+
+              <Box
+                px={3}
+                pb={3}
+                display="flex"
+                flexWrap="wrap"
+                sx={{ gap: 1 }}
+              >
+                  {subcamp.patrols.map((patrol) => {
+                    const displayState = displayStateForPatrol(patrol.overallStatus);
+                    return (
+                      <Box
+                        key={patrol.patrolId}
+                        title={`${patrol.patrolName}: ${displayState}`}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          px: 2,
+                          py: 1,
+                          borderRadius: 2,
+                          fontSize: 0,
+                          fontWeight: 'bold',
+                          bg: DISPLAY_STATE_COLORS[displayState],
+                          color: 'fg.onEmphasis',
+                          minWidth: '60px',
+                          textAlign: 'center',
+                        }}
+                      >
+                        <Text sx={{ fontSize: 0, mr: 1, color: 'inherit' }}>
+                          {patrol.patrolName.length > 8
+                            ? patrol.patrolName.slice(0, 8) + '...'
+                            : patrol.patrolName}
+                        </Text>
+                        <Text sx={{ fontSize: 0, color: 'inherit' }}>
+                          {DISPLAY_STATE_LABELS[displayState]}
+                        </Text>
+                      </Box>
+                    );
+                  })}
+                </Box>
               </Box>
             </Box>
           ))}
         </Box>
 
-        {users.length === 0 && (
+        {subcampProgress.length === 0 && (
           <Box textAlign="center" py={6}>
             <Text sx={{ color: 'fg.muted', fontSize: 2 }}>
-              No contributors assigned to this session.
+              No subcamp progress available for this session.
             </Text>
           </Box>
         )}

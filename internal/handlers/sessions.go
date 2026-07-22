@@ -27,6 +27,19 @@ type SessionHandler struct {
 	broadcaster SessionBroadcaster
 }
 
+func (h *SessionHandler) ensurePatrolScoringUnlocked(w http.ResponseWriter, r *http.Request, sessionID, patrolID string) bool {
+	locked, err := h.db.IsPatrolScoringLocked(r.Context(), sessionID, patrolID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not check subcamp lock")
+		return false
+	}
+	if locked {
+		writeError(w, r, http.StatusLocked, "your subcamp scoring is locked")
+		return false
+	}
+	return true
+}
+
 // NewSessionHandler creates a new SessionHandler.
 func NewSessionHandler(db *database.DB, broadcaster SessionBroadcaster) *SessionHandler {
 	return &SessionHandler{db: db, broadcaster: broadcaster}
@@ -45,6 +58,7 @@ type sessionJSON struct {
 	StartsAt          string          `json:"starts_at"`
 	EndsAt            string          `json:"ends_at"`
 	Status            string          `json:"status"`
+	OwnSubcampLocked  bool            `json:"own_subcamp_locked,omitempty"`
 	LockedAt          *string         `json:"locked_at,omitempty"`
 	LockedBy          *string         `json:"locked_by,omitempty"`
 	LockedByName      *string         `json:"locked_by_name,omitempty"`
@@ -290,6 +304,16 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		attribute.Int("submissions.count", len(submissions)),
 	)
 
+	ownSubcampLocked := false
+	if user.SubcampID != nil {
+		ownSubcampLocked, err = h.db.IsSubcampScoringLocked(ctx, sessionID, *user.SubcampID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not check subcamp lock")
+			return
+		}
+	}
+
 	sessionResult := sessionJSON{
 		ID:                session.ID,
 		EventID:           session.EventID,
@@ -301,6 +325,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
+		OwnSubcampLocked:  ownSubcampLocked,
 		LockedAt:          formatOptionalTime(session.LockedAt),
 		LockedBy:          session.LockedBy,
 		LockedByName:      session.LockedByName,
@@ -574,6 +599,9 @@ func (h *SessionHandler) GetDraft(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
 		return
 	}
+	if !h.ensurePatrolScoringUnlocked(w, r, sessionID, patrolID) {
+		return
+	}
 
 	draft, err := h.db.GetDraft(ctx, sessionID, patrolID)
 	if err != nil {
@@ -649,6 +677,9 @@ func (h *SessionHandler) SubmitScores(w http.ResponseWriter, r *http.Request) {
 	}
 	if !owns {
 		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+	if !h.ensurePatrolScoringUnlocked(w, r, sessionID, patrolID) {
 		return
 	}
 
@@ -903,6 +934,15 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 		return
 	} else if user.IsAdmin {
 		writeError(w, r, http.StatusBadRequest, "subcamp_id is required for admin users without an assigned subcamp")
+		return
+	}
+	locked, err := h.db.IsSubcampScoringLocked(ctx, sessionID, targetSubcampID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "could not check subcamp lock")
+		return
+	}
+	if locked {
+		writeError(w, r, http.StatusLocked, "subcamp scoring is locked")
 		return
 	}
 
@@ -1630,6 +1670,9 @@ func (h *SessionHandler) SaveDraftComment(w http.ResponseWriter, r *http.Request
 		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
 		return
 	}
+	if !h.ensurePatrolScoringUnlocked(w, r, sessionID, patrolID) {
+		return
+	}
 
 	var req struct {
 		Comment string `json:"comment"`
@@ -1708,6 +1751,9 @@ func (h *SessionHandler) DeleteDraftComment(w http.ResponseWriter, r *http.Reque
 	}
 	if !owns {
 		writeError(w, r, http.StatusForbidden, "not assigned to this patrol")
+		return
+	}
+	if !h.ensurePatrolScoringUnlocked(w, r, sessionID, patrolID) {
 		return
 	}
 

@@ -50,7 +50,7 @@ export const ScoringPage = () => {
   const [patrolTotals, setPatrolTotals] = useState<Record<string, number | null>>({});
 
   // Lock screen state for either subcamp finalisation or full session lock.
-  const [lockState, setLockState] = useState<{ kind: 'subcamp' | 'session'; displayName: string; actionAt: string; endsAt: string } | null>(null);
+  const [lockState, setLockState] = useState<{ kind: 'subcamp' | 'session' | 'subcamp_locked'; displayName: string; actionAt: string; endsAt: string } | null>(null);
 
   // Track which patrols have had all criteria touched (keyed by patrol_id)
   const [touchedMap, setTouchedMap] = useState<Record<string, Set<string>>>({});
@@ -89,9 +89,37 @@ export const ScoringPage = () => {
   }, [currentPatrol?.patrol_id]);
 
   // Draft sync over WebSocket
+  const handleDraftSaveResponse = useCallback((msg: WSServerMessage) => {
+    if (msg.type !== 'error') return;
+    const payload = msg.payload as { code?: string; message?: string };
+    if (!payload.code) return;
+
+    if (payload.code === 'SESSION_LOCKED') {
+      setError(payload.message ?? 'session is locked');
+      setLockState({
+        kind: 'session',
+        displayName: session?.locked_by_name || 'an administrator',
+        actionAt: session?.locked_at || new Date().toISOString(),
+        endsAt: session?.ends_at || new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (payload.code === 'SUBCAMP_LOCKED') {
+      setError(payload.message ?? 'your subcamp scoring is locked');
+      setLockState({
+        kind: 'subcamp_locked',
+        displayName: 'an administrator',
+        actionAt: new Date().toISOString(),
+        endsAt: session?.ends_at || new Date().toISOString(),
+      });
+    }
+  }, [session?.ends_at, session?.locked_at, session?.locked_by_name]);
+
   const { saveDraft, flushDraft } = useDraftSync(
     sessionId ?? '',
     currentPatrol?.patrol_id ?? '',
+    handleDraftSaveResponse,
   );
 
   // Per-criterion debounced comment savers (REST API)
@@ -292,6 +320,13 @@ export const ScoringPage = () => {
             kind: 'session',
             displayName: session.locked_by_name || 'an administrator',
             actionAt: session.locked_at || new Date().toISOString(),
+            endsAt: session.ends_at,
+          });
+        } else if (session.own_subcamp_locked) {
+          setLockState({
+            kind: 'subcamp_locked',
+            displayName: 'an administrator',
+            actionAt: new Date().toISOString(),
             endsAt: session.ends_at,
           });
         }
@@ -880,13 +915,19 @@ export const ScoringPage = () => {
 
           <Text sx={{ fontSize: 4, display: 'block', mb: 3 }}>🔒</Text>
           <Heading sx={{ fontSize: 3, mb: 2 }}>
-            {lockState.kind === 'session' ? 'Session Locked' : 'Subcamp Finalised'}
+            {lockState.kind === 'session'
+              ? 'Session Locked'
+              : lockState.kind === 'subcamp_locked'
+                ? 'Subcamp Locked'
+                : 'Subcamp Finalised'}
           </Heading>
           <Text as="p" sx={{ fontSize: 1, color: 'fg.muted', mb: 3 }}>
             <Text sx={{ fontWeight: 'bold' }}>{lockState.displayName}</Text>
             {lockState.kind === 'session'
               ? ' has locked this session. No further scoring edits can be made by any user.'
-              : ' has submitted the final scores for your subcamp. No further edits can be made.'}
+              : lockState.kind === 'subcamp_locked'
+                ? ' has locked scoring for your subcamp. No further edits can be made.'
+                : ' has submitted the final scores for your subcamp. No further edits can be made.'}
           </Text>
 
           <Box
@@ -896,7 +937,7 @@ export const ScoringPage = () => {
             sx={{ bg: 'neutral.subtle', borderWidth: 1, borderStyle: 'solid', borderColor: 'border.muted' }}
           >
             <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 1, fontWeight: 'bold' }}>
-              {lockState.kind === 'session' ? 'Locked at' : 'Finalised at'}
+              {lockState.kind === 'session' || lockState.kind === 'subcamp_locked' ? 'Locked at' : 'Finalised at'}
             </Text>
             <Text sx={{ fontSize: 1, mb: 2 }}>{formattedActionAt}</Text>
             <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 1, fontWeight: 'bold' }}>

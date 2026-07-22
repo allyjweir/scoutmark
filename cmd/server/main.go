@@ -113,6 +113,15 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /api/sessions/{session_id}/report-card", authMiddleware(http.HandlerFunc(reportHandler.GetReportCard)))
 
 	// Admin routes
+	mux.Handle("GET /api/admin/users", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.ListAdminUsers))))
+	mux.Handle("POST /api/admin/users", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.CreateAdminUser))))
+	mux.Handle("PUT /api/admin/users/{user_id}/password", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.ResetAdminUserPassword))))
+	mux.Handle("GET /api/admin/subcamps", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.ListAdminSubcamps))))
+	mux.Handle("PUT /api/admin/sessions/{session_id}", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UpdateAdminSession))))
+	mux.Handle("GET /api/admin/sessions/{session_id}/subcamps", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.ListAdminSessionSubcamps))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/subcamps/{subcamp_id}/lock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.LockAdminSessionSubcamp))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/subcamps/{subcamp_id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockAdminSessionSubcamp))))
+	mux.Handle("PUT /api/admin/sessions/{session_id}/patrols/{patrol_id}/scores", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UpdateAdminPatrolScores))))
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/lock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.LockSession))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSession))))

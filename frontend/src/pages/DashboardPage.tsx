@@ -36,7 +36,7 @@ export const DashboardPage = () => {
   }, []);
 
   const isRegularSession = (session: Session) => (session.round_type ?? 'regular') === 'regular';
-  const isCampChiefAccount = user?.username === 'campchief' || user?.id === 'usr-campchief';
+  const isCampChiefAccount = user?.is_camp_chief === true;
   const visibleSessions = user?.is_admin ? sessions : sessions.filter(isRegularSession);
   const sessionsById = sessions.reduce<Record<string, Session>>((acc, session) => {
     acc[session.id] = session;
@@ -116,6 +116,14 @@ export const DashboardPage = () => {
 
   const handleSessionClick = (session: Session) => {
     if (session.status === 'ACTIVE' || session.status === 'LOCKED' || session.status === 'CLOSED') {
+      if (user?.is_admin) {
+        if (isCampChiefAccount && (session.round_type ?? 'regular') === 'round2') {
+          navigate(`/campchief/sessions/${session.id}`);
+          return;
+        }
+        navigate(`/admin/sessions/${session.id}`);
+        return;
+      }
       if (isCampChiefAccount && (session.round_type ?? 'regular') === 'round2') {
         navigate(`/campchief/sessions/${session.id}`);
         return;
@@ -164,24 +172,12 @@ export const DashboardPage = () => {
       )}
 
       {/* Admin quick-access */}
-      {user?.is_admin && !isCampChiefAccount && (activeSessions.length > 0 || closedSessions.length > 0) && (
+      {user?.is_admin && !isCampChiefAccount && (
         <Box mb={4} p={3} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
           <Heading sx={{ fontSize: 1, mb: 2, color: 'accent.fg' }}>
-            🛡️ Admin — Session Progress
+            🛡️ Admin
           </Heading>
-          <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>
-            {[...activeSessions, ...closedSessions].map((session) => (
-              <Button
-                key={session.id}
-                variant="invisible"
-                onClick={() => navigate(`/admin/sessions/${session.id}`)}
-                sx={{ justifyContent: 'flex-start', fontWeight: 'normal', fontSize: 1 }}
-                size="small"
-              >
-                📊 {session.name} — {session.event_name} ({session.status.toLowerCase()})
-              </Button>
-            ))}
-          </Box>
+          <Button onClick={() => navigate('/admin')}>Open admin dashboard</Button>
         </Box>
       )}
 

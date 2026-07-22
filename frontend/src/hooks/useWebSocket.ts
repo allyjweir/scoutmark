@@ -87,7 +87,11 @@ export const usePresence = (sessionId: string | undefined, patrolId: string | un
  * useDraftSync provides a debounced draft-save function over WebSocket.
  * Scores are auto-saved 500ms after the last change.
  */
-export const useDraftSync = (sessionId: string, patrolId: string) => {
+export const useDraftSync = (
+  sessionId: string,
+  patrolId: string,
+  onSaveResponse?: (msg: WSServerMessage) => void,
+) => {
   const socket = getSocket();
   const lastSavedRef = useRef<string | null>(null);
 
@@ -102,9 +106,11 @@ export const useDraftSync = (sessionId: string, patrolId: string) => {
         if (response.type === 'draft_saved') {
           lastSavedRef.current = new Date().toISOString();
         }
+        onSaveResponse?.(response);
+        return response;
       });
     },
-    [socket, sessionId, patrolId],
+    [socket, sessionId, patrolId, onSaveResponse],
   );
 
   const debouncedSave = useMemo(

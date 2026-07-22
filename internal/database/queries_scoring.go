@@ -335,6 +335,33 @@ func (d *DB) GetSubmissionScores(ctx context.Context, submissionID string) ([]Su
 	return scores, rows.Err()
 }
 
+// UpdateSubmissionScores replaces saved scores for an existing patrol submission.
+func (d *DB) UpdateSubmissionScores(ctx context.Context, sessionID, patrolID, editedBy string, scores map[string]int) error {
+	return d.InTx(ctx, func(tx *sql.Tx) error {
+		var submissionID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2`, sessionID, patrolID).Scan(&submissionID); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("no submitted scores for this patrol")
+			}
+			return fmt.Errorf("finding submission: %w", err)
+		}
+		for criterionID, value := range scores {
+			result, err := tx.ExecContext(ctx, `UPDATE submission_scores SET value = $1, scored_by = $2 WHERE submission_id = $3 AND criterion_id = $4`, value, editedBy, submissionID, criterionID)
+			if err != nil {
+				return fmt.Errorf("updating submission score: %w", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("checking submission score update: %w", err)
+			}
+			if affected == 0 {
+				return fmt.Errorf("criterion is not scored for this patrol")
+			}
+		}
+		return nil
+	})
+}
+
 // UnlockSubmission sets locked=false on a submission (admin only).
 func (d *DB) UnlockSubmission(ctx context.Context, submissionID string) (*SubmissionRow, error) {
 	_, err := d.ExecContext(ctx, "UPDATE submissions SET locked = FALSE WHERE id = $1", submissionID)

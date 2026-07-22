@@ -5,6 +5,7 @@ export interface User {
   username: string;
   display_name: string;
   is_admin: boolean;
+  is_camp_chief: boolean;
   subcamp_id?: string;
   password_change_required?: boolean;
 }
@@ -22,6 +23,7 @@ export interface Session {
   starts_at: string;
   ends_at: string;
   status: 'UPCOMING' | 'ACTIVE' | 'LOCKED' | 'CLOSED';
+  own_subcamp_locked?: boolean;
   locked_at?: string;
   locked_by?: string;
   locked_by_name?: string;

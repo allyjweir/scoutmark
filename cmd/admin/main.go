@@ -1388,6 +1388,7 @@ type baUser struct {
 	DisplayName string
 	Subcamp     string
 	IsAdmin     bool
+	IsCampChief bool
 }
 
 type baPatrol struct {
@@ -1952,10 +1953,10 @@ func applyBARubric() error {
 
 func ensureBAUser(tx *sql.Tx, user baUser, passwordHash string) (baUser, error) {
 	_, err := tx.Exec(
-		`INSERT INTO users (id, username, password_hash, display_name, is_admin, subcamp_id, password_change_required)
-		 VALUES ($1, $2, $3, $4, $5, NULL, FALSE)
-		 ON CONFLICT (username) DO NOTHING`,
-		user.ID, user.Username, passwordHash, user.DisplayName, user.IsAdmin,
+		`INSERT INTO users (id, username, password_hash, display_name, is_admin, is_camp_chief, subcamp_id, password_change_required)
+		 VALUES ($1, $2, $3, $4, $5, $6, NULL, FALSE)
+		 ON CONFLICT (username) DO UPDATE SET is_camp_chief = EXCLUDED.is_camp_chief`,
+		user.ID, user.Username, passwordHash, user.DisplayName, user.IsAdmin, user.IsCampChief,
 	)
 	if err != nil {
 		return baUser{}, fmt.Errorf("ensuring user %s: %w", user.Username, err)
@@ -2246,7 +2247,7 @@ func baDemoUsers() []baUser {
 		"mclean.tanner",
 	}
 
-	users := []baUser{{ID: "usr-campchief", Username: "campchief", DisplayName: "Camp Chief", IsAdmin: true}}
+	users := []baUser{{ID: "usr-campchief", Username: "campchief", DisplayName: "Camp Chief", IsAdmin: true, IsCampChief: true}}
 	for _, username := range usernames {
 		parts := strings.Split(username, ".")
 		subcamp := parts[0]

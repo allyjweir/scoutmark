@@ -62,7 +62,8 @@ export const PatrolDetailPage = () => {
         <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
           {patrol.sessions.map((session) => {
             const open = expandedSession === session.id;
-            const commentCount = session.scores.reduce((total, score) => total + score.comments.length, 0);
+            const scores = session.scores ?? [];
+            const commentCount = scores.reduce((total, score) => total + (score.comments?.length ?? 0), 0);
             return (
               <Box key={session.id} borderWidth={1} borderStyle="solid" borderColor="border.default" borderRadius={2} overflow="hidden">
                 <Box
@@ -94,7 +95,7 @@ export const PatrolDetailPage = () => {
 
                 {open && (
                   <Box px={3} pb={3} pt={1} borderTopWidth={1} borderTopStyle="solid" borderTopColor="border.default">
-                    {session.scores.map((score) => (
+                    {scores.map((score) => (
                       <Box key={score.criterion_id} py={2} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.muted">
                         <Box display="flex" justifyContent="space-between" sx={{ gap: 2 }}>
                           <Text sx={{ fontWeight: 'bold' }}>{score.criterion_title}</Text>
@@ -102,7 +103,7 @@ export const PatrolDetailPage = () => {
                             {score.value}/{score.max_value}
                           </Text>
                         </Box>
-                        {score.comments.map((comment) => (
+                        {(score.comments ?? []).map((comment) => (
                           <Box key={comment.id} mt={2} pl={2} borderLeftWidth={2} borderLeftStyle="solid" borderLeftColor="accent.muted">
                             <Text sx={{ fontSize: 0, fontWeight: 'bold' }}>{comment.display_name}</Text>
                             <Text sx={{ display: 'block', fontSize: 1 }}>{comment.comment}</Text>

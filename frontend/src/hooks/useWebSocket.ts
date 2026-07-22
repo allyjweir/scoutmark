@@ -1,6 +1,6 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react';
 import { debounce } from 'lodash';
-import { ScoutmarkSocket } from '../lib/websocket';
+import { ScoutmarkSocket, type SocketConnectionState } from '../lib/websocket';
 import type { WSServerMessage, WSSaveDraftPayload } from '../lib/types';
 
 const getToken = () => localStorage.getItem('session_token');
@@ -20,6 +20,9 @@ const getSocket = (): ScoutmarkSocket => socketInstance;
  */
 export const useWebSocket = (isAuthenticated = false) => {
   const socket = getSocket();
+  const [status, setStatus] = useState<SocketConnectionState>(socket.connectionState);
+
+  useEffect(() => socket.onConnectionStateChange(setStatus), [socket]);
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -34,7 +37,23 @@ export const useWebSocket = (isAuthenticated = false) => {
     }
   }, [socket, isAuthenticated]);
 
-  return socket;
+  return {
+    socket,
+    status,
+    connected: status === 'connected',
+  };
+};
+
+export const useWebSocketStatus = () => {
+  const socket = getSocket();
+  const [status, setStatus] = useState<SocketConnectionState>(socket.connectionState);
+
+  useEffect(() => socket.onConnectionStateChange(setStatus), [socket]);
+
+  return {
+    status,
+    connected: status === 'connected',
+  };
 };
 
 /**

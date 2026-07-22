@@ -166,6 +166,109 @@ type SubmissionScoreRow struct {
 	ScoredBy     *string
 }
 
+// PatrolHistoryRow represents a patrol score in a historical session.
+type PatrolHistoryRow struct {
+	PatrolID        string
+	PatrolName      string
+	PatrolSortOrder int
+	SubmissionID    *string
+	SessionID       *string
+	SessionName     *string
+	SessionStartsAt *time.Time
+	SubmittedAt     *time.Time
+	CriterionID     *string
+	CriterionTitle  *string
+	CriterionMin    *int
+	CriterionMax    *int
+	CriterionOrder  *int
+	Value           *int
+}
+
+// PatrolHistoryCommentRow represents a comment made on a historical score.
+type PatrolHistoryCommentRow struct {
+	ID           string
+	SubmissionID string
+	CriterionID  string
+	DisplayName  string
+	Comment      string
+}
+
+// GetPatrolHistory returns the patrols a user can access and their submitted scores.
+func (d *DB) GetPatrolHistory(ctx context.Context, subcampID *string, isAdmin bool) ([]PatrolHistoryRow, []PatrolHistoryCommentRow, error) {
+	if !isAdmin && subcampID == nil {
+		return []PatrolHistoryRow{}, []PatrolHistoryCommentRow{}, nil
+	}
+
+	scope := "TRUE"
+	var args []any
+	if !isAdmin {
+		scope = `p.subcamp_id = $1`
+		args = []any{*subcampID}
+	}
+
+	rows, err := d.QueryContext(ctx,
+		`SELECT p.id, p.name, p.sort_order,
+		        sb.id, se.id, se.name, se.starts_at, sb.submitted_at,
+		        ss.criterion_id, c.title, c.min_value, c.max_value, c.sort_order, ss.value
+		 FROM patrols p
+		 LEFT JOIN submissions sb ON sb.patrol_id = p.id
+		 LEFT JOIN sessions se ON se.id = sb.session_id
+		 LEFT JOIN submission_scores ss ON ss.submission_id = sb.id
+		 LEFT JOIN criteria c ON c.id = ss.criterion_id
+		 WHERE `+scope+`
+		 ORDER BY p.sort_order ASC, p.name ASC, se.starts_at DESC NULLS LAST, c.sort_order ASC`,
+		args...,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("querying patrol history: %w", err)
+	}
+	defer rows.Close()
+
+	var history []PatrolHistoryRow
+	for rows.Next() {
+		var row PatrolHistoryRow
+		if err := rows.Scan(
+			&row.PatrolID, &row.PatrolName, &row.PatrolSortOrder,
+			&row.SubmissionID, &row.SessionID, &row.SessionName, &row.SessionStartsAt, &row.SubmittedAt,
+			&row.CriterionID, &row.CriterionTitle, &row.CriterionMin, &row.CriterionMax, &row.CriterionOrder, &row.Value,
+		); err != nil {
+			return nil, nil, fmt.Errorf("scanning patrol history: %w", err)
+		}
+		history = append(history, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	commentRows, err := d.QueryContext(ctx,
+		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.display_name, sc.comment
+		 FROM submission_comments sc
+		 JOIN submissions sb ON sb.id = sc.submission_id
+		 JOIN patrols p ON p.id = sb.patrol_id
+		 WHERE `+scope+` AND sc.comment != ''
+		 ORDER BY sc.created_at ASC`,
+		args...,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("querying patrol history comments: %w", err)
+	}
+	defer commentRows.Close()
+
+	var comments []PatrolHistoryCommentRow
+	for commentRows.Next() {
+		var comment PatrolHistoryCommentRow
+		if err := commentRows.Scan(&comment.ID, &comment.SubmissionID, &comment.CriterionID, &comment.DisplayName, &comment.Comment); err != nil {
+			return nil, nil, fmt.Errorf("scanning patrol history comment: %w", err)
+		}
+		comments = append(comments, comment)
+	}
+	if err := commentRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return history, comments, nil
+}
+
 // CreateSubmission creates a new submission from scores and deletes the shared draft.
 func (d *DB) CreateSubmission(ctx context.Context, submittedBy, sessionID, patrolID string, scores map[string]int) (*SubmissionRow, error) {
 	var submission *SubmissionRow

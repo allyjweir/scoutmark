@@ -125,6 +125,40 @@ type submissionScoreJSON struct {
 	Value       int    `json:"value"`
 }
 
+type patrolHistoryCommentJSON struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+	Comment     string `json:"comment"`
+}
+
+type patrolHistoryScoreJSON struct {
+	CriterionID    string                     `json:"criterion_id"`
+	CriterionTitle string                     `json:"criterion_title"`
+	MinValue       int                        `json:"min_value"`
+	MaxValue       int                        `json:"max_value"`
+	Value          int                        `json:"value"`
+	Comments       []patrolHistoryCommentJSON `json:"comments"`
+}
+
+type patrolHistorySessionJSON struct {
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	StartsAt    string                   `json:"starts_at"`
+	SubmittedAt string                   `json:"submitted_at"`
+	Total       int                      `json:"total"`
+	Scores      []patrolHistoryScoreJSON `json:"scores"`
+}
+
+type patrolHistoryJSON struct {
+	PatrolID  string                     `json:"patrol_id"`
+	Name      string                     `json:"name"`
+	SortOrder int                        `json:"sort_order"`
+	Sessions  []patrolHistorySessionJSON `json:"sessions"`
+}
+
+func patrolHistoryScoreKey(submissionID, criterionID string) string {
+	return submissionID + ":" + criterionID
+}
 type draftJSON struct {
 	ID        string           `json:"id"`
 	PatrolID  string           `json:"patrol_id"`
@@ -251,6 +285,86 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": result})
+}
+
+// GetPatrolHistory handles GET /api/patrols/history.
+func (h *SessionHandler) GetPatrolHistory(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user := auth.UserFromContext(ctx)
+
+	_, span := tracing.Tracer().Start(ctx, "handler.get_patrol_history")
+	defer span.End()
+	span.SetAttributes(attribute.String("user.id", user.ID))
+
+	rows, comments, err := h.db.GetPatrolHistory(ctx, user.SubcampID, user.IsAdmin)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch patrol history")
+		return
+	}
+
+	commentsByScore := make(map[string][]patrolHistoryCommentJSON)
+	for _, comment := range comments {
+		key := patrolHistoryScoreKey(comment.SubmissionID, comment.CriterionID)
+		commentsByScore[key] = append(commentsByScore[key], patrolHistoryCommentJSON{
+			ID:          comment.ID,
+			DisplayName: comment.DisplayName,
+			Comment:     comment.Comment,
+		})
+	}
+
+	patrolsByID := make(map[string]*patrolHistoryJSON)
+	sessionsByID := make(map[string]int)
+	patrols := make([]*patrolHistoryJSON, 0)
+	for _, row := range rows {
+		patrol, ok := patrolsByID[row.PatrolID]
+		if !ok {
+			patrol = &patrolHistoryJSON{
+				PatrolID:  row.PatrolID,
+				Name:      row.PatrolName,
+				SortOrder: row.PatrolSortOrder,
+				Sessions:  []patrolHistorySessionJSON{},
+			}
+			patrolsByID[row.PatrolID] = patrol
+			patrols = append(patrols, patrol)
+		}
+		if row.SubmissionID == nil || row.SessionID == nil || row.SessionName == nil || row.SessionStartsAt == nil || row.SubmittedAt == nil {
+			continue
+		}
+
+		sessionIndex, ok := sessionsByID[*row.SubmissionID]
+		if !ok {
+			patrol.Sessions = append(patrol.Sessions, patrolHistorySessionJSON{
+				ID:          *row.SessionID,
+				Name:        *row.SessionName,
+				StartsAt:    row.SessionStartsAt.UTC().Format(time.RFC3339),
+				SubmittedAt: row.SubmittedAt.UTC().Format(time.RFC3339),
+				Scores:      []patrolHistoryScoreJSON{},
+			})
+			sessionIndex = len(patrol.Sessions) - 1
+			sessionsByID[*row.SubmissionID] = sessionIndex
+		}
+		if row.CriterionID == nil || row.CriterionTitle == nil || row.CriterionMin == nil || row.CriterionMax == nil || row.Value == nil {
+			continue
+		}
+
+		patrol.Sessions[sessionIndex].Total += *row.Value
+		patrol.Sessions[sessionIndex].Scores = append(patrol.Sessions[sessionIndex].Scores, patrolHistoryScoreJSON{
+			CriterionID:    *row.CriterionID,
+			CriterionTitle: *row.CriterionTitle,
+			MinValue:       *row.CriterionMin,
+			MaxValue:       *row.CriterionMax,
+			Value:          *row.Value,
+			Comments:       commentsByScore[patrolHistoryScoreKey(*row.SubmissionID, *row.CriterionID)],
+		})
+	}
+
+	result := make([]patrolHistoryJSON, 0, len(patrols))
+	for _, patrol := range patrols {
+		result = append(result, *patrol)
+	}
+	span.SetAttributes(attribute.Int("patrols.count", len(result)))
+	writeJSON(w, http.StatusOK, map[string]any{"patrols": result})
 }
 
 // GetSession handles GET /api/sessions/{id}

@@ -93,6 +93,7 @@ func run(ctx context.Context) error {
 
 	// Session routes (authenticated)
 	mux.Handle("GET /api/sessions", authMiddleware(http.HandlerFunc(sessionHandler.ListSessions)))
+	mux.Handle("GET /api/patrols/history", authMiddleware(http.HandlerFunc(sessionHandler.GetPatrolHistory)))
 	mux.Handle("GET /api/sessions/{id}", authMiddleware(http.HandlerFunc(sessionHandler.GetSession)))
 	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/draft", authMiddleware(http.HandlerFunc(sessionHandler.GetDraft)))
 	mux.Handle("POST /api/sessions/{session_id}/patrols/{patrol_id}/submit", authMiddleware(http.HandlerFunc(sessionHandler.SubmitScores)))

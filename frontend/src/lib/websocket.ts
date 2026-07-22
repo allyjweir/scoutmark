@@ -2,17 +2,21 @@ import { uniqueId } from 'lodash';
 import type { WSClientMessage, WSServerMessage, WSSaveDraftPayload } from './types';
 
 type MessageHandler = (msg: WSServerMessage) => void;
+export type SocketConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+type ConnectionStateHandler = (state: SocketConnectionState) => void;
 
 export class ScoutmarkSocket {
   private ws: WebSocket | null = null;
   private messageQueue: WSClientMessage[] = [];
   private handlers: Map<string, MessageHandler> = new Map();
   private globalHandlers: Set<MessageHandler> = new Set();
+  private connectionStateHandlers: Set<ConnectionStateHandler> = new Set();
   private subscribedSessions: Set<string> = new Set();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connected = false;
+  private _connectionState: SocketConnectionState = 'idle';
   private _shouldReconnect = true;
 
   constructor(private getToken: () => string | null) {}
@@ -25,17 +29,30 @@ export class ScoutmarkSocket {
     this.subscribedSessions.clear();
     this.messageQueue = [];
     this.reconnectAttempts = 0;
+    this.setConnectionState('idle');
   }
 
   get connected(): boolean {
     return this._connected;
   }
 
+  get connectionState(): SocketConnectionState {
+    return this._connectionState;
+  }
+
   connect(): void {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
     const token = this.getToken();
-    if (!token) return;
+    if (!token) {
+      this.setConnectionState('disconnected');
+      return;
+    }
 
     this._shouldReconnect = true;
+    this.setConnectionState(this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting');
 
     // Auth via HttpOnly cookie — no token in URL to avoid leaking in logs/history
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -46,6 +63,7 @@ export class ScoutmarkSocket {
     this.ws.onopen = () => {
       this._connected = true;
       this.reconnectAttempts = 0;
+      this.setConnectionState('connected');
 
       // Re-subscribe to all sessions after every (re)connect.
       for (const sessionId of this.subscribedSessions) {
@@ -81,12 +99,18 @@ export class ScoutmarkSocket {
     this.ws.onclose = () => {
       this._connected = false;
       if (this._shouldReconnect) {
+        this.setConnectionState('reconnecting');
         this.attemptReconnect();
+      } else {
+        this.setConnectionState('disconnected');
       }
     };
 
     this.ws.onerror = () => {
       this._connected = false;
+      if (!this._shouldReconnect) {
+        this.setConnectionState('disconnected');
+      }
     };
   }
 
@@ -105,6 +129,12 @@ export class ScoutmarkSocket {
       this.ws = null;
     }
     this._connected = false;
+    this.setConnectionState('disconnected');
+  }
+
+  onConnectionStateChange(handler: ConnectionStateHandler): () => void {
+    this.connectionStateHandlers.add(handler);
+    return () => this.connectionStateHandlers.delete(handler);
   }
 
   /**
@@ -184,9 +214,16 @@ export class ScoutmarkSocket {
 
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     this.reconnectAttempts++;
+    this.setConnectionState('reconnecting');
 
     this.reconnectTimer = setTimeout(() => {
       this.connect();
     }, delay);
+  }
+
+  private setConnectionState(state: SocketConnectionState): void {
+    if (this._connectionState === state) return;
+    this._connectionState = state;
+    this.connectionStateHandlers.forEach((handler) => handler(state));
   }
 }

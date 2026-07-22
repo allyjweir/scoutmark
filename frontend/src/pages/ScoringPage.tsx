@@ -7,7 +7,7 @@ import {
 import { keyBy, mapValues, every, debounce } from 'lodash';
 import type { Session, Patrol, Submission, DraftComment, WSDraftUpdatedPayload, WSPresenceUpdatedPayload, WSPresenceStatePayload, WSCommentUpdatedPayload, WSSessionFinalisedPayload, WSSessionLockedPayload, WSSessionUnlockedPayload, WSServerMessage } from '../lib/types';
 import * as api from '../lib/api';
-import { useDraftSync, useSessionSubscription, usePresence } from '../hooks/useWebSocket';
+import { useDraftSync, useSessionSubscription, usePresence, useWebSocketStatus } from '../hooks/useWebSocket';
 import { useAuth } from '../hooks/useAuth';
 import { ScoreSlider } from '../components/ScoreSlider';
 
@@ -17,6 +17,7 @@ export const ScoringPage = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { status: wsStatus, connected: wsConnected } = useWebSocketStatus();
 
   const [session, setSession] = useState<Session | null>(null);
   const [patrols, setPatrols] = useState<Patrol[]>([]);
@@ -490,6 +491,8 @@ export const ScoringPage = () => {
   // Auto-save scores when they change (only save non-null values)
   const handleScoreChange = useCallback(
     (criterionId: string, value: number) => {
+      if (!wsConnected) return;
+
       setScores((prev) => {
         const next = { ...prev, [criterionId]: value };
 
@@ -524,12 +527,13 @@ export const ScoringPage = () => {
         });
       }
     },
-    [saveDraft, currentPatrol],
+    [saveDraft, currentPatrol, wsConnected],
   );
 
   // Handle comment change — save via REST API (debounced per criterion)
   const handleCommentChange = useCallback(
     (criterionId: string, newComment: string) => {
+      if (!wsConnected) return;
       setComments((prev) => ({ ...prev, [criterionId]: newComment }));
 
       // Debounced REST save
@@ -537,12 +541,13 @@ export const ScoringPage = () => {
         getCommentSaver(criterionId)(sessionId, currentPatrol.patrol_id, newComment);
       }
     },
-    [sessionId, currentPatrol?.patrol_id, getCommentSaver],
+    [sessionId, currentPatrol?.patrol_id, getCommentSaver, wsConnected],
   );
 
   // Delete the current user's comment on a criterion
   const handleCommentDelete = useCallback(
     async (criterionId: string) => {
+      if (!wsConnected) return;
       if (!sessionId || !currentPatrol) return;
       setComments((prev) => ({ ...prev, [criterionId]: '' }));
       try {
@@ -551,7 +556,7 @@ export const ScoringPage = () => {
         console.error('[comment] Delete failed:', err);
       }
     },
-    [sessionId, currentPatrol?.patrol_id],
+    [sessionId, currentPatrol?.patrol_id, wsConnected],
   );
 
   // Track which criterion the user is commenting on (for presence broadcasting)
@@ -800,6 +805,7 @@ export const ScoringPage = () => {
 
   // Incomplete-scores confirmation
   const [showConfirmFinalise, setShowConfirmFinalise] = useState(false);
+  const [showConnectionHelp, setShowConnectionHelp] = useState(false);
 
   const incompletePatrols = useMemo(() => {
     if (!patrols.length || !criteria.length) return [];
@@ -849,6 +855,49 @@ export const ScoringPage = () => {
   }, [sessionId, user?.is_admin]);
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
+  const scoreInputEnabled = wsConnected;
+
+  const websocketPill = useMemo(() => {
+    if (wsStatus === 'connected') {
+      return {
+        label: 'Connected',
+        bg: 'success.subtle',
+        border: 'success.muted',
+        fg: 'success.fg',
+        clickable: false,
+      };
+    }
+    if (wsStatus === 'connecting') {
+      return {
+        label: 'Connecting...',
+        bg: 'attention.subtle',
+        border: 'attention.muted',
+        fg: 'attention.fg',
+        clickable: true,
+      };
+    }
+    if (wsStatus === 'reconnecting') {
+      return {
+        label: 'Reconnecting...',
+        bg: 'attention.subtle',
+        border: 'attention.muted',
+        fg: 'attention.fg',
+        clickable: true,
+      };
+    }
+    return {
+      label: 'Offline',
+      bg: 'danger.subtle',
+      border: 'danger.muted',
+      fg: 'danger.fg',
+      clickable: true,
+    };
+  }, [wsStatus]);
+
+  const showUnhealthyConnectionMessage = useCallback(() => {
+    if (wsConnected) return;
+    setShowConnectionHelp(true);
+  }, [wsConnected]);
 
   if (loading) {
     return (
@@ -1004,9 +1053,36 @@ export const ScoringPage = () => {
           >
             {view === 'summary' ? '← Back' : '← Back to Summary'}
           </Button>
-          <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
-            {session.event_name}
-          </Text>
+          <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+            <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
+              {session.event_name}
+            </Text>
+            <Button
+              size="small"
+              onClick={showUnhealthyConnectionMessage}
+              disabled={!websocketPill.clickable}
+              sx={{
+                bg: websocketPill.bg,
+                color: websocketPill.fg,
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: websocketPill.border,
+                borderRadius: '999px',
+                px: 2,
+                py: '2px',
+                minHeight: '24px',
+                fontSize: 0,
+                fontWeight: 'bold',
+                ':hover': websocketPill.clickable ? { filter: 'brightness(0.97)' } : {},
+                ':disabled': { opacity: 1, cursor: 'default' },
+              }}
+              variant="invisible"
+              aria-label={`Live sync status: ${websocketPill.label}`}
+              title={websocketPill.clickable ? 'Tap for connection details' : 'Live sync healthy'}
+            >
+              {websocketPill.label}
+            </Button>
+          </Box>
         </Box>
         <Heading sx={{ fontSize: 2, mb: 1 }}>
           {session.name}
@@ -1037,6 +1113,12 @@ export const ScoringPage = () => {
       {error && (
         <Flash variant="danger" sx={{ m: 3 }}>
           {error}
+        </Flash>
+      )}
+
+      {!scoreInputEnabled && (
+        <Flash variant="warning" sx={{ m: 3 }}>
+          Live sync is currently unavailable. Score editing is paused until the connection is restored.
         </Flash>
       )}
 
@@ -1145,7 +1227,7 @@ export const ScoringPage = () => {
                         <select
                           value={getAwardValue('best_patrol')}
                           onChange={(e) => handleAwardChange('best_patrol', e.target.value)}
-                          disabled={allSubmitted}
+                          disabled={allSubmitted || !scoreInputEnabled}
                           style={{
                             width: '100%',
                             padding: '8px 12px',
@@ -1179,7 +1261,7 @@ export const ScoringPage = () => {
                           <select
                             value={getAwardValue('most_improved')}
                             onChange={(e) => handleAwardChange('most_improved', e.target.value)}
-                            disabled={allSubmitted}
+                            disabled={allSubmitted || !scoreInputEnabled}
                             style={{
                               width: '100%',
                               padding: '8px 12px',
@@ -1253,7 +1335,7 @@ export const ScoringPage = () => {
                       onClick={requestFinalise}
                       sx={{ flex: 2 }}
                       size="large"
-                      disabled={submitting}
+                      disabled={submitting || !scoreInputEnabled}
                     >
                       {submitting ? 'Submitting…' : 'Finalise Scores'}
                     </Button>
@@ -1375,7 +1457,7 @@ export const ScoringPage = () => {
                     onClick={handleFinalise}
                     sx={{ flex: 1 }}
                     size="large"
-                    disabled={submitting}
+                    disabled={submitting || !scoreInputEnabled}
                   >
                     {submitting ? 'Submitting…' : incompletePatrols.length > 0 || activeEditors.length > 0 ? 'Submit Anyway' : 'Submit'}
                   </Button>
@@ -1541,7 +1623,7 @@ export const ScoringPage = () => {
                       onCommentDelete={() => handleCommentDelete(criterion.id)}
                       onCommentFocus={() => handleCommentFocus(criterion.id)}
                       onCommentBlur={handleCommentBlur}
-                      disabled={isCurrentSubmitted || session.status !== 'ACTIVE'}
+                      disabled={isCurrentSubmitted || session.status !== 'ACTIVE' || !scoreInputEnabled}
                     />
                   );
                 })}
@@ -1583,6 +1665,7 @@ export const ScoringPage = () => {
 
                 <Button
                   onClick={goNext}
+                  disabled={!scoreInputEnabled}
                   sx={{ flex: 1 }}
                   size="large"
                 >
@@ -1642,6 +1725,51 @@ export const ScoringPage = () => {
             </Button>
           </Box>
         </>
+      )}
+
+      {/* Connection help modal */}
+      {showConnectionHelp && (
+        <Box
+          position="fixed"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          bg="neutral.muted"
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          sx={{ zIndex: 120 }}
+          onClick={() => setShowConnectionHelp(false)}
+        >
+          <Box
+            bg="canvas.default"
+            borderRadius={2}
+            borderWidth={1}
+            borderStyle="solid"
+            borderColor="attention.muted"
+            p={4}
+            mx={3}
+            maxWidth="420px"
+            sx={{ width: '100%' }}
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <Heading sx={{ fontSize: 2, mb: 2 }}>
+              Connection Unstable
+            </Heading>
+            <Text as="p" sx={{ fontSize: 1, color: 'fg.muted', mb: 3 }}>
+              Internet connection looks poor right now. Live sync is unavailable, and score edits are paused until the connection is restored.
+            </Text>
+            <Text as="p" sx={{ fontSize: 0, color: 'fg.muted', mb: 3 }}>
+              Keep this page open and Scoutmark will reconnect automatically.
+            </Text>
+            <Box display="flex" justifyContent="flex-end">
+              <Button variant="primary" onClick={() => setShowConnectionHelp(false)}>
+                Got it
+              </Button>
+            </Box>
+          </Box>
+        </Box>
       )}
 
     </Box>

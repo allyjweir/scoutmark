@@ -232,21 +232,15 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	pdf.SetFont("Arial", "I", 7)
 	pdf.CellFormat(0, 4, fmt.Sprintf("Generated %s", time.Now().Format("2 Jan 2006 15:04")), "", 0, "R", false, 0, "")
 
-	// ─── Per-patrol scorecards (2 per page) ─────────────────────
-	for i, pid := range patrolOrder {
-		if i%2 == 0 {
-			pdf.AddPageFormat("P", fpdf.SizeType{Wd: 210, Ht: 297})
-		}
+	// ─── Per-patrol scorecards (1 per page) ─────────────────────
+	for _, pid := range patrolOrder {
+		pdf.AddPageFormat("P", fpdf.SizeType{Wd: 210, Ht: 297})
 
 		cardMargin := 10.0
-		cardGap := 6.0
 		pageW, pageH := pdf.GetPageSize()
 		cardW := pageW - (2 * cardMargin)
-		cardH := (pageH - (2 * cardMargin) - cardGap) / 2
+		cardH := pageH - (2 * cardMargin)
 		cardY := cardMargin
-		if i%2 == 1 {
-			cardY += cardH + cardGap
-		}
 
 		renderPatrolScorecard(
 			pdf,

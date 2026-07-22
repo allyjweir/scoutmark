@@ -139,9 +139,11 @@ export const DashboardPage = () => {
     setError('');
     setCompletionMessage('');
     try {
-      const { round2_session: round2Session } = await api.completeFinalisingSession(finalisingSession.id);
+      const { source_session: sourceSession, round2_session: round2Session } = await api.completeFinalisingSession(finalisingSession.id);
       setSessions((current) => current.map((session) => (
-        session.id === round2Session.id ? round2Session : session
+        session.id === sourceSession.id ? sourceSession
+          : session.id === round2Session.id ? round2Session
+            : session
       )));
       setCompletionMessage(`${finalisingSession.name} has been moved to Closed.`);
       setFinalisingSession(null);

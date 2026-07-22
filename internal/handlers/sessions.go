@@ -675,6 +675,12 @@ func (h *SessionHandler) CompleteFinalisingSession(w http.ResponseWriter, r *htt
 		h.broadcaster.BroadcastSessionProgress(ctx, source.ID)
 		h.broadcaster.BroadcastSessionProgress(ctx, round2.ID)
 	}
+	source, err = h.db.GetSession(ctx, sourceSessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch source session")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,

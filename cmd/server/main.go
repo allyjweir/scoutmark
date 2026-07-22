@@ -102,7 +102,7 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/scores", authMiddleware(http.HandlerFunc(sessionHandler.GetSubmissionScores)))
 	mux.Handle("POST /api/sessions/{session_id}/awards", authMiddleware(http.HandlerFunc(sessionHandler.SaveAward)))
 	mux.Handle("GET /api/sessions/{session_id}/previous-scores", authMiddleware(http.HandlerFunc(sessionHandler.GetPreviousScores)))
-	mux.Handle("GET /api/camp-chief/sessions/{session_id}/progress", authMiddleware(auth.RequireCampChief(http.HandlerFunc(sessionHandler.GetCampChiefSessionProgress))))
+	mux.Handle("GET /api/camp-chief/sessions/{session_id}/progress", authMiddleware(auth.RequireCampChief(http.HandlerFunc(sessionHandler.GetSessionProgress))))
 
 	// Per-user comment routes (authenticated)
 	mux.Handle("GET /api/sessions/{session_id}/patrols/{patrol_id}/comments", authMiddleware(http.HandlerFunc(sessionHandler.GetDraftComments)))

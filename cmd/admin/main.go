@@ -265,6 +265,8 @@ func createUser() error {
 	if userID == "" {
 		userID = uuid.New().String()
 	}
+	// Keep the existing development seed command compatible while ensuring its
+	// Camp Chief account is created with the dedicated role.
 	if userID == "usr-campchief" {
 		isAdmin = false
 		isCampChief = true

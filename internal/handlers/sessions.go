@@ -1332,12 +1332,6 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// GetCampChiefSessionProgress returns read-only scoring progress for a Camp
-// Chief. Regular sessions are deliberately exposed only through this endpoint.
-func (h *SessionHandler) GetCampChiefSessionProgress(w http.ResponseWriter, r *http.Request) {
-	h.GetSessionProgress(w, r)
-}
-
 // SaveAward handles POST /api/sessions/{session_id}/awards
 // Saves or updates a single award selection for the current user.
 func (h *SessionHandler) SaveAward(w http.ResponseWriter, r *http.Request) {

@@ -315,6 +315,24 @@ func (d *DB) GetRound2WinnerForSourceSession(ctx context.Context, sourceSessionI
 	return &winner, nil
 }
 
+// GetRound2ForSourceSession returns the linked round 2 session, if one exists.
+func (d *DB) GetRound2ForSourceSession(ctx context.Context, sourceSessionID string) (*SessionDetailRow, error) {
+	row := d.QueryRowContext(ctx,
+		`SELECT id
+		 FROM sessions
+		 WHERE source_session_id = $1 AND round_type = 'round2'`,
+		sourceSessionID,
+	)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("querying round 2 session: %w", err)
+	}
+	return d.GetSession(ctx, id)
+}
+
 func loadSourceSessionForRound2(ctx context.Context, tx *sql.Tx, sessionID string) (*sourceSessionInfo, error) {
 	row := tx.QueryRowContext(ctx,
 		`SELECT id, event_id, template_id, name, starts_at, ends_at, locked_at, round_type, award_best_patrol

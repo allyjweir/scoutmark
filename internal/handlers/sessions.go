@@ -159,6 +159,7 @@ type patrolHistoryJSON struct {
 func patrolHistoryScoreKey(submissionID, criterionID string) string {
 	return submissionID + ":" + criterionID
 }
+
 type draftJSON struct {
 	ID        string           `json:"id"`
 	PatrolID  string           `json:"patrol_id"`
@@ -206,6 +207,28 @@ func formatOptionalTime(t *time.Time) *string {
 	}
 	formatted := t.Format("2006-01-02T15:04:05Z")
 	return &formatted
+}
+
+func sessionJSONFromDetail(s *database.SessionDetailRow) sessionJSON {
+	return sessionJSON{
+		ID:                s.ID,
+		EventID:           s.EventID,
+		EventName:         s.EventName,
+		TemplateID:        s.TemplateID,
+		Name:              s.Name,
+		RoundType:         s.RoundType,
+		SourceSessionID:   s.SourceSessionID,
+		StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
+		EndsAt:            s.EndsAt.Format("2006-01-02T15:04:05Z"),
+		Status:            s.ComputeStatus(),
+		LockedAt:          formatOptionalTime(s.LockedAt),
+		LockedBy:          s.LockedBy,
+		LockedByName:      s.LockedByName,
+		CreatedAt:         s.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		PreviousSessionID: s.PreviousSessionID,
+		AwardBestPatrol:   s.AwardBestPatrol,
+		AwardMostImproved: s.AwardMostImproved,
+	}
 }
 
 // ListSessions handles GET /api/sessions
@@ -586,6 +609,78 @@ func (h *SessionHandler) UnlockSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// CompleteFinalisingSession handles POST /api/admin/sessions/{session_id}/complete-finalising.
+func (h *SessionHandler) CompleteFinalisingSession(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sourceSessionID := r.PathValue("session_id")
+
+	source, err := h.db.GetSession(ctx, sourceSessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if source.RoundType != "regular" {
+		writeError(w, r, http.StatusBadRequest, "session is not a regular session")
+		return
+	}
+
+	round2, err := h.db.GetRound2ForSourceSession(ctx, sourceSessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not find linked round 2 session")
+		return
+	}
+	if round2 == nil {
+		writeError(w, r, http.StatusBadRequest, "no linked round 2 session found")
+		return
+	}
+
+	locked := false
+	if round2.LockedAt == nil {
+		if status := round2.ComputeStatus(); status != "ACTIVE" && status != "UPCOMING" {
+			writeError(w, r, http.StatusBadRequest, "linked round 2 session cannot be completed")
+			return
+		}
+		user := auth.UserFromContext(ctx)
+		locked, err = h.db.LockSessionIfUnlocked(ctx, round2.ID, user.ID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not complete finalising")
+			return
+		}
+		round2, err = h.db.GetSession(ctx, round2.ID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not fetch linked round 2 session")
+			return
+		}
+
+		if locked {
+			if fb, ok := h.broadcaster.(interface {
+				BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string)
+			}); ok {
+				fb.BroadcastSessionLocked(
+					round2.ID,
+					user.ID,
+					user.DisplayName,
+					round2.LockedAt.UTC().Format("2006-01-02T15:04:05Z"),
+					round2.EndsAt.Format("2006-01-02T15:04:05Z"),
+				)
+			}
+		}
+	}
+	if h.broadcaster != nil {
+		h.broadcaster.BroadcastSessionProgress(ctx, source.ID)
+		h.broadcaster.BroadcastSessionProgress(ctx, round2.ID)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"source_session": sessionJSONFromDetail(source),
+		"round2_session": sessionJSONFromDetail(round2),
+	})
 }
 
 // EnsureRound2 handles POST /api/admin/sessions/{session_id}/round2

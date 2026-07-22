@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Box, Heading, Text, Spinner, Flash, Button } from '@primer/react';
+import { Box, Heading, Text, Spinner, Flash, Button, ConfirmationDialog } from '@primer/react';
 import { groupBy, sortBy } from 'lodash';
 import type { Session } from '../lib/types';
 import * as api from '../lib/api';
@@ -14,6 +14,9 @@ export const DashboardPage = () => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [finalisingSession, setFinalisingSession] = useState<Session | null>(null);
+  const [completingFinalising, setCompletingFinalising] = useState(false);
+  const [completionMessage, setCompletionMessage] = useState('');
 
   // Success flash from finalise navigation
   const finalisedName = (location.state as { finalised?: string } | null)?.finalised;
@@ -106,13 +109,37 @@ export const DashboardPage = () => {
     return Boolean(linkedRound2.winner_patrol_name && linkedRound2.winner_subcamp_name);
   };
 
+  const isFinalisingComplete = (session: Session): boolean => {
+    const linkedRound2 = round2BySource[session.id];
+    return linkedRound2?.status === 'LOCKED' || linkedRound2?.status === 'CLOSED';
+  };
+
   const finalisingSessions = sortBy(visibleSessions.filter(isFinalising), 'ends_at').reverse();
 
   const grouped = groupBy(visibleSessions.filter((session) => !isFinalising(session)), 'status');
   const activeSessions = sortBy(grouped['ACTIVE'] ?? [], 'starts_at');
   const upcomingSessions = sortBy(grouped['UPCOMING'] ?? [], 'starts_at');
-  const lockedSessions = sortBy(grouped['LOCKED'] ?? [], 'starts_at');
-  const closedSessions = sortBy(grouped['CLOSED'] ?? [], 'ends_at').reverse();
+  const completedFinalisingSessions = (grouped['LOCKED'] ?? []).filter(isFinalisingComplete);
+  const lockedSessions = sortBy((grouped['LOCKED'] ?? []).filter((session) => !isFinalisingComplete(session)), 'starts_at');
+  const closedSessions = sortBy([...(grouped['CLOSED'] ?? []), ...completedFinalisingSessions], 'ends_at').reverse();
+
+  const handleCompleteFinalising = async () => {
+    if (!finalisingSession) return;
+    setCompletingFinalising(true);
+    setError('');
+    try {
+      const { round2_session: round2Session } = await api.completeFinalisingSession(finalisingSession.id);
+      setSessions((current) => current.map((session) => (
+        session.id === round2Session.id ? round2Session : session
+      )));
+      setCompletionMessage(`${finalisingSession.name} has been moved to Closed.`);
+      setFinalisingSession(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not complete finalising.');
+    } finally {
+      setCompletingFinalising(false);
+    }
+  };
 
   const handleSessionClick = (session: Session) => {
     if (session.status === 'ACTIVE' || session.status === 'LOCKED' || session.status === 'CLOSED') {
@@ -165,6 +192,12 @@ export const DashboardPage = () => {
         </Flash>
       )}
 
+      {completionMessage && (
+        <Flash variant="success" sx={{ mb: 3 }}>
+          {completionMessage}
+        </Flash>
+      )}
+
       {recentRound2Winner && (
         <Flash variant="success" sx={{ mb: 3, py: 2 }}>
           🏆 Overall best patrol for <strong>{recentWinnerDateLabel}</strong>: <strong>{recentRound2Winner.winner_subcamp_name} - {recentRound2Winner.winner_patrol_name}</strong>
@@ -213,13 +246,25 @@ export const DashboardPage = () => {
             Finalising
           </Heading>
           {finalisingSessions.map((session) => (
-            <SessionCard
-              key={session.id}
-              session={session}
-              onClick={() => handleSessionClick(session)}
-              recentlyFinalised={session.user_finalised}
-              note={leaderNoteFor(session)}
-            />
+            <Box key={session.id}>
+              <SessionCard
+                session={session}
+                onClick={() => handleSessionClick(session)}
+                recentlyFinalised={session.user_finalised}
+                note={leaderNoteFor(session)}
+              />
+              {user?.is_admin && (
+                <Box display="flex" justifyContent="flex-end" mt={-1} mb={2} px={1}>
+                  <Button
+                    variant="danger"
+                    size="small"
+                    onClick={() => setFinalisingSession(session)}
+                  >
+                    Mark Finalising Complete
+                  </Button>
+                </Box>
+              )}
+            </Box>
           ))}
         </Box>
       )}
@@ -292,6 +337,22 @@ export const DashboardPage = () => {
             No sessions available yet.
           </Text>
         </Box>
+      )}
+      {finalisingSession && (
+        <ConfirmationDialog
+          title="Mark Finalising Complete?"
+          confirmButtonContent={completingFinalising ? 'Completing...' : 'Mark Finalising Complete'}
+          confirmButtonType="danger"
+          onClose={(gesture) => {
+            if (gesture === 'confirm') {
+              void handleCompleteFinalising();
+            } else if (!completingFinalising) {
+              setFinalisingSession(null);
+            }
+          }}
+        >
+          This will lock the linked Round 2 session and move this session out of Finalising into Closed.
+        </ConfirmationDialog>
       )}
     </Box>
   );

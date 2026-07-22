@@ -261,6 +261,13 @@ export const unlockSession = async (
     method: 'POST',
   });
 
+export const completeFinalisingSession = async (
+  sessionId: string,
+): Promise<{ ok: boolean; source_session: Session; round2_session: Session }> =>
+  request(`/admin/sessions/${sessionId}/complete-finalising`, {
+    method: 'POST',
+  });
+
 export interface Round2Finalist {
   subcamp_id: string;
   subcamp_name: string;

@@ -126,6 +126,7 @@ func run(ctx context.Context) error {
 	mux.Handle("POST /api/submissions/{id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSubmission))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/lock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.LockSession))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockSession))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/complete-finalising", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.CompleteFinalisingSession))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/round2", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.EnsureRound2))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/round2/finalists", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.GetRound2Finalists))))
 	mux.Handle("PUT /api/admin/sessions/{session_id}/round2/finalists/{subcamp_id}", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.SetRound2Finalist))))

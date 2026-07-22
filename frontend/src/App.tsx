@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ThemeProvider, BaseStyles, Spinner, Box } from '@primer/react';
+import { ThemeProvider, BaseStyles, Spinner, Box, Flash } from '@primer/react';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { useWebSocket } from './hooks/useWebSocket';
 import { LoginPage } from './pages/LoginPage';
@@ -40,10 +40,25 @@ const ProtectedRoute = ({ children }: { children: ReactNode }) => {
 
 const WebSocketProvider = ({ children }: { children: ReactNode }) => {
   const { user } = useAuth();
-  useWebSocket(!!user);
+  const { status } = useWebSocket(!!user);
+  const showConnectionBanner = !!user && (status === 'reconnecting' || status === 'disconnected');
+
+  const bannerText = status === 'reconnecting'
+    ? 'Live updates connection lost. Reconnecting...'
+    : 'Live updates are offline. Try refreshing if this persists.';
+
   // Key on user ID so the entire tree remounts on user change,
   // clearing all component-level state (scores, sessions, etc.)
-  return <div key={user?.id ?? 'anon'}>{children}</div>;
+  return (
+    <>
+      {showConnectionBanner && (
+        <Box position="sticky" top={0} zIndex={1000} px={3} pt={2}>
+          <Flash variant={status === 'reconnecting' ? 'warning' : 'danger'}>{bannerText}</Flash>
+        </Box>
+      )}
+      <div key={user?.id ?? 'anon'}>{children}</div>
+    </>
+  );
 };
 
 const AdminOnlyRoute = ({ children }: { children: ReactNode }) => {

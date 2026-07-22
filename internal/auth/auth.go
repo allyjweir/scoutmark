@@ -11,6 +11,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type tokenSource int
+
+const (
+	tokenSourceNone tokenSource = iota
+	tokenSourceAuthorization
+	tokenSourceCookie
+)
+
 type contextKey string
 
 const (
@@ -42,7 +50,7 @@ func UserFromContext(ctx context.Context) *AuthUser {
 func Middleware(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractToken(r)
+			token, source := extractTokenWithSource(r)
 			if token == "" {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 				return
@@ -75,6 +83,24 @@ func Middleware(db *database.DB) func(http.Handler) http.Handler {
 				IsCampChief:            user.IsCampChief,
 				SubcampID:              user.SubcampID,
 				PasswordChangeRequired: user.PasswordChangeRequired,
+			}
+
+			// WebSocket upgrades in browsers cannot send Authorization headers.
+			// If this request authenticated via Bearer token, persist the same
+			// token as an HttpOnly cookie so subsequent /api/ws upgrades can auth.
+			if source == tokenSourceAuthorization {
+				if _, err := r.Cookie("session_token"); err != nil {
+					isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+					http.SetCookie(w, &http.Cookie{
+						Name:     "session_token",
+						Value:    token,
+						Path:     "/",
+						HttpOnly: true,
+						Secure:   isSecure,
+						SameSite: http.SameSiteLaxMode,
+						Expires:  time.Now().Add(SessionDuration),
+					})
+				}
 			}
 
 			// Add user attributes to the trace span
@@ -110,17 +136,23 @@ func CheckPassword(password, hash string) bool {
 }
 
 func extractToken(r *http.Request) string {
+	// Deprecated helper retained for compatibility if referenced elsewhere.
+	token, _ := extractTokenWithSource(r)
+	return token
+}
+
+func extractTokenWithSource(r *http.Request) (string, tokenSource) {
 	// Check Authorization header first
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimPrefix(authHeader, "Bearer ")
+		return strings.TrimPrefix(authHeader, "Bearer "), tokenSourceAuthorization
 	}
 
 	// Fall back to cookie (also used for WebSocket upgrade requests)
 	cookie, err := r.Cookie("session_token")
 	if err == nil {
-		return cookie.Value
+		return cookie.Value, tokenSourceCookie
 	}
 
-	return ""
+	return "", tokenSourceNone
 }

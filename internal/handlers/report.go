@@ -121,14 +121,6 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	pendantWinnerText := ""
-	if winner, err := h.db.GetRound2WinnerForSourceSession(ctx, sessionID); err != nil {
-		writeError(w, r, http.StatusInternalServerError, "failed to load overall winner")
-		return
-	} else if winner != nil {
-		pendantWinnerText = fmt.Sprintf("Camp Chief's Pendant Winners: %s %s", winner.SubcampName, winner.PatrolName)
-	}
-
 	// Generate PDF
 	pdf := fpdf.New("L", "mm", "A4", "") // landscape for wide tables
 	pdf.SetAutoPageBreak(true, 15)
@@ -234,13 +226,6 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 			pdf.CellFormat(criteriaColW, 6, fmt.Sprintf("%d", val), "1", 0, "C", false, 0, "")
 		}
 		pdf.CellFormat(totalColW, 6, fmt.Sprintf("%d", pe.total), "1", 1, "C", false, 0, "")
-	}
-
-	// Winner line directly under the summary table.
-	pdf.Ln(4)
-	if pendantWinnerText != "" {
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(0, 4, truncate(pendantWinnerText, 120), "", 1, "L", false, 0, "")
 	}
 
 	// ─── Footer with generation timestamp ───────────────────────
@@ -351,17 +336,58 @@ func renderPatrolScorecard(
 
 	pdf.SetFont("Arial", "", 8)
 	for _, c := range criteria {
-		if pdf.GetY()+rowH > innerBottom {
+		score := patrol.scores[c.ID]
+		commentSummary := summarizeComments(commentsByCriterion[c.ID], 1000)
+
+		catLines := pdf.SplitLines([]byte(truncate(c.Title, 42)), titleW-2)
+		scoreText := fmt.Sprintf("%d/%d", score, c.MaxValue)
+		scoreLines := pdf.SplitLines([]byte(scoreText), scoreW-2)
+		commentLines := pdf.SplitLines([]byte(commentSummary), commentW-2)
+
+		lineCount := len(catLines)
+		if len(scoreLines) > lineCount {
+			lineCount = len(scoreLines)
+		}
+		if len(commentLines) > lineCount {
+			lineCount = len(commentLines)
+		}
+		if lineCount == 0 {
+			lineCount = 1
+		}
+
+		rowHeight := float64(lineCount) * rowH
+		if pdf.GetY()+rowHeight > innerBottom {
 			break
 		}
 
-		score := patrol.scores[c.ID]
-		commentSummary := summarizeComments(commentsByCriterion[c.ID], 100)
+		rowY := pdf.GetY()
+		lineY := rowY
+		for i := 0; i < lineCount; i++ {
+			catText := ""
+			scoreLineText := ""
+			commentText := ""
 
-		pdf.SetX(innerX)
-		pdf.CellFormat(titleW, rowH, truncate(c.Title, 42), "1", 0, "L", false, 0, "")
-		pdf.CellFormat(scoreW, rowH, fmt.Sprintf("%d/%d", score, c.MaxValue), "1", 0, "C", false, 0, "")
-		pdf.CellFormat(commentW, rowH, commentSummary, "1", 1, "L", false, 0, "")
+			if i < len(catLines) {
+				catText = string(catLines[i])
+			}
+			if i < len(scoreLines) {
+				scoreLineText = string(scoreLines[i])
+			}
+			if i < len(commentLines) {
+				commentText = string(commentLines[i])
+			}
+
+			bottomBorder := ""
+			if i == lineCount-1 {
+				bottomBorder = "B"
+			}
+
+			pdf.SetXY(innerX, lineY)
+			pdf.CellFormat(titleW, rowH, catText, "LR"+bottomBorder, 0, "L", false, 0, "")
+			pdf.CellFormat(scoreW, rowH, scoreLineText, "LR"+bottomBorder, 0, "C", false, 0, "")
+			pdf.CellFormat(commentW, rowH, commentText, "LR"+bottomBorder, 1, "L", false, 0, "")
+			lineY += rowH
+		}
 	}
 
 }

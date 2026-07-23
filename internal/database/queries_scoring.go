@@ -752,7 +752,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				SubmittedAt: time.Now(),
 			})
 			createdSubmissions++
-			defaultedScoresCount := len(scores) - draftScoreCount
+			defaultedScoresCount := len(criterionIDs) - draftScoreCount
 			if defaultedScoresCount < 0 {
 				defaultedScoresCount = 0
 			}

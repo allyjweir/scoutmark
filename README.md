@@ -25,7 +25,7 @@ A mobile-first web application for scoring scout patrols across configurable cri
 
 - Go 1.22+
 - Node.js 20+
-- MySQL 8+
+- Postgres
 - [Buf CLI](https://buf.build/docs/installation)
 - Honeycomb API key (for tracing)
 

@@ -1189,7 +1189,32 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.db.ReviseSession(ctx, user.ID, sessionID); err != nil {
+	var req struct {
+		SubcampID string `json:"subcamp_id"`
+	}
+	if err := readJSON(r, &req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	targetSubcampID := ""
+	if req.SubcampID != "" {
+		if !user.IsAdmin {
+			writeError(w, r, http.StatusForbidden, "only admins can revise another subcamp")
+			return
+		}
+		targetSubcampID = req.SubcampID
+	} else if user.SubcampID != nil {
+		targetSubcampID = *user.SubcampID
+	} else if user.IsAdmin {
+		writeError(w, r, http.StatusBadRequest, "subcamp_id is required for admin users without an assigned subcamp")
+		return
+	} else {
+		writeError(w, r, http.StatusForbidden, "user is not assigned to a subcamp")
+		return
+	}
+
+	if err := h.db.ReviseSessionSubcamp(ctx, user.ID, sessionID, targetSubcampID); err != nil {
 		tracing.RecordError(ctx, err)
 		writeError(w, r, http.StatusInternalServerError, "could not revise session")
 		return

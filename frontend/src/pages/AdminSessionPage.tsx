@@ -753,7 +753,6 @@ export const AdminSessionPage = () => {
                   {subcamp.submittedCount} finalised · {subcamp.completeCount} complete · {subcamp.draftingCount + subcamp.notStartedCount} incomplete
                 </Text>
               </Box>
-
               <Box
                 px={3}
                 pb={3}

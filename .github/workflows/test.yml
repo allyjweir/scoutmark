@@ -1,0 +1,46 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: scoutmark
+          POSTGRES_PASSWORD: scoutmark
+          POSTGRES_DB: scoutmark
+        options: >-
+          --health-cmd "pg_isready -U scoutmark"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TEST_DB_USER: scoutmark
+      TEST_DB_PASSWORD: scoutmark
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-go@v5.0.2
+        with:
+          go-version: '1.24'
+      - uses: actions/setup-node@v4.0.4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: go test ./...
+        env:
+          TEST_DATABASE_URL: postgres://${{ env.TEST_DB_USER }}:${{ env.TEST_DB_PASSWORD }}@localhost:5432/scoutmark?sslmode=disable
+      - run: npm ci && npm run build
+        working-directory: frontend

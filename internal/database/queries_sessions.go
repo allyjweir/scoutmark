@@ -255,16 +255,24 @@ func (d *DB) ListSubcamps(ctx context.Context) ([]SubcampRow, error) {
 	return subcamps, rows.Err()
 }
 
-// SessionSubcampRow includes lock state for a session's participating subcamps.
+// SessionSubcampRow includes lock and finalisation state for a session's participating subcamps.
 type SessionSubcampRow struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	LockedAt *time.Time `json:"locked_at,omitempty"`
-	LockedBy *string    `json:"locked_by,omitempty"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	LockedAt  *time.Time `json:"locked_at,omitempty"`
+	LockedBy  *string    `json:"locked_by,omitempty"`
+	Finalised bool       `json:"finalised"`
 }
 
 func (d *DB) ListSessionSubcamps(ctx context.Context, sessionID string) ([]SessionSubcampRow, error) {
-	rows, err := d.QueryContext(ctx, `SELECT sc.id, sc.name, ssl.locked_at, locker.display_name
+	rows, err := d.QueryContext(ctx, `SELECT sc.id, sc.name, ssl.locked_at, locker.display_name,
+		EXISTS (SELECT 1 FROM patrols p WHERE p.subcamp_id = sc.id
+			AND (NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = ss.session_id)
+				OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = ss.session_id AND sp.patrol_id = p.id)))
+		AND NOT EXISTS (SELECT 1 FROM patrols p WHERE p.subcamp_id = sc.id
+			AND (NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = ss.session_id)
+				OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = ss.session_id AND sp.patrol_id = p.id))
+			AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.session_id = ss.session_id AND s.patrol_id = p.id))
 		FROM session_subcamps ss JOIN subcamps sc ON sc.id = ss.subcamp_id
 		LEFT JOIN session_subcamp_locks ssl ON ssl.session_id = ss.session_id AND ssl.subcamp_id = ss.subcamp_id
 		LEFT JOIN users locker ON locker.id = ssl.locked_by
@@ -276,7 +284,7 @@ func (d *DB) ListSessionSubcamps(ctx context.Context, sessionID string) ([]Sessi
 	var subcamps []SessionSubcampRow
 	for rows.Next() {
 		var subcamp SessionSubcampRow
-		if err := rows.Scan(&subcamp.ID, &subcamp.Name, &subcamp.LockedAt, &subcamp.LockedBy); err != nil {
+		if err := rows.Scan(&subcamp.ID, &subcamp.Name, &subcamp.LockedAt, &subcamp.LockedBy, &subcamp.Finalised); err != nil {
 			return nil, fmt.Errorf("scanning session subcamp: %w", err)
 		}
 		subcamps = append(subcamps, subcamp)

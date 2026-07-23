@@ -159,6 +159,67 @@ func TestRound2FinaliseRequiresFinalistsForEverySubcamp(t *testing.T) {
 	}
 }
 
+func TestCreateRound2FromRegularSession(t *testing.T) {
+	db := newIntegrationDB(t)
+	ctx := context.Background()
+
+	mustExec(t, db, `INSERT INTO events (id, name, description) VALUES ('event', 'Event', '')`)
+	mustExec(t, db, `INSERT INTO criteria_templates (id, name, description) VALUES ('template', 'Template', '')`)
+	mustExec(t, db, `INSERT INTO subcamps (id, name) VALUES ('alpha', 'Alpha'), ('bravo', 'Bravo')`)
+	mustExec(t, db, `INSERT INTO users (id, username, password_hash, display_name, is_admin, password_change_required)
+		VALUES ('admin', 'admin', 'hash', 'Administrator', TRUE, FALSE)`)
+	mustExec(t, db, `INSERT INTO user_sessions (token, user_id, expires_at) VALUES ('admin-token', 'admin', $1)`, time.Now().Add(time.Hour))
+	mustExec(t, db, `INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at)
+		VALUES ('regular', 'event', 'template', 'Inspection', $1, $2)`, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
+	mustExec(t, db, `INSERT INTO session_subcamps (session_id, subcamp_id) VALUES ('regular', 'alpha'), ('regular', 'bravo')`)
+
+	handler := NewSessionHandler(db, nil)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/admin/sessions/{session_id}/round2", auth.Middleware(db)(auth.RequireAdmin(http.HandlerFunc(handler.CreateAdminRound2Session))))
+
+	startsAt := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	endsAt := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/sessions/regular/round2", bytes.NewBufferString(`{"starts_at":"`+startsAt+`","ends_at":"`+endsAt+`"}`))
+	request.Header.Set("Authorization", "Bearer admin-token")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create round 2 response = %d, want %d: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	var result struct {
+		Session sessionJSON `json:"session"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatalf("decoding create round 2 response: %v", err)
+	}
+	if result.Session.RoundType != "round2" || result.Session.Name != "Inspection - Round 2" {
+		t.Fatalf("created session = %#v, want Round 2 copied from regular session", result.Session)
+	}
+
+	created, err := db.GetSession(ctx, result.Session.ID)
+	if err != nil {
+		t.Fatalf("getting created round 2: %v", err)
+	}
+	if created.EventID != "event" || created.TemplateID != "template" || !created.AwardBestPatrol || created.AwardMostImproved {
+		t.Fatalf("created round 2 settings were not copied correctly: %#v", created)
+	}
+	subcamps, err := db.ListSessionSubcamps(ctx, result.Session.ID)
+	if err != nil {
+		t.Fatalf("listing created round 2 subcamps: %v", err)
+	}
+	if len(subcamps) != 2 {
+		t.Fatalf("created round 2 subcamps = %d, want 2", len(subcamps))
+	}
+	var finalists int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_patrols WHERE session_id = $1`, result.Session.ID).Scan(&finalists); err != nil {
+		t.Fatalf("counting created round 2 finalists: %v", err)
+	}
+	if finalists != 0 {
+		t.Fatalf("created round 2 finalists = %d, want 0", finalists)
+	}
+}
+
 func newIntegrationDB(t *testing.T) *database.DB {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")

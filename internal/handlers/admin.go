@@ -180,6 +180,35 @@ func (h *SessionHandler) UpdateAdminSession(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"session": sessionResponse(session)})
 }
 
+// CreateAdminRound2Session handles POST /api/admin/sessions/{session_id}/round2.
+func (h *SessionHandler) CreateAdminRound2Session(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StartsAt string `json:"starts_at"`
+		EndsAt   string `json:"ends_at"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	startsAt, err := time.Parse(time.RFC3339, req.StartsAt)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "starts_at must be an ISO 8601 timestamp")
+		return
+	}
+	endsAt, err := time.Parse(time.RFC3339, req.EndsAt)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "ends_at must be an ISO 8601 timestamp")
+		return
+	}
+
+	session, err := h.db.CreateRound2FromSession(r.Context(), r.PathValue("session_id"), startsAt, endsAt)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"session": sessionResponse(session)})
+}
+
 // ListAdminSessionSubcamps handles GET /api/admin/sessions/{session_id}/subcamps.
 func (h *SessionHandler) ListAdminSessionSubcamps(w http.ResponseWriter, r *http.Request) {
 	subcamps, err := h.db.ListSessionSubcamps(r.Context(), r.PathValue("session_id"))

@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type Round2FinalistRow struct {
@@ -46,6 +49,68 @@ type Round2WinnerRow struct {
 	PatrolName  string
 	SubcampID   string
 	SubcampName string
+}
+
+// CreateRound2FromSession creates a standalone Round 2 session with the source
+// session's event, criteria template, and participating subcamps.
+func (d *DB) CreateRound2FromSession(ctx context.Context, sourceSessionID string, startsAt, endsAt time.Time) (*SessionDetailRow, error) {
+	if !endsAt.After(startsAt) {
+		return nil, fmt.Errorf("round 2 end time must be after its start time")
+	}
+
+	round2ID := uuid.NewString()
+	err := d.InTx(ctx, func(tx *sql.Tx) error {
+		var eventID, templateID, sourceName, roundType string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT event_id, template_id, name, round_type
+			 FROM sessions WHERE id = $1`,
+			sourceSessionID,
+		).Scan(&eventID, &templateID, &sourceName, &roundType); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("source session not found")
+			}
+			return fmt.Errorf("loading source session: %w", err)
+		}
+		if roundType != "regular" {
+			return fmt.Errorf("round 2 can only be created from a regular session")
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (
+				id, event_id, template_id, name, starts_at, ends_at,
+				round_type, award_best_patrol, award_most_improved
+			) VALUES ($1, $2, $3, $4, $5, $6, 'round2', TRUE, FALSE)`,
+			round2ID, eventID, templateID, sourceName+" - Round 2", startsAt, endsAt,
+		); err != nil {
+			return fmt.Errorf("creating round 2 session: %w", err)
+		}
+
+		result, err := tx.ExecContext(ctx,
+			`INSERT INTO session_subcamps (session_id, subcamp_id)
+			 SELECT $1, subcamp_id FROM session_subcamps WHERE session_id = $2`,
+			round2ID, sourceSessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("copying round 2 subcamps: %w", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("checking copied round 2 subcamps: %w", err)
+		}
+		if count == 0 {
+			return fmt.Errorf("source session has no participating subcamps")
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	session, err := d.GetSession(ctx, round2ID)
+	if err != nil {
+		return nil, fmt.Errorf("loading created round 2 session: %w", err)
+	}
+	return session, nil
 }
 
 // Round2FinalistsReady reports whether every participating subcamp has a finalist.

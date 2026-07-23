@@ -1191,6 +1191,24 @@ export const ScoringPage = () => {
         })()}
       </Box>
 
+      {session.round_type === 'round2' && (
+        <Box
+          px={3}
+          py={2}
+          borderBottomWidth={1}
+          borderBottomStyle="solid"
+          borderBottomColor="border.default"
+          bg="canvas.default"
+        >
+          <Text as="p" sx={{ fontSize: 0, mb: 1 }}>
+            Hi Colin, each of the patrols below received the highest score for their subcamp. You can score each of them and then select the Camp Chief&apos;s Pendant award winner at the end on the &quot;Summary&quot; page.
+          </Text>
+          <Text as="p" sx={{ fontSize: 0, color: 'fg.muted' }}>
+            Any problems, message me on WhatsApp - Ally
+          </Text>
+        </Box>
+      )}
+
       {error && (
         <Flash variant="danger" sx={{ m: 3 }}>
           {error}
@@ -1625,7 +1643,7 @@ export const ScoringPage = () => {
                     }}
                     title={hasPresence ? activeUsers.map(u => `${u.user_name} ${u.mode}`).join(', ') : undefined}
                   >
-                    {patrolLabel(patrol)}
+                    {patrolTitle(patrol)}
                     {patrolCommentCount > 0 && (
                       <Text sx={{ ml: 1, fontSize: 0, opacity: 0.8 }}>💬{patrolCommentCount}</Text>
                     )}

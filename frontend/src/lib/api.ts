@@ -320,6 +320,16 @@ export const updateAdminSession = async (
     body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
   });
 
+export const createAdminRound2Session = async (
+  sessionId: string,
+  startsAt: string,
+  endsAt: string,
+): Promise<{ session: Session }> =>
+  request(`/admin/sessions/${sessionId}/round2`, {
+    method: 'POST',
+    body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
+  });
+
 export const getAdminSessionSubcamps = async (
   sessionId: string,
 ): Promise<{ subcamps: AdminSubcamp[] }> =>

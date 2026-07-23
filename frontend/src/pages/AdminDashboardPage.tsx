@@ -31,6 +31,9 @@ export const AdminDashboardPage = () => {
   const [newUser, setNewUser] = useState({ username: '', display_name: '', password: '', subcamp_id: '', is_admin: false });
   const [passwordUser, setPasswordUser] = useState<AdminUser | null>(null);
   const [newPassword, setNewPassword] = useState('');
+  const [round2Source, setRound2Source] = useState<Session | null>(null);
+  const [round2StartsAt, setRound2StartsAt] = useState('');
+  const [round2EndsAt, setRound2EndsAt] = useState('');
 
   const load = useCallback(async () => {
     const [sessionData, userData, subcampData] = await Promise.all([
@@ -121,6 +124,39 @@ export const AdminDashboardPage = () => {
     }
   };
 
+  const openRound2Creator = (session: Session) => {
+    const sourceDuration = new Date(session.ends_at).getTime() - new Date(session.starts_at).getTime();
+    const duration = Math.max(sourceDuration, 60 * 60 * 1000);
+    const startsAt = nowUTCDateTimeLocal();
+    const endsAt = new Date(Date.now() + duration).toISOString().slice(0, 16);
+    setRound2Source(session);
+    setRound2StartsAt(startsAt);
+    setRound2EndsAt(endsAt);
+    setError('');
+  };
+
+  const createRound2 = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!round2Source) return;
+    setSaving('create-round2');
+    setError('');
+    try {
+      const { session } = await api.createAdminRound2Session(
+        round2Source.id,
+        asUTCISO(round2StartsAt),
+        asUTCISO(round2EndsAt),
+      );
+      setSessions((items) => [...items, session]);
+      setRound2Source(null);
+      setNotice(`${session.name} created. Select one finalist for each subcamp.`);
+      navigate(`/admin/sessions/${session.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create Round 2');
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const createUser = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving('create-user');
@@ -154,6 +190,16 @@ export const AdminDashboardPage = () => {
     }
   };
 
+  const newestSessions = (status: Session['status']) => sessions
+    .filter((session) => session.status === status)
+    .sort((first, second) => new Date(second.created_at).getTime() - new Date(first.created_at).getTime());
+  const sessionGroups = [
+    { title: 'Open', sessions: newestSessions('ACTIVE') },
+    { title: 'Locked', sessions: newestSessions('LOCKED') },
+    { title: 'Closed', sessions: newestSessions('CLOSED') },
+    { title: 'Upcoming', sessions: newestSessions('UPCOMING') },
+  ];
+
   if (loading) return <Box display="flex" justifyContent="center" minHeight="100vh" alignItems="center"><Spinner size="large" /></Box>;
 
   return (
@@ -168,25 +214,46 @@ export const AdminDashboardPage = () => {
       {error && <Flash variant="danger" sx={{ mb: 3 }}>{error}</Flash>}
       {notice && <Flash variant="success" sx={{ mb: 3 }}>{notice}</Flash>}
 
-      <Heading sx={{ fontSize: 2, mb: 2 }}>All sessions</Heading>
-      <Box display="flex" flexDirection="column" sx={{ gap: 2 }} mb={5}>
-        {sessions.map((session) => (
-          <SessionAdminCard
-            key={session.id}
-            session={session}
-            open={expanded === session.id}
-            subcamps={sessionSubcamps[session.id] ?? []}
-            busy={saving}
-            onToggle={() => toggleSession(session.id)}
-            onSave={saveTimes}
-            onLock={changeSubcampLock}
-            onFinalise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, false)}
-            onRevise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, true)}
-            onUnlockSession={unlockSession}
-            onScores={() => navigate(`/admin/sessions/${session.id}/scores`)}
-          />
+      <Heading sx={{ fontSize: 2, mb: 3 }}>Sessions</Heading>
+      <Box display="flex" flexDirection="column" sx={{ gap: 4 }} mb={5}>
+        {sessionGroups.map((group) => group.sessions.length > 0 && (
+          <Box key={group.title}>
+            <Heading sx={{ fontSize: 1, mb: 2, color: 'fg.muted' }}>{group.title}</Heading>
+            <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+              {group.sessions.map((session) => (
+                <SessionAdminCard
+                  key={session.id}
+                  session={session}
+                  open={expanded === session.id}
+                  subcamps={sessionSubcamps[session.id] ?? []}
+                  busy={saving}
+                  onToggle={() => toggleSession(session.id)}
+                  onSave={saveTimes}
+                  onLock={changeSubcampLock}
+                  onFinalise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, false)}
+                  onRevise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, true)}
+                  onUnlockSession={unlockSession}
+                  onScores={() => navigate(`/admin/sessions/${session.id}/scores`)}
+                  onCreateRound2={() => openRound2Creator(session)}
+                />
+              ))}
+            </Box>
+          </Box>
         ))}
       </Box>
+
+      {round2Source && (
+        <Box as="form" onSubmit={createRound2} p={3} mb={5} borderWidth={1} borderStyle="solid" borderColor="accent.emphasis" borderRadius={2} bg="accent.subtle">
+          <Heading sx={{ fontSize: 2, mb: 1 }}>Create Round 2</Heading>
+          <Text sx={{ fontSize: 1, color: 'fg.muted', display: 'block', mb: 3 }}>{round2Source.name}</Text>
+          <FormControl sx={{ mb: 2 }}><FormControl.Label>Opens</FormControl.Label><TextInput required type="datetime-local" value={round2StartsAt} onChange={(event) => setRound2StartsAt(event.target.value)} /></FormControl>
+          <FormControl sx={{ mb: 3 }}><FormControl.Label>Closes</FormControl.Label><TextInput required type="datetime-local" value={round2EndsAt} onChange={(event) => setRound2EndsAt(event.target.value)} /></FormControl>
+          <Box display="flex" sx={{ gap: 2 }}>
+            <Button type="submit" disabled={saving === 'create-round2'}>{saving === 'create-round2' ? 'Creating...' : 'Create and select finalists'}</Button>
+            <Button type="button" onClick={() => setRound2Source(null)} disabled={saving === 'create-round2'}>Cancel</Button>
+          </Box>
+        </Box>
+      )}
 
       <Box borderTopWidth={1} borderTopStyle="solid" borderTopColor="border.default" pt={4}>
         <Heading sx={{ fontSize: 2, mb: 2 }}>Users</Heading>
@@ -222,12 +289,12 @@ export const AdminDashboardPage = () => {
   );
 };
 
-const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onLock, onFinalise, onRevise, onUnlockSession, onScores }: {
+const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onLock, onFinalise, onRevise, onUnlockSession, onScores, onCreateRound2 }: {
   session: Session; open: boolean; subcamps: AdminSubcamp[]; busy: string | null;
   onToggle: () => void; onSave: (session: Session, starts: string, ends: string) => void;
   onLock: (sessionId: string, subcamp: AdminSubcamp) => void;
   onFinalise: (sessionId: string, subcamp: AdminSubcamp) => void;
-  onUnlockSession: (session: Session) => void;
+  onUnlockSession: (session: Session) => void; onCreateRound2: () => void;
   onRevise: (sessionId: string, subcamp: AdminSubcamp) => void; onScores: () => void;
 }) => {
   const sessionStartsAt = toUTCDateTimeLocal(session.starts_at);
@@ -265,6 +332,7 @@ const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onL
           <Button size="small" onClick={closeNow} disabled={busy === session.id}>Close now</Button>
           {session.status === 'LOCKED' && <Button size="small" onClick={() => onUnlockSession(session)} disabled={busy === session.id}>Unlock session</Button>}
           <Button size="small" onClick={onScores}>Edit patrol scores</Button>
+          {session.round_type !== 'round2' && <Button size="small" onClick={onCreateRound2}>Create Round 2</Button>}
         </Box>
       </Box>
       {hasScheduleChanges && <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }} mb={3}><Button size="small" onClick={() => onSave(session, startsAt, endsAt)} disabled={busy === session.id}>Save schedule</Button></Box>}

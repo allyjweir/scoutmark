@@ -119,6 +119,7 @@ func run(ctx context.Context) error {
 	mux.Handle("PUT /api/admin/users/{user_id}/password", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.ResetAdminUserPassword))))
 	mux.Handle("GET /api/admin/subcamps", authMiddleware(auth.RequireAdmin(http.HandlerFunc(authHandler.ListAdminSubcamps))))
 	mux.Handle("PUT /api/admin/sessions/{session_id}", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UpdateAdminSession))))
+	mux.Handle("POST /api/admin/sessions/{session_id}/round2", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.CreateAdminRound2Session))))
 	mux.Handle("GET /api/admin/sessions/{session_id}/subcamps", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.ListAdminSessionSubcamps))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/subcamps/{subcamp_id}/lock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.LockAdminSessionSubcamp))))
 	mux.Handle("POST /api/admin/sessions/{session_id}/subcamps/{subcamp_id}/unlock", authMiddleware(auth.RequireAdmin(http.HandlerFunc(sessionHandler.UnlockAdminSessionSubcamp))))

@@ -25,6 +25,7 @@ export const ScoringPage = () => {
   const [currentPatrolIndex, setCurrentPatrolIndex] = useState(0);
   const [scores, setScores] = useState<Record<string, number | null>>({});
   const [comments, setComments] = useState<Record<string, string>>({});
+  const [loadingPatrol, setLoadingPatrol] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [unlockingSession, setUnlockingSession] = useState(false);
@@ -68,9 +69,23 @@ export const ScoringPage = () => {
 
   // Ref for current patrol ID to use in WS callback
   const currentPatrolIdRef = useRef<string>('');
+  const draftLoadVersionRef = useRef(0);
 
   const currentPatrol = patrols[currentPatrolIndex];
   const criteria = session?.criteria ?? [];
+
+  const resetScoreInputs = useCallback(() => {
+    const initialScores: Record<string, number | null> = {};
+    const initialComments: Record<string, string> = {};
+    for (const criterion of criteria) {
+      initialScores[criterion.id] = null;
+      initialComments[criterion.id] = '';
+    }
+    setScores(initialScores);
+    setComments(initialComments);
+    setCommentingOn(undefined);
+  }, [criteria]);
+
   const patrolLabel = (patrol: Patrol): string => {
     if (session?.round_type === 'round2') {
       return patrol.subcamp || patrol.name;
@@ -419,8 +434,14 @@ export const ScoringPage = () => {
   useEffect(() => {
     if (!sessionId || !currentPatrol || view !== 'scoring') return;
 
+    const patrolID = currentPatrol.patrol_id;
+    const loadVersion = draftLoadVersionRef.current;
+    const isCurrentLoad = () => draftLoadVersionRef.current === loadVersion && currentPatrolIdRef.current === patrolID;
+    setLoadingPatrol(true);
+
     // Load draft scores
-    api.getDraft(sessionId, currentPatrol.patrol_id).then(({ draft }) => {
+    api.getDraft(sessionId, patrolID).then(({ draft }) => {
+      if (!isCurrentLoad()) return;
       if (draft?.scores?.length) {
         const restored: Record<string, number | null> = mapValues(
           keyBy(draft.scores, 'criterion_id'),
@@ -431,12 +452,12 @@ export const ScoringPage = () => {
         // Mark all restored criteria as touched
         setTouchedMap((prev) => ({
           ...prev,
-          [currentPatrol.patrol_id]: new Set(draft.scores.map((s) => s.criterion_id)),
+          [patrolID]: new Set(draft.scores.map((s) => s.criterion_id)),
         }));
 
         // Update patrol total
         const total = draft.scores.reduce((sum, s) => sum + s.value, 0);
-        setPatrolTotals((prev) => ({ ...prev, [currentPatrol.patrol_id]: total }));
+        setPatrolTotals((prev) => ({ ...prev, [patrolID]: total }));
       } else {
         // Initialize with null — slider shows at 0 but dimmed/unset
         const initial: Record<string, number | null> = {};
@@ -445,10 +466,17 @@ export const ScoringPage = () => {
         }
         setScores(initial);
       }
+    }).catch(() => {
+      if (!isCurrentLoad()) return;
+      resetScoreInputs();
+      setError('Could not load saved scores for this patrol. Please try again.');
+    }).finally(() => {
+      if (isCurrentLoad()) setLoadingPatrol(false);
     });
 
     // Load per-user comments (all users) and extract own comments for the textarea
-    api.getDraftComments(sessionId, currentPatrol.patrol_id).then(({ comments: cmts }) => {
+    api.getDraftComments(sessionId, patrolID).then(({ comments: cmts }) => {
+      if (!isCurrentLoad()) return;
       if (cmts?.length) {
         const mapped: DraftComment[] = cmts.map((c) => ({
           criterion_id: c.criterion_id,
@@ -457,7 +485,7 @@ export const ScoringPage = () => {
           comment: c.comment,
           updated_at: c.updated_at,
         }));
-        setPerUserComments((prev) => ({ ...prev, [currentPatrol.patrol_id]: mapped }));
+        setPerUserComments((prev) => ({ ...prev, [patrolID]: mapped }));
 
         // Extract the current user's comments for the local textarea state
         const ownComments: Record<string, string> = {};
@@ -479,6 +507,7 @@ export const ScoringPage = () => {
         setComments(initialComments);
       }
     }).catch(() => {
+      if (!isCurrentLoad()) return;
       // Fallback: initialize empty comments
       const initialComments: Record<string, string> = {};
       for (const c of criteria) {
@@ -486,7 +515,7 @@ export const ScoringPage = () => {
       }
       setComments(initialComments);
     });
-  }, [sessionId, currentPatrol?.patrol_id, criteria, view, user?.id]);
+  }, [sessionId, currentPatrol?.patrol_id, criteria, view, user?.id, resetScoreInputs]);
 
   // Auto-save scores when they change (only save non-null values)
   const handleScoreChange = useCallback(
@@ -584,13 +613,17 @@ export const ScoringPage = () => {
   // Navigate between patrols
   const goToPatrol = useCallback(
     async (index: number) => {
+      setLoadingPatrol(true);
       flushAllCommentSaves();
       await flushDraft();
+      draftLoadVersionRef.current += 1;
+      currentPatrolIdRef.current = patrols[index]?.patrol_id ?? '';
+      resetScoreInputs();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(false);
     },
-    [flushDraft, flushAllCommentSaves],
+    [flushDraft, flushAllCommentSaves, patrols, resetScoreInputs],
   );
 
   const goToSummary = useCallback(async () => {
@@ -603,13 +636,17 @@ export const ScoringPage = () => {
   // Jump from summary to a specific patrol, with "Back to Summary" nav
   const jumpToPatrolFromSummary = useCallback(
     async (index: number) => {
+      setLoadingPatrol(true);
       flushAllCommentSaves();
       await flushDraft();
+      draftLoadVersionRef.current += 1;
+      currentPatrolIdRef.current = patrols[index]?.patrol_id ?? '';
+      resetScoreInputs();
       setCurrentPatrolIndex(index);
       setView('scoring');
       setJumpedFromSummary(true);
     },
-    [flushDraft, flushAllCommentSaves],
+    [flushDraft, flushAllCommentSaves, patrols, resetScoreInputs],
   );
 
   const goNext = useCallback(() => {
@@ -641,12 +678,7 @@ export const ScoringPage = () => {
       setSubmissions(result.submissions);
 
       // Navigate to dashboard with success feedback
-      navigate('/', {
-        state: {
-          finalised: session?.name ?? 'Session',
-          finalisedSessionId: sessionId,
-        },
-      });
+      navigate('/', { state: { finalised: session?.name ?? 'Session' } });
     } catch (err) {
       console.error('[finalise] Error:', err);
       setError(err instanceof Error ? err.message : 'Finalise failed');
@@ -689,6 +721,7 @@ export const ScoringPage = () => {
         }
 
         setCurrentPatrolIndex(patrolIndex);
+        setJumpedFromSummary(true);
         setView('viewing');
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load scores');
@@ -710,6 +743,10 @@ export const ScoringPage = () => {
       setAwards({});
       setTouchedMap({});
       setPatrolTotals({});
+      setLoadingPatrol(true);
+      draftLoadVersionRef.current += 1;
+      currentPatrolIdRef.current = patrols[0]?.patrol_id ?? '';
+      resetScoreInputs();
       setCurrentPatrolIndex(0);
       setView('scoring');
     } catch (err) {
@@ -717,7 +754,7 @@ export const ScoringPage = () => {
     } finally {
       setRevising(false);
     }
-  }, [sessionId]);
+  }, [sessionId, patrols, resetScoreInputs]);
 
   // ─── Award logic ───────────────────────────────────────────────
 
@@ -1007,18 +1044,6 @@ export const ScoringPage = () => {
           </Text>
 
           <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-            {lockState.kind === 'subcamp' && (
-              <Button
-                as="a"
-                href={`/api/sessions/${sessionId}/report-card`}
-                target="_blank"
-                rel="noopener noreferrer"
-                size="large"
-                sx={{ width: '100%' }}
-              >
-                🖨️ View Printable Summary
-              </Button>
-            )}
             {user?.is_admin && lockState.kind === 'session' && (
               <Button
                 onClick={handleAdminUnlockFromLockScreen}
@@ -1045,6 +1070,7 @@ export const ScoringPage = () => {
     hour: '2-digit',
     minute: '2-digit',
   });
+  const returnToSummary = view !== 'summary' && jumpedFromSummary;
 
   return (
     <Box display="flex" flexDirection="column" minHeight="100vh" bg="canvas.default">
@@ -1060,15 +1086,15 @@ export const ScoringPage = () => {
           <Button
             variant="invisible"
             onClick={() => {
-              if (view === 'summary') {
-                navigate('/');
+              if (returnToSummary) {
+                goToSummary();
                 return;
               }
-              goToSummary();
+              navigate('/');
             }}
             size="small"
           >
-            {view === 'summary' ? '← Back' : '← Back to Summary'}
+            {returnToSummary ? '← Back to Summary' : '← Back'}
           </Button>
           <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
             <Text sx={{ fontSize: 0, color: 'fg.muted' }}>
@@ -1323,16 +1349,6 @@ export const ScoringPage = () => {
                       🎉 All patrols scored! Great work.
                     </Text>
                   </Box>
-                  <Button
-                    as="a"
-                    href={`/api/sessions/${sessionId}/report-card`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ width: '100%' }}
-                    size="large"
-                  >
-                    🖨️ View Printable Summary
-                  </Button>
                   {session.status === 'ACTIVE' && (
                     <Button
                       onClick={handleRevise}
@@ -1348,10 +1364,7 @@ export const ScoringPage = () => {
                 <Box display="flex" flexDirection="column" sx={{ flex: 1, gap: 2 }}>
                   <Box display="flex" sx={{ gap: 2 }}>
                     <Button
-                      onClick={() => {
-                        setView('scoring');
-                        setCurrentPatrolIndex(patrols.length - 1);
-                      }}
+                      onClick={() => goToPatrol(patrols.length - 1)}
                       sx={{ flex: 1 }}
                       size="large"
                     >
@@ -1368,7 +1381,7 @@ export const ScoringPage = () => {
                     </Button>
                   </Box>
                   <Text sx={{ color: 'fg.subtle', fontSize: 0, textAlign: 'center' }}>
-                    🖨️ Printable summary unlocks as soon as your subcamp finalises
+                    🖨️ Printable summary available when session ends
                   </Text>
                 </Box>
               ) : (
@@ -1596,7 +1609,12 @@ export const ScoringPage = () => {
             <Box flex={1} p={3} overflow="auto">
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
                 <Heading sx={{ fontSize: 3 }}>{patrolTitle(currentPatrol)}</Heading>
-                {isCurrentSubmitted && (
+                {loadingPatrol ? (
+                  <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
+                    <Spinner size="small" />
+                    <Text sx={{ fontSize: 1, color: 'fg.muted' }}>Loading patrol scores...</Text>
+                  </Box>
+                ) : isCurrentSubmitted && (
                   <Label variant="success" size="large">Submitted ✓</Label>
                 )}
               </Box>
@@ -1650,7 +1668,7 @@ export const ScoringPage = () => {
                       onCommentDelete={() => handleCommentDelete(criterion.id)}
                       onCommentFocus={() => handleCommentFocus(criterion.id)}
                       onCommentBlur={handleCommentBlur}
-                      disabled={isCurrentSubmitted || session.status !== 'ACTIVE' || !scoreInputEnabled}
+                      disabled={loadingPatrol || isCurrentSubmitted || session.status !== 'ACTIVE' || !scoreInputEnabled}
                     />
                   );
                 })}
@@ -1683,7 +1701,7 @@ export const ScoringPage = () => {
               <>
                 <Button
                   onClick={goPrev}
-                  disabled={currentPatrolIndex === 0}
+                  disabled={loadingPatrol || currentPatrolIndex === 0}
                   sx={{ flex: 1 }}
                   size="large"
                 >
@@ -1692,7 +1710,7 @@ export const ScoringPage = () => {
 
                 <Button
                   onClick={goNext}
-                  disabled={!scoreInputEnabled}
+                  disabled={loadingPatrol || !scoreInputEnabled}
                   sx={{ flex: 1 }}
                   size="large"
                 >

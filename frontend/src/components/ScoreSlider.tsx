@@ -17,95 +17,6 @@ interface ScoreSliderProps {
   disabled?: boolean;
 }
 
-/* ── Custom slider CSS (injected once) ─────────────────────────────── */
-const SLIDER_CSS = `
-/* Reset browser defaults */
-input[type="range"].score-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 26px;
-  background: transparent;
-  cursor: pointer;
-  touch-action: none;
-  margin: 0;
-}
-input[type="range"].score-slider:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-/* ── Track ── */
-input[type="range"].score-slider::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--bgColor-neutral-muted, #d0d7de);
-}
-input[type="range"].score-slider::-moz-range-track {
-  height: 6px;
-  border-radius: 3px;
-  border: none;
-  background: var(--bgColor-neutral-muted, #d0d7de);
-}
-/* ── Filled portion (Firefox) ── */
-input[type="range"].score-slider::-moz-range-progress {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--fgColor-accent, #0969da);
-}
-input[type="range"].score-slider.score-slider--unset::-moz-range-progress {
-  background: var(--bgColor-neutral-muted, #d0d7de);
-}
-/* ── Thumb ── */
-input[type="range"].score-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--fgColor-accent, #0969da);
-  border: 2px solid #fff;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  margin-top: -9px;
-  transition: transform 0.1s ease;
-}
-input[type="range"].score-slider::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--fgColor-accent, #0969da);
-  border: 2px solid #fff;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  transition: transform 0.1s ease;
-}
-input[type="range"].score-slider.score-slider--unset::-webkit-slider-thumb {
-  background: var(--fgColor-muted, #656d76);
-}
-input[type="range"].score-slider.score-slider--unset::-moz-range-thumb {
-  background: var(--fgColor-muted, #656d76);
-}
-/* Active / hover feedback */
-input[type="range"].score-slider:not(:disabled)::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
-}
-input[type="range"].score-slider:not(:disabled):active::-webkit-slider-thumb {
-  transform: scale(1.25);
-}
-input[type="range"].score-slider:not(:disabled)::-moz-range-thumb:hover {
-  transform: scale(1.15);
-}
-input[type="range"].score-slider:not(:disabled):active::-moz-range-thumb {
-  transform: scale(1.25);
-}
-`;
-
-let styleInjected = false;
-function injectSliderStyles() {
-  if (styleInjected) return;
-  const style = document.createElement('style');
-  style.textContent = SLIDER_CSS;
-  document.head.appendChild(style);
-  styleInjected = true;
-}
-
 export const ScoreSlider = ({
   criterion,
   value,
@@ -123,9 +34,6 @@ export const ScoreSlider = ({
   const [commentOpen, setCommentOpen] = useState(comment.length > 0);
   const [guideOpen, setGuideOpen] = useState(false);
 
-  // Inject custom slider CSS once
-  useEffect(() => { injectSliderStyles(); }, []);
-
   // Open the comment section when a previously-saved comment arrives async
   useEffect(() => {
     if (comment.length > 0) {
@@ -136,8 +44,11 @@ export const ScoreSlider = ({
   const isSet = value !== null;
   const rubric = criterion.rubric;
   const displayValue = value ?? criterion.min_value;
-  const range = criterion.max_value - criterion.min_value;
-  const percentage = range > 0 ? ((displayValue - criterion.min_value) / range) * 100 : 0;
+  const firstSelectableScore = Math.max(1, criterion.min_value);
+  const scoreOptions = Array.from(
+    { length: Math.max(0, criterion.max_value - firstSelectableScore + 1) },
+    (_, index) => firstSelectableScore + index,
+  );
   const activeBand = isSet
     ? criterion.rubric?.bands.find((band) => displayValue >= band.min_value && displayValue <= band.max_value)
     : undefined;
@@ -163,18 +74,18 @@ export const ScoreSlider = ({
     return { bg: 'danger.subtle', border: 'danger.muted', fg: 'danger.fg' };
   };
 
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      onChange(parseInt(e.target.value, 10));
-    },
-    [onChange],
-  );
-
   const handleCommentChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       onCommentChange(e.target.value);
     },
     [onCommentChange],
+  );
+
+  const handleScoreChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (e.target.value !== '') onChange(Number(e.target.value));
+    },
+    [onChange],
   );
 
   const handleDelete = useCallback(() => {
@@ -186,11 +97,6 @@ export const ScoreSlider = ({
 
   // All comments to display (other users' comments)
   const allComments = otherComments.filter((c) => c.comment.length > 0);
-
-  // Inline style for the WebKit filled track (can't use pseudo-element in CSS for dynamic %)
-  const trackBackground = isSet
-    ? `linear-gradient(to right, var(--fgColor-accent, #0969da) ${percentage}%, var(--bgColor-neutral-muted, #d0d7de) ${percentage}%)`
-    : 'var(--bgColor-neutral-muted, #d0d7de)';
 
   return (
     <Box
@@ -206,16 +112,7 @@ export const ScoreSlider = ({
       {/* Header */}
       <Box display="flex" justifyContent="space-between" alignItems="baseline" mb={1}>
         <Text sx={{ fontWeight: 'bold', fontSize: 2 }}>{criterion.title}</Text>
-        <Text
-          sx={{
-            fontSize: 1,
-            fontWeight: 'semibold',
-            fontVariantNumeric: 'tabular-nums',
-            color: !isSet ? 'fg.subtle' : disabled ? 'fg.muted' : 'fg.muted',
-          }}
-        >
-          {isSet ? displayValue : 'Not scored'}
-        </Text>
+        {!isSet && <Text sx={{ fontSize: 1, color: 'fg.subtle' }}>Not scored</Text>}
       </Box>
 
       {rubric && (
@@ -304,28 +201,32 @@ export const ScoreSlider = ({
         </Box>
       )}
 
-      {/* Slider */}
-      <Box position="relative">
-        <input
-          type="range"
-          className={`score-slider${!isSet ? ' score-slider--unset' : ''}`}
+      {/* Zero is deliberately unavailable because it represents an unscored criterion. */}
+      <Box>
+        <label htmlFor={`score-${criterion.id}`} style={{ display: 'block', marginBottom: 4, fontSize: 12, color: 'var(--fgColor-muted)' }}>
+          Score
+        </label>
+        <select
+          id={`score-${criterion.id}`}
           aria-label={`Score for ${criterion.title}`}
-          min={criterion.min_value}
-          max={criterion.max_value}
-          step={1}
-          value={displayValue}
-          onChange={handleChange}
+          value={value ?? ''}
+          onChange={handleScoreChange}
           disabled={disabled}
           style={{
-            // WebKit doesn't support dynamic values in pseudo-element styles,
-            // so we paint the track gradient inline.
-            backgroundImage: isSet ? trackBackground : 'none',
-            backgroundColor: 'var(--bgColor-neutral-muted, #d0d7de)',
-            backgroundSize: '100% 6px',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat',
+            width: '100%',
+            minHeight: 44,
+            padding: '8px 12px',
+            border: '1px solid var(--borderColor-default, #d0d7de)',
+            borderRadius: 6,
+            backgroundColor: 'var(--bgColor-default, #fff)',
+            color: 'var(--fgColor-default, #1f2328)',
+            fontSize: 16,
+            fontVariantNumeric: 'tabular-nums',
           }}
-        />
+        >
+          <option value="">Not scored</option>
+          {scoreOptions.map((score) => <option key={score} value={score}>{score}</option>)}
+        </select>
       </Box>
 
       {/* Commenting indicator from other users */}

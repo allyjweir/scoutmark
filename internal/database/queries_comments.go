@@ -23,56 +23,72 @@ type DraftCommentRow struct {
 	UpdatedAt   time.Time
 }
 
-// SaveDraftComment upserts a per-user comment on a draft criterion.
-// Creates the shared draft if it doesn't already exist.
+// SaveDraftComment upserts a per-user comment on an in-progress patrol.
+// Canonically comments are stored in submission_comments on an unlocked submission row.
 func (d *DB) SaveDraftComment(ctx context.Context, userID, displayName, sessionID, patrolID, criterionID, comment string) (*DraftCommentRow, error) {
 	var result *DraftCommentRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
-		// Ensure the shared draft exists
-		var draftID string
+		// Ensure canonical submission row exists and is unlocked.
+		var submissionID string
+		var locked bool
 		row := tx.QueryRowContext(ctx,
-			"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
+			"SELECT id, locked FROM submissions WHERE session_id = $1 AND patrol_id = $2",
 			sessionID, patrolID,
 		)
-		err := row.Scan(&draftID)
+		err := row.Scan(&submissionID, &locked)
 		if err == sql.ErrNoRows {
-			draftID = uuid.New().String()
+			submissionID = uuid.New().String()
 			_, err = tx.ExecContext(ctx,
-				"INSERT INTO drafts (id, session_id, patrol_id) VALUES ($1, $2, $3)",
-				draftID, sessionID, patrolID,
+				"INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked, submitted_at, updated_at) VALUES ($1, $2, $3, $4, FALSE, NOW(), NOW())",
+				submissionID, userID, sessionID, patrolID,
 			)
 			if err != nil {
-				return fmt.Errorf("inserting draft: %w", err)
+				return fmt.Errorf("inserting draft submission: %w", err)
 			}
 		} else if err != nil {
-			return fmt.Errorf("checking existing draft: %w", err)
+			return fmt.Errorf("checking existing submission: %w", err)
+		} else {
+			if locked {
+				return fmt.Errorf("scores already submitted for this patrol")
+			}
+			updateResult, err := tx.ExecContext(ctx, "UPDATE submissions SET updated_at = NOW(), submitted_by = $2 WHERE id = $1 AND locked = FALSE", submissionID, userID)
+			if err != nil {
+				return fmt.Errorf("updating draft submission: %w", err)
+			}
+			affected, err := updateResult.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("checking draft submission update: %w", err)
+			}
+			if affected == 0 {
+				return fmt.Errorf("scores already submitted for this patrol")
+			}
 		}
 
 		// Upsert the comment
 		id := uuid.New().String()
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO draft_comments (id, draft_id, criterion_id, user_id, display_name, comment)
+			`INSERT INTO submission_comments (id, submission_id, criterion_id, user_id, display_name, comment)
 			 VALUES ($1, $2, $3, $4, $5, $6)
-			 ON CONFLICT (draft_id, criterion_id, user_id) DO UPDATE
+			 ON CONFLICT (submission_id, criterion_id, user_id) DO UPDATE
 			   SET comment = EXCLUDED.comment, display_name = EXCLUDED.display_name, updated_at = NOW()`,
-			id, draftID, criterionID, userID, displayName, comment,
+			id, submissionID, criterionID, userID, displayName, comment,
 		)
 		if err != nil {
-			return fmt.Errorf("upserting draft comment: %w", err)
+			return fmt.Errorf("upserting draft submission comment: %w", err)
 		}
 
 		// Read back the row
 		r := tx.QueryRowContext(ctx,
-			`SELECT id, draft_id, criterion_id, user_id, display_name, comment, created_at, updated_at
-			 FROM draft_comments
-			 WHERE draft_id = $1 AND criterion_id = $2 AND user_id = $3`,
-			draftID, criterionID, userID,
+			`SELECT id, submission_id, criterion_id, user_id, display_name, comment, created_at, updated_at
+			 FROM submission_comments
+			 WHERE submission_id = $1 AND criterion_id = $2 AND user_id = $3`,
+			submissionID, criterionID, userID,
 		)
 		result = &DraftCommentRow{}
 		if err := r.Scan(&result.ID, &result.DraftID, &result.CriterionID, &result.UserID,
 			&result.DisplayName, &result.Comment, &result.CreatedAt, &result.UpdatedAt); err != nil {
-			return fmt.Errorf("reading back draft comment: %w", err)
+			return fmt.Errorf("reading back draft submission comment: %w", err)
 		}
 		return nil
 	})
@@ -83,6 +99,19 @@ func (d *DB) SaveDraftComment(ctx context.Context, userID, displayName, sessionI
 // DeleteDraftComment removes a user's comment on a specific criterion.
 func (d *DB) DeleteDraftComment(ctx context.Context, userID, sessionID, patrolID, criterionID string) error {
 	_, err := d.ExecContext(ctx,
+		`DELETE FROM submission_comments
+		 WHERE user_id = $1
+		   AND criterion_id = $2
+		   AND submission_id = (
+		       SELECT id FROM submissions WHERE session_id = $3 AND patrol_id = $4 AND locked = FALSE
+		   )`,
+		userID, criterionID, sessionID, patrolID,
+	)
+	if err != nil {
+		return err
+	}
+	// Legacy fallback for old draft-backed comments during transition.
+	_, err = d.ExecContext(ctx,
 		`DELETE FROM draft_comments
 		 WHERE user_id = $1
 		   AND criterion_id = $2
@@ -95,15 +124,15 @@ func (d *DB) DeleteDraftComment(ctx context.Context, userID, sessionID, patrolID
 // GetDraftComments returns all per-user comments for a draft (by session+patrol).
 func (d *DB) GetDraftComments(ctx context.Context, sessionID, patrolID string) ([]DraftCommentRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT dc.id, dc.draft_id, dc.criterion_id, dc.user_id, dc.display_name, dc.comment, dc.created_at, dc.updated_at
-		 FROM draft_comments dc
-		 JOIN drafts d ON d.id = dc.draft_id
-		 WHERE d.session_id = $1 AND d.patrol_id = $2 AND dc.comment != ''
+		`SELECT dc.id, dc.submission_id, dc.criterion_id, dc.user_id, dc.display_name, dc.comment, dc.created_at, dc.updated_at
+		 FROM submission_comments dc
+		 JOIN submissions s ON s.id = dc.submission_id
+		 WHERE s.session_id = $1 AND s.patrol_id = $2 AND s.locked = FALSE AND dc.comment != ''
 		 ORDER BY dc.criterion_id, dc.created_at`,
 		sessionID, patrolID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying draft comments: %w", err)
+		return nil, fmt.Errorf("querying draft submission comments: %w", err)
 	}
 	defer rows.Close()
 
@@ -112,7 +141,35 @@ func (d *DB) GetDraftComments(ctx context.Context, sessionID, patrolID string) (
 		var c DraftCommentRow
 		if err := rows.Scan(&c.ID, &c.DraftID, &c.CriterionID, &c.UserID, &c.DisplayName,
 			&c.Comment, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning draft comment: %w", err)
+			return nil, fmt.Errorf("scanning draft submission comment: %w", err)
+		}
+		comments = append(comments, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(comments) > 0 {
+		return comments, nil
+	}
+
+	// Legacy fallback.
+	rows, err = d.QueryContext(ctx,
+		`SELECT dc.id, dc.draft_id, dc.criterion_id, dc.user_id, dc.display_name, dc.comment, dc.created_at, dc.updated_at
+		 FROM draft_comments dc
+		 JOIN drafts d ON d.id = dc.draft_id
+		 WHERE d.session_id = $1 AND d.patrol_id = $2 AND dc.comment != ''
+		 ORDER BY dc.criterion_id, dc.created_at`,
+		sessionID, patrolID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying legacy draft comments: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c DraftCommentRow
+		if err := rows.Scan(&c.ID, &c.DraftID, &c.CriterionID, &c.UserID, &c.DisplayName,
+			&c.Comment, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning legacy draft comment: %w", err)
 		}
 		comments = append(comments, c)
 	}
@@ -168,7 +225,7 @@ func (d *DB) CopyDraftCommentsToSubmission(ctx context.Context, tx *sql.Tx, sess
 // GetSubmissionComments returns all per-user comments for a submission.
 func (d *DB) GetSubmissionComments(ctx context.Context, submissionID string) ([]DraftCommentRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT id, submission_id, criterion_id, user_id, display_name, comment, created_at, created_at
+		`SELECT id, submission_id, criterion_id, user_id, display_name, comment, created_at, updated_at
 		 FROM submission_comments
 		 WHERE submission_id = $1 AND comment != ''
 		 ORDER BY criterion_id, created_at`,
@@ -194,10 +251,10 @@ func (d *DB) GetSubmissionComments(ctx context.Context, submissionID string) ([]
 // GetSubmissionCommentsByPatrol returns all per-user comments for a patrol's submission.
 func (d *DB) GetSubmissionCommentsByPatrol(ctx context.Context, sessionID, patrolID string) ([]DraftCommentRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.created_at
+		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.updated_at
 		 FROM submission_comments sc
 		 JOIN submissions s ON s.id = sc.submission_id
-		 WHERE s.session_id = $1 AND s.patrol_id = $2 AND sc.comment != ''
+		 WHERE s.session_id = $1 AND s.patrol_id = $2 AND s.locked = TRUE AND sc.comment != ''
 		 ORDER BY sc.criterion_id, sc.created_at`,
 		sessionID, patrolID,
 	)
@@ -222,12 +279,12 @@ func (d *DB) GetSubmissionCommentsByPatrol(ctx context.Context, sessionID, patro
 // for patrols a specific user is assigned to in a session.
 func (d *DB) GetSubmissionCommentsBySession(ctx context.Context, userID, sessionID string) ([]DraftCommentRow, error) {
 	rows, err := d.QueryContext(ctx,
-		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.created_at
+		`SELECT sc.id, sc.submission_id, sc.criterion_id, sc.user_id, sc.display_name, sc.comment, sc.created_at, sc.updated_at
 		 FROM submission_comments sc
 		 JOIN submissions s ON s.id = sc.submission_id
 		 JOIN patrols p ON p.id = s.patrol_id
 		 JOIN users u ON u.id = $1
-		 WHERE s.session_id = $2 AND sc.comment != ''
+		 WHERE s.session_id = $2 AND s.locked = TRUE AND sc.comment != ''
 		   AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id))
 		 ORDER BY s.patrol_id, sc.criterion_id, sc.created_at`,
 		userID, sessionID,

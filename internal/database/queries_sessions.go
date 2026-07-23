@@ -281,7 +281,7 @@ func (d *DB) ListSessionSubcamps(ctx context.Context, sessionID string) ([]Sessi
 		AND NOT EXISTS (SELECT 1 FROM patrols p WHERE p.subcamp_id = sc.id
 			AND (NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = ss.session_id)
 				OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = ss.session_id AND sp.patrol_id = p.id))
-			AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.session_id = ss.session_id AND s.patrol_id = p.id))
+			AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.session_id = ss.session_id AND s.patrol_id = p.id AND s.locked = TRUE))
 		FROM session_subcamps ss JOIN subcamps sc ON sc.id = ss.subcamp_id
 		LEFT JOIN session_subcamp_locks ssl ON ssl.session_id = ss.session_id AND ssl.subcamp_id = ss.subcamp_id
 		LEFT JOIN users locker ON locker.id = ssl.locked_by
@@ -420,7 +420,7 @@ func (d *DB) GetTemplateCriteria(ctx context.Context, templateID string) ([]Crit
 // ─── User Completion Queries ────────────────────────────────────────
 
 // GetUserFinalisedSessionIDs returns the set of session IDs where ALL of the
-// user's assigned patrols have been submitted (shared model — no user_id on submissions).
+// user's assigned patrols have been finalised (locked submissions).
 func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string, isAdmin bool) (map[string]bool, error) {
 	query := `SELECT s.id AS session_id,
 	        COUNT(p.id) AS total_patrols,
@@ -434,7 +434,8 @@ func (d *DB) GetUserFinalisedSessionIDs(ctx context.Context, userID string, isAd
 	  )
 	 LEFT JOIN submissions sub
 	   ON sub.session_id = s.id
-	  AND sub.patrol_id = p.id`
+	  AND sub.patrol_id = p.id
+	  AND sub.locked = TRUE`
 	args := []any{}
 
 	if !isAdmin {
@@ -481,7 +482,7 @@ type UserProgressRow struct {
 }
 
 // GetSessionProgress returns the scoring progress for all users assigned patrols in a session.
-// Drafts are shared (no user_id), so drafting status is per-patrol not per-user.
+// In-progress scores are unlocked submissions; submitted/finalised scores are locked submissions.
 func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserProgressRow, error) {
 	rows, err := d.QueryContext(ctx,
 		`WITH criteria_total AS (
@@ -489,12 +490,22 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 			FROM sessions sess
 			JOIN criteria c ON c.template_id = sess.template_id
 			WHERE sess.id = $1
+		), score_counts AS (
+		   SELECT s.id AS submission_id,
+		          s.patrol_id,
+		          s.locked,
+		          COUNT(ss.id)::int AS score_count,
+		          COUNT(ss.id) FILTER (WHERE ss.value > 0)::int AS scored_count
+		   FROM submissions s
+		   LEFT JOIN submission_scores ss ON ss.submission_id = s.id
+		   WHERE s.session_id = $1
+		   GROUP BY s.id, s.patrol_id, s.locked
 		)
 		SELECT u.id, u.display_name, sc.id, sc.name, p.id, p.name, p.sort_order,
 		        CASE
-		          WHEN s.id IS NOT NULL THEN 'submitted'
-		          WHEN COALESCE(ds.scored_count, 0) >= ct.total AND ct.total > 0 THEN 'complete'
-		          WHEN COALESCE(ds.score_count, 0) > 0 THEN 'drafting'
+		          WHEN COALESCE(scnt.locked, FALSE) THEN 'submitted'
+		          WHEN COALESCE(scnt.scored_count, 0) >= ct.total AND ct.total > 0 THEN 'complete'
+		          WHEN COALESCE(scnt.score_count, 0) > 0 THEN 'drafting'
 		          ELSE 'not_started'
 		        END AS status
 		 FROM users u
@@ -506,14 +517,7 @@ func (d *DB) GetSessionProgress(ctx context.Context, sessionID string) ([]UserPr
 		    NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
 		    OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
 		  )
-		 LEFT JOIN submissions s ON s.session_id = $1 AND s.patrol_id = p.id
-		 LEFT JOIN LATERAL (
-		   SELECT COUNT(*)::int AS score_count,
-		          COUNT(*) FILTER (WHERE dsc.value > 0)::int AS scored_count
-		   FROM drafts d
-		   JOIN draft_scores dsc ON dsc.draft_id = d.id
-		   WHERE d.session_id = $1 AND d.patrol_id = p.id
-		 ) ds ON TRUE
+		 LEFT JOIN score_counts scnt ON scnt.patrol_id = p.id
 		 ORDER BY sc.name ASC, u.display_name ASC, p.sort_order ASC, p.name ASC`,
 		sessionID,
 	)

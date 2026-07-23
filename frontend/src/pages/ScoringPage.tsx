@@ -678,7 +678,12 @@ export const ScoringPage = () => {
       setSubmissions(result.submissions);
 
       // Navigate to dashboard with success feedback
-      navigate('/', { state: { finalised: session?.name ?? 'Session' } });
+      navigate('/', {
+        state: {
+          finalised: session?.name ?? 'Session',
+          finalisedSessionId: sessionId,
+        },
+      });
     } catch (err) {
       console.error('[finalise] Error:', err);
       setError(err instanceof Error ? err.message : 'Finalise failed');
@@ -1044,6 +1049,18 @@ export const ScoringPage = () => {
           </Text>
 
           <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
+            {lockState.kind === 'subcamp' && (
+              <Button
+                as="a"
+                href={`/api/sessions/${sessionId}/report-card`}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="large"
+                sx={{ width: '100%' }}
+              >
+                🖨️ View Printable Summary
+              </Button>
+            )}
             {user?.is_admin && lockState.kind === 'session' && (
               <Button
                 onClick={handleAdminUnlockFromLockScreen}
@@ -1349,6 +1366,16 @@ export const ScoringPage = () => {
                       🎉 All patrols scored! Great work.
                     </Text>
                   </Box>
+                  <Button
+                    as="a"
+                    href={`/api/sessions/${sessionId}/report-card`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ width: '100%' }}
+                    size="large"
+                  >
+                    🖨️ View Printable Summary
+                  </Button>
                   {session.status === 'ACTIVE' && (
                     <Button
                       onClick={handleRevise}
@@ -1381,7 +1408,7 @@ export const ScoringPage = () => {
                     </Button>
                   </Box>
                   <Text sx={{ color: 'fg.subtle', fontSize: 0, textAlign: 'center' }}>
-                    🖨️ Printable summary available when session ends
+                    🖨️ Printable summary unlocks as soon as your subcamp finalises
                   </Text>
                 </Box>
               ) : (

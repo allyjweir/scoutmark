@@ -40,7 +40,7 @@ export const DashboardPage = () => {
   const isRegularSession = (session: Session) => (session.round_type ?? 'regular') === 'regular';
   const isCampChiefAccount = user?.is_camp_chief === true;
   const visibleSessions = isCampChiefAccount
-    ? sessions.filter((session) => !isRegularSession(session))
+    ? sessions.filter((session) => session.round_type === 'round2')
     : sessions.filter(isRegularSession);
   const sessionsById = sessions.reduce<Record<string, Session>>((acc, session) => {
     acc[session.id] = session;

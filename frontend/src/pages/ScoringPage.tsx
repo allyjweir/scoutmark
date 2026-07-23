@@ -1424,6 +1424,11 @@ export const ScoringPage = () => {
                       </Button>
                     </Box>
                   )}
+                  {session.round_type === 'round2' && !winningPatrol && (
+                    <Text sx={{ color: 'attention.fg', textAlign: 'center' }}>
+                      No Camp Chief&apos;s Pendant winner was selected.
+                    </Text>
+                  )}
                 </Box>
               ) : session.status === 'ACTIVE' ? (
                 <Box display="flex" flexDirection="column" sx={{ flex: 1, gap: 2 }}>

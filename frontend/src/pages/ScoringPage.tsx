@@ -678,7 +678,7 @@ export const ScoringPage = () => {
       setSubmissions(result.submissions);
 
       if (session?.round_type === 'round2') {
-        setSession((current) => current ? { ...current, status: 'LOCKED' } : current);
+        setSession((current) => current ? { ...current, status: 'CLOSED' } : current);
         setView('summary');
       } else {
         // Navigate to dashboard with success feedback.
@@ -1434,9 +1434,20 @@ export const ScoringPage = () => {
                       borderRadius={2}
                       bg="success.subtle"
                     >
-                      <Text sx={{ fontWeight: 'bold', display: 'block', mb: 2 }}>
-                        {round2Announcement}
+                      <Text sx={{ fontSize: 0, color: 'fg.muted', display: 'block', mb: 1 }}>
+                        WhatsApp message preview
                       </Text>
+                      <Box
+                        p={2}
+                        mb={2}
+                        borderRadius={2}
+                        bg="canvas.default"
+                        sx={{ width: 'fit-content', maxWidth: '100%' }}
+                      >
+                        <Text sx={{ fontWeight: 'bold', display: 'block' }}>
+                          {round2Announcement}
+                        </Text>
+                      </Box>
                       <Button size="small" onClick={handleCopyRound2Announcement}>
                         {copiedAnnouncement ? 'Copied ✓' : 'Copy for WhatsApp'}
                       </Button>

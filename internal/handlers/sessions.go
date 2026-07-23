@@ -960,9 +960,10 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			allNewSubmissions = append(allNewSubmissions, newSubmissions...)
 		}
 
-		if err := h.db.LockSession(ctx, sessionID, user.ID); err != nil {
+		closedAt := time.Now().UTC()
+		if err := h.db.CloseSession(ctx, sessionID, closedAt); err != nil {
 			tracing.RecordError(ctx, err)
-			writeError(w, r, http.StatusInternalServerError, "could not lock round 2 session")
+			writeError(w, r, http.StatusInternalServerError, "could not close round 2 session")
 			return
 		}
 
@@ -993,17 +994,6 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 
 		if h.broadcaster != nil {
 			h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
-		}
-		if fb, ok := h.broadcaster.(interface {
-			BroadcastSessionLocked(sessionID, userID, displayName, lockedAt, endsAt string)
-		}); ok {
-			fb.BroadcastSessionLocked(
-				sessionID,
-				user.ID,
-				user.DisplayName,
-				time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-				session.EndsAt.Format("2006-01-02T15:04:05Z"),
-			)
 		}
 		return
 	}

@@ -145,6 +145,17 @@ func TestRound2FinaliseRequiresFinalistsForEverySubcamp(t *testing.T) {
 	if response := finalise(); response.Code != http.StatusOK {
 		t.Fatalf("configured round 2 finalise response = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
 	}
+	var endsAt time.Time
+	var lockedAt *time.Time
+	if err := db.QueryRowContext(ctx, `SELECT ends_at, locked_at FROM sessions WHERE id = 'round2'`).Scan(&endsAt, &lockedAt); err != nil {
+		t.Fatalf("reading closed round 2 session: %v", err)
+	}
+	if endsAt.After(time.Now()) {
+		t.Fatalf("round 2 ends_at = %s, want a past timestamp", endsAt)
+	}
+	if lockedAt != nil {
+		t.Fatalf("round 2 locked_at = %s, want NULL", *lockedAt)
+	}
 
 	assertSubmission(t, db, "round2", "alpha-1", map[string]int{"criterion": 0})
 	assertSubmission(t, db, "round2", "bravo-1", map[string]int{"criterion": 0})

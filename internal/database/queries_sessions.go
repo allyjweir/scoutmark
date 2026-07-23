@@ -211,6 +211,20 @@ func (d *DB) UnlockSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// CloseSession ends a session immediately without applying an administrative lock.
+func (d *DB) CloseSession(ctx context.Context, sessionID string, closedAt time.Time) error {
+	_, err := d.ExecContext(ctx,
+		`UPDATE sessions
+		 SET ends_at = $2, locked_at = NULL, locked_by = NULL
+		 WHERE id = $1`,
+		sessionID, closedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("closing session: %w", err)
+	}
+	return nil
+}
+
 // UpdateSessionTimes updates the opening and closing time of a session.
 func (d *DB) UpdateSessionTimes(ctx context.Context, sessionID string, startsAt, endsAt time.Time) error {
 	result, err := d.ExecContext(ctx, `UPDATE sessions SET starts_at = $2, ends_at = $3 WHERE id = $1`, sessionID, startsAt, endsAt)

@@ -37,8 +37,11 @@ func (d *DB) GetSessionPatrolsForUser(ctx context.Context, userID, sessionID str
 		 JOIN session_subcamps ss ON ss.subcamp_id = sc.id
 		 WHERE ss.session_id = $1
 		   AND (
-		     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
-		     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+		     EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $1 AND sp.patrol_id = p.id)
+		     OR (
+		       EXISTS (SELECT 1 FROM sessions s WHERE s.id = $1 AND s.round_type <> 'round2')
+		       AND NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $1)
+		     )
 		   )`
 	args := []any{sessionID}
 

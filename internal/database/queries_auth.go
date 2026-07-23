@@ -227,8 +227,11 @@ func (d *DB) UserOwnsSessionPatrol(ctx context.Context, userID, sessionID, patro
 		 JOIN session_subcamps ss ON ss.session_id = $2 AND ss.subcamp_id = p.subcamp_id
 		 WHERE u.id = $1
 		   AND (
-		     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $2)
-		     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $2 AND sp.patrol_id = p.id)
+		     EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $2 AND sp.patrol_id = p.id)
+		     OR (
+		       s.round_type <> 'round2'
+		       AND NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = $2)
+		     )
 		   )
 		   AND (
 		     (s.round_type = 'round2' AND u.is_camp_chief = TRUE)

@@ -101,6 +101,64 @@ func TestFinaliseSessionAsAdminForSubcamp(t *testing.T) {
 	}
 }
 
+func TestRound2FinaliseRequiresFinalistsForEverySubcamp(t *testing.T) {
+	db := newIntegrationDB(t)
+	ctx := context.Background()
+
+	mustExec(t, db, `INSERT INTO events (id, name, description) VALUES ('event', 'Event', '')`)
+	mustExec(t, db, `INSERT INTO criteria_templates (id, name, description) VALUES ('template', 'Template', '')`)
+	mustExec(t, db, `INSERT INTO criteria (id, template_id, title, description, max_value) VALUES
+		('criterion', 'template', 'Criterion', '', 5)`)
+	mustExec(t, db, `INSERT INTO subcamps (id, name) VALUES ('alpha', 'Alpha'), ('bravo', 'Bravo')`)
+	mustExec(t, db, `INSERT INTO users (id, username, password_hash, display_name, is_camp_chief, password_change_required)
+		VALUES ('chief', 'chief', 'hash', 'Camp Chief', TRUE, FALSE)`)
+	mustExec(t, db, `INSERT INTO user_sessions (token, user_id, expires_at) VALUES ('chief-token', 'chief', $1)`, time.Now().Add(time.Hour))
+	mustExec(t, db, `INSERT INTO sessions (id, event_id, template_id, name, round_type, starts_at, ends_at)
+		VALUES ('round2', 'event', 'template', 'Round 2', 'round2', $1, $2)`, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	mustExec(t, db, `INSERT INTO session_subcamps (session_id, subcamp_id) VALUES ('round2', 'alpha'), ('round2', 'bravo')`)
+	mustExec(t, db, `INSERT INTO patrols (id, name, subcamp_id) VALUES
+		('alpha-1', 'Alpha 1', 'alpha'), ('alpha-2', 'Alpha 2', 'alpha'),
+		('bravo-1', 'Bravo 1', 'bravo'), ('bravo-2', 'Bravo 2', 'bravo')`)
+
+	handler := NewSessionHandler(db, nil)
+	mux := http.NewServeMux()
+	mux.Handle("POST /api/sessions/{session_id}/finalise", auth.Middleware(db)(http.HandlerFunc(handler.FinaliseSession)))
+
+	finalise := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/sessions/round2/finalise", nil)
+		request.Header.Set("Authorization", "Bearer chief-token")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		return response
+	}
+
+	if response := finalise(); response.Code != http.StatusConflict {
+		t.Fatalf("unconfigured round 2 finalise response = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
+	}
+
+	mustExec(t, db, `INSERT INTO session_patrols (session_id, subcamp_id, patrol_id) VALUES ('round2', 'alpha', 'alpha-1')`)
+	if response := finalise(); response.Code != http.StatusConflict {
+		t.Fatalf("partially configured round 2 finalise response = %d, want %d: %s", response.Code, http.StatusConflict, response.Body.String())
+	}
+
+	mustExec(t, db, `INSERT INTO session_patrols (session_id, subcamp_id, patrol_id) VALUES ('round2', 'bravo', 'bravo-1')`)
+	if response := finalise(); response.Code != http.StatusOK {
+		t.Fatalf("configured round 2 finalise response = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+
+	assertSubmission(t, db, "round2", "alpha-1", map[string]int{"criterion": 0})
+	assertSubmission(t, db, "round2", "bravo-1", map[string]int{"criterion": 0})
+	for _, patrolID := range []string{"alpha-2", "bravo-2"} {
+		var submissions int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM submissions WHERE session_id = 'round2' AND patrol_id = $1`, patrolID).Scan(&submissions); err != nil {
+			t.Fatalf("counting submissions for %s: %v", patrolID, err)
+		}
+		if submissions != 0 {
+			t.Fatalf("submissions for non-finalist %s = %d, want 0", patrolID, submissions)
+		}
+	}
+}
+
 func newIntegrationDB(t *testing.T) *database.DB {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")

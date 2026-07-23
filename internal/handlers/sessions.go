@@ -364,6 +364,18 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
+	if session.RoundType == "round2" {
+		ready, err := h.db.Round2FinalistsReady(ctx, sessionID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not check round 2 finalists")
+			return
+		}
+		if !ready {
+			writeError(w, r, http.StatusConflict, "round 2 finalists must be selected for every subcamp before scoring can begin")
+			return
+		}
+	}
 	// Fetch criteria for the session's template
 	criteria, err := h.db.GetTemplateCriteria(ctx, session.TemplateID)
 	if err != nil {
@@ -907,6 +919,16 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	if session.RoundType == "round2" {
 		if !user.IsCampChief {
 			writeError(w, r, http.StatusForbidden, "only the camp chief can finalise round 2 scoring")
+			return
+		}
+		ready, err := h.db.Round2FinalistsReady(ctx, sessionID)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not check round 2 finalists")
+			return
+		}
+		if !ready {
+			writeError(w, r, http.StatusConflict, "round 2 finalists must be selected for every subcamp before finalising")
 			return
 		}
 

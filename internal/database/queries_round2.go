@@ -48,6 +48,29 @@ type Round2WinnerRow struct {
 	SubcampName string
 }
 
+// Round2FinalistsReady reports whether every participating subcamp has a finalist.
+func (d *DB) Round2FinalistsReady(ctx context.Context, sessionID string) (bool, error) {
+	var ready bool
+	err := d.QueryRowContext(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM session_subcamps WHERE session_id = $1
+		) AND NOT EXISTS (
+			SELECT 1
+			FROM session_subcamps ss
+			LEFT JOIN session_patrols sp
+			  ON sp.session_id = ss.session_id
+			 AND sp.subcamp_id = ss.subcamp_id
+			WHERE ss.session_id = $1
+			  AND sp.patrol_id IS NULL
+		)`,
+		sessionID,
+	).Scan(&ready)
+	if err != nil {
+		return false, fmt.Errorf("checking round 2 finalists: %w", err)
+	}
+	return ready, nil
+}
+
 // IsSessionFullySubmitted checks whether every scoped patrol in a session has a submission.
 func (d *DB) IsSessionFullySubmitted(ctx context.Context, sessionID string) (bool, error) {
 	row := d.QueryRowContext(ctx,

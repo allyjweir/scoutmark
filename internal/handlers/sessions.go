@@ -159,6 +159,7 @@ type patrolHistoryJSON struct {
 func patrolHistoryScoreKey(submissionID, criterionID string) string {
 	return submissionID + ":" + criterionID
 }
+
 type draftJSON struct {
 	ID        string           `json:"id"`
 	PatrolID  string           `json:"patrol_id"`
@@ -945,8 +946,8 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	}
 
 	if session.RoundType == "round2" {
-		if !user.IsAdmin {
-			writeError(w, r, http.StatusForbidden, "only admins can finalise round 2 scoring")
+		if !user.IsCampChief {
+			writeError(w, r, http.StatusForbidden, "only the camp chief can finalise round 2 scoring")
 			return
 		}
 
@@ -1173,6 +1174,40 @@ func (h *SessionHandler) ReviseSession(w http.ResponseWriter, r *http.Request) {
 	session, err := h.db.GetSession(ctx, sessionID)
 	if err != nil {
 		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.RoundType == "round2" {
+		if !user.IsCampChief {
+			writeError(w, r, http.StatusForbidden, "only the camp chief can revise round 2 scoring")
+			return
+		}
+
+		if err := h.db.UnlockSession(ctx, sessionID); err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not reopen round 2 session")
+			return
+		}
+		patrols, err := h.db.GetSessionPatrolsForUser(ctx, user.ID, sessionID, true)
+		if err != nil {
+			tracing.RecordError(ctx, err)
+			writeError(w, r, http.StatusInternalServerError, "could not fetch round 2 finalists")
+			return
+		}
+		subcampIDs := map[string]bool{}
+		for _, patrol := range patrols {
+			subcampIDs[patrol.SubcampID] = true
+		}
+		for subcampID := range subcampIDs {
+			if err := h.db.ReviseSessionSubcamp(ctx, user.ID, sessionID, subcampID); err != nil {
+				tracing.RecordError(ctx, err)
+				writeError(w, r, http.StatusInternalServerError, "could not revise round 2 session")
+				return
+			}
+		}
+		if h.broadcaster != nil {
+			h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	if session.ComputeStatus() != "ACTIVE" {

@@ -159,7 +159,7 @@ const AppRoutes = () => (
         element={
           <ProtectedRoute>
             <CampChiefOnlyRoute>
-              <AdminSessionPage />
+              <ScoringPage />
             </CampChiefOnlyRoute>
           </ProtectedRoute>
         }

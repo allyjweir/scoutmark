@@ -677,13 +677,18 @@ export const ScoringPage = () => {
       const result = await api.finaliseSession(sessionId);
       setSubmissions(result.submissions);
 
-      // Navigate to dashboard with success feedback
-      navigate('/', {
-        state: {
-          finalised: session?.name ?? 'Session',
-          finalisedSessionId: sessionId,
-        },
-      });
+      if (session?.round_type === 'round2') {
+        setSession((current) => current ? { ...current, status: 'LOCKED' } : current);
+        setView('summary');
+      } else {
+        // Navigate to dashboard with success feedback.
+        navigate('/', {
+          state: {
+            finalised: session?.name ?? 'Session',
+            finalisedSessionId: sessionId,
+          },
+        });
+      }
     } catch (err) {
       console.error('[finalise] Error:', err);
       setError(err instanceof Error ? err.message : 'Finalise failed');
@@ -853,6 +858,7 @@ export const ScoringPage = () => {
   // Incomplete-scores confirmation
   const [showConfirmFinalise, setShowConfirmFinalise] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
+  const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
 
   const incompletePatrols = useMemo(() => {
     if (!patrols.length || !criteria.length) return [];
@@ -903,6 +909,21 @@ export const ScoringPage = () => {
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
   const scoreInputEnabled = wsConnected;
+  const winningPatrol = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
+  const round2Announcement = winningPatrol
+    ? `Camp Chief's Pendant Winners: ${winningPatrol.subcamp} ${winningPatrol.name}`
+    : '';
+
+  const handleCopyRound2Announcement = useCallback(async () => {
+    if (!round2Announcement) return;
+    try {
+      await navigator.clipboard.writeText(round2Announcement);
+      setCopiedAnnouncement(true);
+      setTimeout(() => setCopiedAnnouncement(false), 1800);
+    } catch {
+      setError('Could not copy announcement text');
+    }
+  }, [round2Announcement]);
 
   const websocketPill = useMemo(() => {
     if (wsStatus === 'connected') {
@@ -1281,7 +1302,7 @@ export const ScoringPage = () => {
                   {session.award_best_patrol && (
                     <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
                       <Text sx={{ fontSize: 1, fontWeight: 'bold', minWidth: '120px', flexShrink: 0 }}>
-                        🥇 Best Patrol
+                        {session.round_type === 'round2' ? "🏆 Camp Chief's Pendant" : '🥇 Best Patrol'}
                       </Text>
                       <Box sx={{ flex: 1 }}>
                         <select
@@ -1376,7 +1397,7 @@ export const ScoringPage = () => {
                   >
                     🖨️ View Printable Summary
                   </Button>
-                  {session.status === 'ACTIVE' && (
+                  {(session.status === 'ACTIVE' || session.round_type === 'round2') && (
                     <Button
                       onClick={handleRevise}
                       disabled={revising}
@@ -1385,6 +1406,23 @@ export const ScoringPage = () => {
                     >
                       {revising ? 'Reopening…' : '✏️ Revise Scores'}
                     </Button>
+                  )}
+                  {session.round_type === 'round2' && winningPatrol && (
+                    <Box
+                      p={3}
+                      borderWidth={1}
+                      borderStyle="solid"
+                      borderColor="success.emphasis"
+                      borderRadius={2}
+                      bg="success.subtle"
+                    >
+                      <Text sx={{ fontWeight: 'bold', display: 'block', mb: 2 }}>
+                        {round2Announcement}
+                      </Text>
+                      <Button size="small" onClick={handleCopyRound2Announcement}>
+                        {copiedAnnouncement ? 'Copied ✓' : 'Copy for WhatsApp'}
+                      </Button>
+                    </Box>
                   )}
                 </Box>
               ) : session.status === 'ACTIVE' ? (

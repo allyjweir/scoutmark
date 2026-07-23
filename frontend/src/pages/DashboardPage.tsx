@@ -39,7 +39,9 @@ export const DashboardPage = () => {
 
   const isRegularSession = (session: Session) => (session.round_type ?? 'regular') === 'regular';
   const isCampChiefAccount = user?.is_camp_chief === true;
-  const visibleSessions = user?.is_admin ? sessions : sessions.filter(isRegularSession);
+  const visibleSessions = isCampChiefAccount
+    ? sessions.filter((session) => !isRegularSession(session))
+    : sessions.filter(isRegularSession);
   const sessionsById = sessions.reduce<Record<string, Session>>((acc, session) => {
     acc[session.id] = session;
     return acc;
@@ -124,10 +126,6 @@ export const DashboardPage = () => {
           return;
         }
         navigate(`/admin/sessions/${session.id}`);
-        return;
-      }
-      if (isCampChiefAccount && (session.round_type ?? 'regular') === 'round2') {
-        navigate(`/campchief/sessions/${session.id}`);
         return;
       }
       navigate(`/sessions/${session.id}`);

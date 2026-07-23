@@ -909,9 +909,9 @@ export const ScoringPage = () => {
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
   const scoreInputEnabled = wsConnected;
-  const pendantWinner = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
-  const round2Announcement = pendantWinner
-    ? `Camp Chief's Pendant Winners: ${pendantWinner.subcamp} ${pendantWinner.name}`
+  const bestPatrol = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
+  const round2Announcement = bestPatrol
+    ? `Camp Chief's Pendant Winners: ${bestPatrol.subcamp} ${bestPatrol.name}`
     : '';
 
   const handleCopyRound2Announcement = useCallback(async () => {
@@ -1407,7 +1407,7 @@ export const ScoringPage = () => {
                       {revising ? 'Reopening…' : '✏️ Revise Scores'}
                     </Button>
                   )}
-                  {session.round_type === 'round2' && pendantWinner && (
+                  {session.round_type === 'round2' && bestPatrol && (
                     <Box
                       p={3}
                       borderWidth={1}
@@ -1424,8 +1424,8 @@ export const ScoringPage = () => {
                       </Button>
                     </Box>
                   )}
-                  {session.round_type === 'round2' && !pendantWinner && (
-                    <Text sx={{ color: 'attention.fg', textAlign: 'center' }}>
+                  {session.round_type === 'round2' && !bestPatrol && (
+                    <Text role="alert" sx={{ color: 'attention.fg', textAlign: 'center' }}>
                       No Camp Chief's Pendant winner was selected.
                     </Text>
                   )}

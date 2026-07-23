@@ -909,9 +909,9 @@ export const ScoringPage = () => {
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
   const scoreInputEnabled = wsConnected;
-  const winningPatrol = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
-  const round2Announcement = winningPatrol
-    ? `Camp Chief's Pendant Winners: ${winningPatrol.subcamp} ${winningPatrol.name}`
+  const pendantWinner = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
+  const round2Announcement = pendantWinner
+    ? `Camp Chief's Pendant Winners: ${pendantWinner.subcamp} ${pendantWinner.name}`
     : '';
 
   const handleCopyRound2Announcement = useCallback(async () => {
@@ -1397,7 +1397,7 @@ export const ScoringPage = () => {
                   >
                     🖨️ View Printable Summary
                   </Button>
-                  {(session.status === 'ACTIVE' || session.round_type === 'round2') && (
+                  {(session.status === 'ACTIVE' || (session.round_type === 'round2' && session.status === 'LOCKED')) && (
                     <Button
                       onClick={handleRevise}
                       disabled={revising}
@@ -1407,7 +1407,7 @@ export const ScoringPage = () => {
                       {revising ? 'Reopening…' : '✏️ Revise Scores'}
                     </Button>
                   )}
-                  {session.round_type === 'round2' && winningPatrol && (
+                  {session.round_type === 'round2' && pendantWinner && (
                     <Box
                       p={3}
                       borderWidth={1}
@@ -1424,7 +1424,7 @@ export const ScoringPage = () => {
                       </Button>
                     </Box>
                   )}
-                  {session.round_type === 'round2' && !winningPatrol && (
+                  {session.round_type === 'round2' && !pendantWinner && (
                     <Text sx={{ color: 'attention.fg', textAlign: 'center' }}>
                       No Camp Chief's Pendant winner was selected.
                     </Text>

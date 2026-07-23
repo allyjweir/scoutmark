@@ -140,9 +140,11 @@ export const listSubmissions = async (sessionId: string): Promise<{ submissions:
 
 export const reviseSession = async (
   sessionId: string,
+  subcampId?: string,
 ): Promise<{ ok: boolean }> =>
   request(`/sessions/${sessionId}/revise`, {
     method: 'POST',
+    body: subcampId ? JSON.stringify({ subcamp_id: subcampId }) : undefined,
   });
 
 export const getSubmissionScores = async (
@@ -298,6 +300,7 @@ export interface AdminSubcamp {
   name: string;
   locked_at?: string | null;
   locked_by?: string | null;
+  finalised: boolean;
 }
 
 export interface AdminUser {

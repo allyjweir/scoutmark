@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,23 @@ func TestFinaliseSessionAsAdminForSubcamp(t *testing.T) {
 		t.Fatalf("bravo submissions = %d, want 0", bravoSubmissions)
 	}
 
+	request = httptest.NewRequest(http.MethodPost, "/api/sessions/session/revise",
+		bytes.NewBufferString(`{"subcamp_id":"alpha"}`))
+	request.Header.Set("Authorization", "Bearer "+"admin-token")
+	response = httptest.NewRecorder()
+	mux.Handle("POST /api/sessions/{session_id}/revise", auth.Middleware(db)(http.HandlerFunc(handler.ReviseSession)))
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("revise response = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var alphaSubmissions int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM submissions WHERE session_id = 'session' AND patrol_id IN ('alpha-1', 'alpha-2')`).Scan(&alphaSubmissions); err != nil {
+		t.Fatalf("counting alpha submissions: %v", err)
+	}
+	if alphaSubmissions != 0 {
+		t.Fatalf("alpha submissions after revise = %d, want 0", alphaSubmissions)
+	}
+
 	mustExec(t, db, `INSERT INTO session_subcamp_locks (session_id, subcamp_id, locked_by) VALUES ('session', 'bravo', 'admin')`)
 	request = httptest.NewRequest(http.MethodPost, "/api/sessions/session/finalise",
 		bytes.NewBufferString(`{"subcamp_id":"bravo"}`))
@@ -98,7 +116,7 @@ func newIntegrationDB(t *testing.T) *database.DB {
 	db := &database.DB{DB: sqlDB}
 	t.Cleanup(func() { db.Close() })
 
-	schema := "test_" + uuid.NewString()
+	schema := "test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
 	if _, err := db.ExecContext(context.Background(), "CREATE SCHEMA "+schema); err != nil {
 		t.Fatalf("creating test schema: %v", err)
 	}

@@ -717,16 +717,17 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 
 // ReviseSession converts all submissions for a user's subcamp patrols back into shared drafts.
 func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error {
-	return d.InTx(ctx, func(tx *sql.Tx) error {
-		// Get the user's subcamp
-		var subcampID string
-		if err := tx.QueryRowContext(ctx,
-			"SELECT subcamp_id FROM users WHERE id = $1", userID,
-		).Scan(&subcampID); err != nil {
-			return fmt.Errorf("querying user subcamp: %w", err)
-		}
+	var subcampID string
+	if err := d.QueryRowContext(ctx, "SELECT subcamp_id FROM users WHERE id = $1", userID).Scan(&subcampID); err != nil {
+		return fmt.Errorf("querying user subcamp: %w", err)
+	}
+	return d.ReviseSessionSubcamp(ctx, userID, sessionID, subcampID)
+}
 
-		// Get patrols in the user's subcamp that are included in this session
+// ReviseSessionSubcamp converts all submissions for a subcamp's patrols back into shared drafts.
+func (d *DB) ReviseSessionSubcamp(ctx context.Context, userID, sessionID, subcampID string) error {
+	return d.InTx(ctx, func(tx *sql.Tx) error {
+		// Get patrols in the subcamp that are included in this session.
 		patrolRows, err := tx.QueryContext(ctx,
 			`SELECT p.id
 			 FROM patrols p

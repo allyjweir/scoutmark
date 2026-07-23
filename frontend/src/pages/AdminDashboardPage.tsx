@@ -90,6 +90,37 @@ export const AdminDashboardPage = () => {
     }
   };
 
+  const changeSubcampFinalisation = async (sessionId: string, subcamp: AdminSubcamp, revise: boolean) => {
+    setSaving(`${sessionId}:${subcamp.id}:${revise ? 'revise' : 'finalise'}`);
+    setError('');
+    try {
+      if (revise) await api.reviseSession(sessionId, subcamp.id);
+      else await api.finaliseSession(sessionId, subcamp.id);
+      const data = await api.getAdminSessionSubcamps(sessionId);
+      setSessionSubcamps((previous) => ({ ...previous, [sessionId]: data.subcamps }));
+      setNotice(revise ? `${subcamp.name} reopened for revision.` : `${subcamp.name} finalised.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not ${revise ? 'revise' : 'finalise'} subcamp`);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const unlockSession = async (session: Session) => {
+    setSaving(session.id);
+    setError('');
+    try {
+      await api.unlockSession(session.id);
+      const { sessions: updatedSessions } = await api.listSessions();
+      setSessions(updatedSessions);
+      setNotice(`${session.name} unlocked.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not unlock session');
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const createUser = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving('create-user');
@@ -149,6 +180,9 @@ export const AdminDashboardPage = () => {
             onToggle={() => toggleSession(session.id)}
             onSave={saveTimes}
             onLock={changeSubcampLock}
+            onFinalise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, false)}
+            onRevise={(sessionId, subcamp) => changeSubcampFinalisation(sessionId, subcamp, true)}
+            onUnlockSession={unlockSession}
             onScores={() => navigate(`/admin/sessions/${session.id}/scores`)}
           />
         ))}
@@ -188,10 +222,13 @@ export const AdminDashboardPage = () => {
   );
 };
 
-const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onLock, onScores }: {
+const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onLock, onFinalise, onRevise, onUnlockSession, onScores }: {
   session: Session; open: boolean; subcamps: AdminSubcamp[]; busy: string | null;
   onToggle: () => void; onSave: (session: Session, starts: string, ends: string) => void;
-  onLock: (sessionId: string, subcamp: AdminSubcamp) => void; onScores: () => void;
+  onLock: (sessionId: string, subcamp: AdminSubcamp) => void;
+  onFinalise: (sessionId: string, subcamp: AdminSubcamp) => void;
+  onUnlockSession: (session: Session) => void;
+  onRevise: (sessionId: string, subcamp: AdminSubcamp) => void; onScores: () => void;
 }) => {
   const sessionStartsAt = toUTCDateTimeLocal(session.starts_at);
   const sessionEndsAt = toUTCDateTimeLocal(session.ends_at);
@@ -226,12 +263,28 @@ const SessionAdminCard = ({ session, open, subcamps, busy, onToggle, onSave, onL
         <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }}>
           <Button size="small" onClick={openNow} disabled={busy === session.id}>Open now</Button>
           <Button size="small" onClick={closeNow} disabled={busy === session.id}>Close now</Button>
+          {session.status === 'LOCKED' && <Button size="small" onClick={() => onUnlockSession(session)} disabled={busy === session.id}>Unlock session</Button>}
           <Button size="small" onClick={onScores}>Edit patrol scores</Button>
         </Box>
       </Box>
       {hasScheduleChanges && <Box display="flex" flexWrap="wrap" sx={{ gap: 2 }} mb={3}><Button size="small" onClick={() => onSave(session, startsAt, endsAt)} disabled={busy === session.id}>Save schedule</Button></Box>}
       <Heading sx={{ fontSize: 1, mb: 2 }}>Subcamp scoring</Heading>
-      <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>{subcamps.map((subcamp) => <Box key={subcamp.id} display="flex" justifyContent="space-between" alignItems="center"><Text sx={{ fontSize: 1 }}>{subcamp.name}{subcamp.locked_at ? ` — locked${subcamp.locked_by ? ` by ${subcamp.locked_by}` : ''}` : ''}</Text><Button size="small" variant={subcamp.locked_at ? 'default' : 'danger'} disabled={busy === `${session.id}:${subcamp.id}`} onClick={() => onLock(session.id, subcamp)}>{subcamp.locked_at ? 'Unlock' : 'Lock'}</Button></Box>)}</Box>
+      <Box display="flex" flexDirection="column" sx={{ gap: 1 }}>
+        {subcamps.map((subcamp) => {
+          const finalising = busy === `${session.id}:${subcamp.id}:finalise`;
+          const revising = busy === `${session.id}:${subcamp.id}:revise`;
+          const actionDisabled = session.status !== 'ACTIVE' || !!subcamp.locked_at || finalising || revising;
+          const state = subcamp.locked_at ? 'Locked' : subcamp.finalised ? 'Finalised' : 'Open';
+          return <Box key={subcamp.id} display="flex" justifyContent="space-between" alignItems="center">
+            <Text sx={{ fontSize: 1 }}>{subcamp.name} ({state}){subcamp.locked_at && subcamp.locked_by ? ` by ${subcamp.locked_by}` : ''}</Text>
+            <Box display="flex" sx={{ gap: 1 }}>
+              <Button size="small" disabled={actionDisabled || subcamp.finalised} onClick={() => onFinalise(session.id, subcamp)}>{finalising ? 'Finalising...' : 'Finalise on behalf'}</Button>
+              <Button size="small" disabled={actionDisabled || !subcamp.finalised} onClick={() => onRevise(session.id, subcamp)}>{revising ? 'Reopening...' : 'Revise'}</Button>
+              <Button size="small" variant={subcamp.locked_at ? 'default' : 'danger'} disabled={busy === `${session.id}:${subcamp.id}`} onClick={() => onLock(session.id, subcamp)}>{subcamp.locked_at ? 'Unlock' : 'Lock'}</Button>
+            </Box>
+          </Box>;
+        })}
+      </Box>
     </Box>}
   </Box>;
 };

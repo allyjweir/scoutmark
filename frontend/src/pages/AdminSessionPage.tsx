@@ -551,7 +551,7 @@ export const AdminSessionPage = () => {
                           fontSize: '14px',
                         }}
                       >
-                        <option value="">Select finalist...</option>
+                        <option value="" disabled>Select finalist...</option>
                         {options.map((patrol) => (
                           <option key={patrol.patrol_id} value={patrol.patrol_id}>
                             {patrol.subcamp ? `${patrol.subcamp} - ${patrol.name}` : patrol.name}

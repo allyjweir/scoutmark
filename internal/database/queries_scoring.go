@@ -752,11 +752,15 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				SubmittedAt: time.Now(),
 			})
 			createdSubmissions++
+			defaultedScoresCount := len(scores) - draftScoreCount
+			if defaultedScoresCount < 0 {
+				defaultedScoresCount = 0
+			}
 			span.AddEvent("finalise.patrol_submission_created", trace.WithAttributes(
 				attribute.String("patrol.id", patrol.ID),
 				attribute.Bool("patrol.had_draft", hadDraft),
 				attribute.Int("patrol.draft_scores_loaded_count", draftScoreCount),
-				attribute.Int("patrol.defaulted_scores_count", len(scores)-draftScoreCount),
+				attribute.Int("patrol.defaulted_scores_count", defaultedScoresCount),
 			))
 		}
 

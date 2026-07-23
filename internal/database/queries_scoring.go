@@ -677,6 +677,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			// Overlay draft scores if a shared draft exists
 			draftScoreCount := 0
 			unexpectedDraftScoreCount := 0
+			draftValues := map[string]int{}
 			hadDraft := false
 			if draft, ok := draftsByPatrol[patrol.ID]; ok {
 				hadDraft = true
@@ -696,8 +697,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 						return fmt.Errorf("scanning draft score: %w", err)
 					}
 					if _, exists := scores[criterionID]; exists {
-						scores[criterionID] = value
-						draftScoreCount++
+						draftValues[criterionID] = value
 					} else {
 						unexpectedDraftScoreCount++
 					}
@@ -716,6 +716,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 					attribute.Int("finalise.unexpected_draft_scores_count", unexpectedDraftScoreCount),
 				))
 				return fmt.Errorf("draft contains %d scores for unknown criteria on patrol %s", unexpectedDraftScoreCount, patrol.ID)
+			}
+			for criterionID, value := range draftValues {
+				scores[criterionID] = value
+				draftScoreCount++
 			}
 
 			// Create the submission

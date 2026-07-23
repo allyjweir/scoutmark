@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 type Round2FinalistRow struct {
@@ -107,14 +108,18 @@ func (d *DB) GetRound2Finalists(ctx context.Context, sessionID string) ([]Round2
 // SetRound2Finalist sets or replaces the finalist patrol for a subcamp in a round 2 session.
 func (d *DB) SetRound2Finalist(ctx context.Context, sessionID, subcampID, patrolID string) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
-		session, err := d.getSessionTx(ctx, tx, sessionID)
-		if err != nil {
-			return err
+		var roundType string
+		var lockedAt *time.Time
+		if err := tx.QueryRowContext(ctx, `SELECT round_type, locked_at FROM sessions WHERE id = $1`, sessionID).Scan(&roundType, &lockedAt); err != nil {
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("session not found")
+			}
+			return fmt.Errorf("loading session: %w", err)
 		}
-		if session.RoundType != "round2" {
+		if roundType != "round2" {
 			return fmt.Errorf("session is not round 2")
 		}
-		if session.LockedAt != nil {
+		if lockedAt != nil {
 			return fmt.Errorf("round 2 session is locked")
 		}
 
@@ -137,13 +142,17 @@ func (d *DB) SetRound2Finalist(ctx context.Context, sessionID, subcampID, patrol
 			return fmt.Errorf("patrol does not belong to subcamp")
 		}
 
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_subcamps (session_id, subcamp_id)
-			 VALUES ($1, $2)
-			 ON CONFLICT (session_id, subcamp_id) DO NOTHING`,
+		var included bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS (
+				SELECT 1 FROM session_subcamps WHERE session_id = $1 AND subcamp_id = $2
+			)`,
 			sessionID, subcampID,
-		); err != nil {
-			return fmt.Errorf("ensuring round 2 subcamp: %w", err)
+		).Scan(&included); err != nil {
+			return fmt.Errorf("checking round 2 subcamp: %w", err)
+		}
+		if !included {
+			return fmt.Errorf("subcamp is not part of this round 2 session")
 		}
 
 		if _, err := tx.ExecContext(ctx,

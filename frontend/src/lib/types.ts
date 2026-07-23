@@ -17,7 +17,6 @@ export interface Session {
   template_id: string;
   name: string;
   round_type?: 'regular' | 'round2';
-  source_session_id?: string | null;
   winner_patrol_name?: string;
   winner_subcamp_name?: string;
   starts_at: string;

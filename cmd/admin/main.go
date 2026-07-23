@@ -600,6 +600,7 @@ func createSession() error {
 	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
 	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining / Most Improved)")
 	subcampsCSV := fs.String("subcamps", "", "Comma-separated subcamp IDs to include (default: all subcamps)")
+	roundType := fs.String("round-type", "regular", `Session type: "regular" or "round2" (Round 2 enables Best Patrol)`)
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a scoring session
@@ -625,6 +626,10 @@ Flags:
 		fs.Usage()
 		return fmt.Errorf("required flags: -event, -template, -name")
 	}
+	if *roundType != "regular" && *roundType != "round2" {
+		return fmt.Errorf("invalid round type %q; use \"regular\" or \"round2\"", *roundType)
+	}
+	bestPatrolEnabled := *awardBestPatrol || *roundType == "round2"
 
 	duration, err := time.ParseDuration(*durationStr)
 	if err != nil {
@@ -693,9 +698,9 @@ Flags:
 	defer tx.Rollback()
 
 	_, err = tx.Exec(
-		`INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at, award_best_patrol, award_most_improved, previous_session_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		id, *eventID, *templateID, *name, startsAt, endsAt, *awardBestPatrol, *awardMostImproved, prevID,
+		`INSERT INTO sessions (id, event_id, template_id, name, starts_at, ends_at, award_best_patrol, award_most_improved, previous_session_id, round_type)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		id, *eventID, *templateID, *name, startsAt, endsAt, bestPatrolEnabled, *awardMostImproved, prevID, *roundType,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting session: %w", err)
@@ -753,14 +758,15 @@ Flags:
 	fmt.Println("✓ Session created")
 	fmt.Printf("  ID:       %s\n", id)
 	fmt.Printf("  Name:     %s\n", *name)
+	fmt.Printf("  Type:     %s\n", *roundType)
 	fmt.Printf("  Event:    %s (%s)\n", eventName, *eventID)
 	fmt.Printf("  Template: %s (%s)\n", templateName, *templateID)
 	fmt.Printf("  Starts:   %s\n", startsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Ends:     %s\n", endsAt.Format("2006-01-02 15:04:05"))
 	fmt.Printf("  Duration: %s\n", duration)
 	fmt.Printf("  Subcamps: %d\n", len(subcampIDs))
-	if *awardBestPatrol || *awardMostImproved {
-		fmt.Printf("  Awards:   best_patrol=%v most_improved=%v\n", *awardBestPatrol, *awardMostImproved)
+	if bestPatrolEnabled || *awardMostImproved {
+		fmt.Printf("  Awards:   best_patrol=%v most_improved=%v\n", bestPatrolEnabled, *awardMostImproved)
 	}
 	if prevID != nil {
 		fmt.Printf("  Previous: %s\n", *prevID)

@@ -677,13 +677,18 @@ export const ScoringPage = () => {
       const result = await api.finaliseSession(sessionId);
       setSubmissions(result.submissions);
 
-      // Navigate to dashboard with success feedback
-      navigate('/', {
-        state: {
-          finalised: session?.name ?? 'Session',
-          finalisedSessionId: sessionId,
-        },
-      });
+      if (session?.round_type === 'round2') {
+        setSession((current) => current ? { ...current, status: 'CLOSED' } : current);
+        setView('summary');
+      } else {
+        // Navigate to dashboard with success feedback.
+        navigate('/', {
+          state: {
+            finalised: session?.name ?? 'Session',
+            finalisedSessionId: sessionId,
+          },
+        });
+      }
     } catch (err) {
       console.error('[finalise] Error:', err);
       setError(err instanceof Error ? err.message : 'Finalise failed');
@@ -853,6 +858,7 @@ export const ScoringPage = () => {
   // Incomplete-scores confirmation
   const [showConfirmFinalise, setShowConfirmFinalise] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
+  const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
 
   const incompletePatrols = useMemo(() => {
     if (!patrols.length || !criteria.length) return [];
@@ -903,6 +909,21 @@ export const ScoringPage = () => {
 
   const isLastPatrol = currentPatrolIndex === patrols.length - 1;
   const scoreInputEnabled = wsConnected;
+  const bestPatrol = patrols.find((patrol) => patrol.patrol_id === getAwardValue('best_patrol'));
+  const round2Announcement = bestPatrol
+    ? `Camp Chief's Pendant Winners: ${bestPatrol.subcamp} ${bestPatrol.name}`
+    : '';
+
+  const handleCopyRound2Announcement = useCallback(async () => {
+    if (!round2Announcement) return;
+    try {
+      await navigator.clipboard.writeText(round2Announcement);
+      setCopiedAnnouncement(true);
+      setTimeout(() => setCopiedAnnouncement(false), 1800);
+    } catch {
+      setError('Could not copy announcement text');
+    }
+  }, [round2Announcement]);
 
   const websocketPill = useMemo(() => {
     if (wsStatus === 'connected') {
@@ -1170,6 +1191,24 @@ export const ScoringPage = () => {
         })()}
       </Box>
 
+      {session.round_type === 'round2' && (
+        <Box
+          px={3}
+          py={2}
+          borderBottomWidth={1}
+          borderBottomStyle="solid"
+          borderBottomColor="border.default"
+          bg="canvas.default"
+        >
+          <Text as="p" sx={{ fontSize: 0, mb: 1 }}>
+            Hi Colin, each of the patrols below received the highest score for their subcamp. You can score each of them and then select the Camp Chief&apos;s Pendant award winner at the end on the &quot;Summary&quot; page.
+          </Text>
+          <Text as="p" sx={{ fontSize: 0, color: 'fg.muted' }}>
+            Any problems, message me on WhatsApp - Ally
+          </Text>
+        </Box>
+      )}
+
       {error && (
         <Flash variant="danger" sx={{ m: 3 }}>
           {error}
@@ -1281,7 +1320,7 @@ export const ScoringPage = () => {
                   {session.award_best_patrol && (
                     <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
                       <Text sx={{ fontSize: 1, fontWeight: 'bold', minWidth: '120px', flexShrink: 0 }}>
-                        🥇 Best Patrol
+                        {session.round_type === 'round2' ? "🏆 Camp Chief's Pendant" : '🥇 Best Patrol'}
                       </Text>
                       <Box sx={{ flex: 1 }}>
                         <select
@@ -1376,7 +1415,7 @@ export const ScoringPage = () => {
                   >
                     🖨️ View Printable Summary
                   </Button>
-                  {session.status === 'ACTIVE' && (
+                  {(session.status === 'ACTIVE' || (session.round_type === 'round2' && session.status === 'LOCKED')) && (
                     <Button
                       onClick={handleRevise}
                       disabled={revising}
@@ -1385,6 +1424,39 @@ export const ScoringPage = () => {
                     >
                       {revising ? 'Reopening…' : '✏️ Revise Scores'}
                     </Button>
+                  )}
+                  {session.round_type === 'round2' && bestPatrol && (
+                    <Box
+                      p={3}
+                      borderWidth={1}
+                      borderStyle="solid"
+                      borderColor="success.emphasis"
+                      borderRadius={2}
+                      bg="success.subtle"
+                    >
+                      <Text sx={{ fontSize: 0, color: 'fg.muted', display: 'block', mb: 1 }}>
+                        WhatsApp message preview
+                      </Text>
+                      <Box
+                        p={2}
+                        mb={2}
+                        borderRadius={2}
+                        bg="canvas.default"
+                        sx={{ width: 'fit-content', maxWidth: '100%' }}
+                      >
+                        <Text sx={{ fontWeight: 'bold', display: 'block' }}>
+                          {round2Announcement}
+                        </Text>
+                      </Box>
+                      <Button size="small" onClick={handleCopyRound2Announcement}>
+                        {copiedAnnouncement ? 'Copied ✓' : 'Copy for WhatsApp'}
+                      </Button>
+                    </Box>
+                  )}
+                  {session.round_type === 'round2' && !bestPatrol && (
+                    <Text role="alert" sx={{ color: 'attention.fg', textAlign: 'center' }}>
+                      No Camp Chief's Pendant winner was selected.
+                    </Text>
                   )}
                 </Box>
               ) : session.status === 'ACTIVE' ? (
@@ -1582,7 +1654,7 @@ export const ScoringPage = () => {
                     }}
                     title={hasPresence ? activeUsers.map(u => `${u.user_name} ${u.mode}`).join(', ') : undefined}
                   >
-                    {patrolLabel(patrol)}
+                    {patrolTitle(patrol)}
                     {patrolCommentCount > 0 && (
                       <Text sx={{ ml: 1, fontSize: 0, opacity: 0.8 }}>💬{patrolCommentCount}</Text>
                     )}

@@ -273,17 +273,15 @@ export interface Round2Finalist {
   selection_source: string;
 }
 
-export const ensureRound2 = async (
-  sessionId: string,
-): Promise<{ session: Session }> =>
-  request(`/admin/sessions/${sessionId}/round2`, {
-    method: 'POST',
-  });
-
 export const getRound2Finalists = async (
   sessionId: string,
 ): Promise<{ finalists: Round2Finalist[] }> =>
   request(`/admin/sessions/${sessionId}/round2/finalists`);
+
+export const getRound2CandidatePatrols = async (
+  sessionId: string,
+): Promise<{ patrols: Patrol[] }> =>
+  request(`/admin/sessions/${sessionId}/round2/candidates`);
 
 export const setRound2Finalist = async (
   sessionId: string,
@@ -319,6 +317,16 @@ export const updateAdminSession = async (
 ): Promise<{ session: Session }> =>
   request(`/admin/sessions/${sessionId}`, {
     method: 'PUT',
+    body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
+  });
+
+export const createAdminRound2Session = async (
+  sessionId: string,
+  startsAt: string,
+  endsAt: string,
+): Promise<{ session: Session }> =>
+  request(`/admin/sessions/${sessionId}/round2`, {
+    method: 'POST',
     body: JSON.stringify({ starts_at: startsAt, ends_at: endsAt }),
   });
 

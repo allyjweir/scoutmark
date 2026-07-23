@@ -709,6 +709,29 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				return fmt.Errorf("checking submission for patrol %s: %w", patrol.ID, err)
 			}
 
+			var legacyDraftID string
+			if err := tx.QueryRowContext(ctx,
+				"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
+				sessionID, patrol.ID,
+			).Scan(&legacyDraftID); err == nil {
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+					 SELECT ds.id, $1, ds.criterion_id, ds.value, ds.last_edited_by
+					 FROM draft_scores ds
+					 WHERE ds.draft_id = $2
+					   AND NOT EXISTS (
+					     SELECT 1 FROM submission_scores ss
+					     WHERE ss.submission_id = $1 AND ss.criterion_id = ds.criterion_id
+					   )`,
+					submissionID, legacyDraftID,
+				)
+				if err != nil {
+					return fmt.Errorf("copying legacy draft scores for patrol %s: %w", patrol.ID, err)
+				}
+			} else if err != sql.ErrNoRows {
+				return fmt.Errorf("checking legacy draft for patrol %s: %w", patrol.ID, err)
+			}
+
 			// Ensure all criteria have values, defaulting missing ones to zero.
 			for _, criterionID := range criterionIDs {
 				_, err := tx.ExecContext(ctx,

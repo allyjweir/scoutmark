@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 )
 
 type Round2FinalistRow struct {
@@ -109,7 +108,7 @@ func (d *DB) GetRound2Finalists(ctx context.Context, sessionID string) ([]Round2
 func (d *DB) SetRound2Finalist(ctx context.Context, sessionID, subcampID, patrolID string) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
 		var roundType string
-		var lockedAt *time.Time
+		var lockedAt sql.NullTime
 		if err := tx.QueryRowContext(ctx, `SELECT round_type, locked_at FROM sessions WHERE id = $1`, sessionID).Scan(&roundType, &lockedAt); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("session not found")
@@ -119,7 +118,7 @@ func (d *DB) SetRound2Finalist(ctx context.Context, sessionID, subcampID, patrol
 		if roundType != "round2" {
 			return fmt.Errorf("session is not round 2")
 		}
-		if lockedAt != nil {
+		if lockedAt.Valid {
 			return fmt.Errorf("round 2 session is locked")
 		}
 

@@ -676,6 +676,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 
 			// Overlay draft scores if a shared draft exists
 			draftScoreCount := 0
+			unexpectedDraftScoreCount := 0
 			hadDraft := false
 			if draft, ok := draftsByPatrol[patrol.ID]; ok {
 				hadDraft = true
@@ -694,8 +695,12 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 						scoreRows.Close()
 						return fmt.Errorf("scanning draft score: %w", err)
 					}
-					scores[criterionID] = value
-					draftScoreCount++
+					if _, exists := scores[criterionID]; exists {
+						scores[criterionID] = value
+						draftScoreCount++
+					} else {
+						unexpectedDraftScoreCount++
+					}
 				}
 				scoreRows.Close()
 				if err := scoreRows.Err(); err != nil {
@@ -705,6 +710,13 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				patrolsWithoutDraft++
 			}
 			totalDraftScoresLoaded += draftScoreCount
+			if unexpectedDraftScoreCount > 0 {
+				span.AddEvent("finalise.unexpected_draft_criteria", trace.WithAttributes(
+					attribute.String("patrol.id", patrol.ID),
+					attribute.Int("finalise.unexpected_draft_scores_count", unexpectedDraftScoreCount),
+				))
+				return fmt.Errorf("draft contains %d scores for unknown criteria on patrol %s", unexpectedDraftScoreCount, patrol.ID)
+			}
 
 			// Create the submission
 			submissionID := uuid.New().String()
@@ -753,14 +765,6 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			})
 			createdSubmissions++
 			defaultedScoresCount := len(criterionIDs) - draftScoreCount
-			if defaultedScoresCount < 0 {
-				span.AddEvent("finalise.draft_scores_exceed_criteria", trace.WithAttributes(
-					attribute.String("patrol.id", patrol.ID),
-					attribute.Int("finalise.criteria_count", len(criterionIDs)),
-					attribute.Int("finalise.draft_scores_loaded_count", draftScoreCount),
-				))
-				return fmt.Errorf("draft scores exceed criteria count for patrol %s", patrol.ID)
-			}
 			span.AddEvent("finalise.patrol_submission_created", trace.WithAttributes(
 				attribute.String("patrol.id", patrol.ID),
 				attribute.Bool("patrol.had_draft", hadDraft),

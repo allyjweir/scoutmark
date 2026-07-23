@@ -1049,7 +1049,7 @@ export const ScoringPage = () => {
           </Text>
 
           <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-            {lockState.kind === 'subcamp' && (
+            {(lockState.kind === 'subcamp' || lockState.kind === 'subcamp_locked') && (
               <Button
                 as="a"
                 href={`/api/sessions/${sessionId}/report-card`}

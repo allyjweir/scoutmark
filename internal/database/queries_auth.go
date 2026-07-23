@@ -231,7 +231,7 @@ func (d *DB) UserOwnsSessionPatrol(ctx context.Context, userID, sessionID, patro
 		     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = $2 AND sp.patrol_id = p.id)
 		   )
 		   AND (
-		     (s.round_type = 'round2' AND u.is_admin = TRUE)
+		     (s.round_type = 'round2' AND u.is_camp_chief = TRUE)
 		     OR (s.round_type <> 'round2' AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = p.subcamp_id)))
 		   )`,
 		userID, sessionID, patrolID,
@@ -252,7 +252,7 @@ func (d *DB) UserCanAccessSession(ctx context.Context, userID, sessionID string)
 		 JOIN session_subcamps ss ON ss.session_id = $2
 		 WHERE u.id = $1
 		   AND (
-		     (s.round_type = 'round2' AND u.is_admin = TRUE)
+		     (s.round_type = 'round2' AND u.is_camp_chief = TRUE)
 		     OR (s.round_type <> 'round2' AND (u.is_admin = TRUE OR (u.subcamp_id IS NOT NULL AND u.subcamp_id = ss.subcamp_id)))
 		   )`,
 		userID, sessionID,

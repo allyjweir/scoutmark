@@ -95,18 +95,16 @@ type SessionDetailRow struct {
 	AwardMostImproved bool
 }
 
-// ComputeStatus derives the session status from time boundaries.
+// ComputeStatus derives the session status from time boundaries and locks.
 func (s *SessionDetailRow) ComputeStatus() string {
-	if s.LockedAt != nil {
-		return "LOCKED"
-	}
-
 	now := time.Now()
 	switch {
 	case now.Before(s.StartsAt):
 		return "UPCOMING"
 	case now.After(s.EndsAt):
 		return "CLOSED"
+	case s.LockedAt != nil:
+		return "LOCKED"
 	default:
 		return "ACTIVE"
 	}

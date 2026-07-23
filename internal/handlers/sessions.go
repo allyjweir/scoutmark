@@ -10,6 +10,7 @@ import (
 
 	"github.com/samber/lo"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/allyjweir/scoutmark/internal/auth"
 	"github.com/allyjweir/scoutmark/internal/database"
@@ -199,6 +200,11 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	user := auth.UserFromContext(ctx)
+	span.SetAttributes(
+		attribute.String("user.id", user.ID),
+		attribute.Bool("user.is_admin", user.IsAdmin),
+		attribute.Bool("user.is_camp_chief", user.IsCampChief),
+	)
 
 	// Parse optional status filter from query params
 	statusParam := r.URL.Query()["status"]
@@ -908,16 +914,25 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			if locker == "" {
 				locker = "an administrator"
 			}
+			span.SetAttributes(
+				attribute.String("finalise.blocked_reason", "session_locked"),
+				attribute.String("session.locked_by", locker),
+			)
 			writeError(w, r, http.StatusLocked, fmt.Sprintf("session was locked by %s", locker))
 			return
 		}
-		span.SetAttributes(attribute.String("session.status", session.ComputeStatus()))
+		span.SetAttributes(
+			attribute.String("session.status", session.ComputeStatus()),
+			attribute.String("finalise.blocked_reason", "session_not_active"),
+		)
 		writeError(w, r, http.StatusBadRequest, "session is not active")
 		return
 	}
 
 	if session.RoundType == "round2" {
+		span.SetAttributes(attribute.String("session.round_type", "round2"))
 		if !user.IsCampChief {
+			span.SetAttributes(attribute.String("finalise.blocked_reason", "camp_chief_required"))
 			writeError(w, r, http.StatusForbidden, "only the camp chief can finalise round 2 scoring")
 			return
 		}
@@ -928,6 +943,7 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if !ready {
+			span.SetAttributes(attribute.String("finalise.blocked_reason", "round2_finalists_incomplete"))
 			writeError(w, r, http.StatusConflict, "round 2 finalists must be selected for every subcamp before finalising")
 			return
 		}
@@ -948,6 +964,10 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			subcampSet[patrol.SubcampID] = true
 			subcampIDs = append(subcampIDs, patrol.SubcampID)
 		}
+		span.SetAttributes(
+			attribute.Int("round2.finalist_patrols_count", len(patrols)),
+			attribute.Int("round2.subcamps_to_finalise_count", len(subcampIDs)),
+		)
 
 		allNewSubmissions := make([]database.SubmissionRow, 0)
 		for _, subcampID := range subcampIDs {
@@ -957,6 +977,10 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 				writeError(w, r, http.StatusInternalServerError, "could not finalise round 2 session")
 				return
 			}
+			span.AddEvent("round2.subcamp_finalised", trace.WithAttributes(
+				attribute.String("subcamp.id", subcampID),
+				attribute.Int("finalise.new_submissions_count", len(newSubmissions)),
+			))
 			allNewSubmissions = append(allNewSubmissions, newSubmissions...)
 		}
 
@@ -991,6 +1015,11 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			"finalised_count": len(allNewSubmissions),
 			"round2_closed":   true,
 		})
+		span.SetAttributes(
+			attribute.Int("finalise.new_submissions_count", len(allNewSubmissions)),
+			attribute.Int("finalise.returned_submissions_count", len(result)),
+			attribute.Bool("session.closed", true),
+		)
 
 		if h.broadcaster != nil {
 			h.broadcaster.BroadcastSessionProgress(ctx, sessionID)
@@ -1009,6 +1038,7 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	targetSubcampID := ""
 	if req.SubcampID != "" {
 		if !user.IsAdmin {
+			span.SetAttributes(attribute.String("finalise.blocked_reason", "admin_required_for_other_subcamp"))
 			writeError(w, r, http.StatusForbidden, "only admins can finalise another subcamp")
 			return
 		}
@@ -1016,18 +1046,27 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	} else if user.SubcampID != nil {
 		targetSubcampID = *user.SubcampID
 	} else if !user.IsAdmin {
+		span.SetAttributes(attribute.String("finalise.blocked_reason", "missing_user_subcamp_assignment"))
 		writeError(w, r, http.StatusForbidden, "user is not assigned to a subcamp")
 		return
 	} else if user.IsAdmin {
+		span.SetAttributes(attribute.String("finalise.blocked_reason", "missing_subcamp_id_for_admin"))
 		writeError(w, r, http.StatusBadRequest, "subcamp_id is required for admin users without an assigned subcamp")
 		return
 	}
+	span.SetAttributes(
+		attribute.String("session.round_type", session.RoundType),
+		attribute.String("subcamp.id", targetSubcampID),
+		attribute.Bool("finalise.admin_override", req.SubcampID != ""),
+	)
 	locked, err := h.db.IsSubcampScoringLocked(ctx, sessionID, targetSubcampID)
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "could not check subcamp lock")
 		return
 	}
+	span.SetAttributes(attribute.Bool("subcamp.scoring_locked", locked))
 	if locked {
+		span.SetAttributes(attribute.String("finalise.blocked_reason", "subcamp_scoring_locked"))
 		writeError(w, r, http.StatusLocked, "subcamp scoring is locked")
 		return
 	}
@@ -1074,6 +1113,7 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 	span.SetAttributes(
 		attribute.Int("finalised.count", len(newSubmissions)),
 		attribute.Int("total.submissions", len(allSubmissions)),
+		attribute.Bool("session.auto_locked", autoLocked),
 	)
 
 	result := lo.Map(allSubmissions, func(s database.SubmissionRow, _ int) submissionJSON {

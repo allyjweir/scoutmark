@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/allyjweir/scoutmark/internal/tracing"
 	"github.com/google/uuid"
 	"github.com/samber/lo"
 )
@@ -517,6 +521,13 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 // Missing criteria are filled with zeros.
 func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID string) ([]SubmissionRow, error) {
 	var submissions []SubmissionRow
+	ctx, span := tracing.Tracer().Start(ctx, "db.finalise_session_subcamp")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("user.id", userID),
+		attribute.String("session.id", sessionID),
+		attribute.String("subcamp.requested_id", subcampID),
+	)
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
 		resolvedSubcampID := subcampID
@@ -527,6 +538,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				return fmt.Errorf("looking up user subcamp: %w", err)
 			}
 		}
+		span.SetAttributes(attribute.String("subcamp.resolved_id", resolvedSubcampID))
 
 		// Ensure the target subcamp participates in this session.
 		var inSessionCount int
@@ -564,6 +576,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			criterionIDs = append(criterionIDs, id)
 		}
 		critRows.Close()
+		if err := critRows.Err(); err != nil {
+			return fmt.Errorf("iterating criteria: %w", err)
+		}
+		span.SetAttributes(attribute.Int("finalise.criteria_count", len(criterionIDs)))
 
 		// Get all patrols for this subcamp that are in-session
 		patrolRows, err := tx.QueryContext(ctx,
@@ -595,6 +611,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			userPatrols = append(userPatrols, p)
 		}
 		patrolRows.Close()
+		if err := patrolRows.Err(); err != nil {
+			return fmt.Errorf("iterating patrols: %w", err)
+		}
+		span.SetAttributes(attribute.Int("finalise.target_patrols_count", len(userPatrols)))
 
 		// Fetch all shared drafts for this session
 		draftRows, err := tx.QueryContext(ctx,
@@ -621,6 +641,14 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 		if err := draftRows.Err(); err != nil {
 			return err
 		}
+		span.SetAttributes(attribute.Int("finalise.available_drafts_count", len(draftsByPatrol)))
+
+		var createdSubmissions int
+		var skippedExisting int
+		var patrolsWithDraft int
+		var patrolsWithoutDraft int
+		var totalDraftScoresLoaded int
+		var totalSubmissionScoresWritten int
 
 		// Process every patrol in the target subcamp
 		for _, patrol := range userPatrols {
@@ -633,6 +661,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				return fmt.Errorf("checking existing submission: %w", err)
 			}
 			if existingCount > 0 {
+				skippedExisting++
+				span.AddEvent("finalise.patrol_skipped_existing_submission", trace.WithAttributes(
+					attribute.String("patrol.id", patrol.ID),
+				))
 				continue
 			}
 
@@ -643,7 +675,11 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			}
 
 			// Overlay draft scores if a shared draft exists
+			draftScoreCount := 0
+			hadDraft := false
 			if draft, ok := draftsByPatrol[patrol.ID]; ok {
+				hadDraft = true
+				patrolsWithDraft++
 				scoreRows, err := tx.QueryContext(ctx,
 					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = $1",
 					draft.ID,
@@ -659,9 +695,16 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 						return fmt.Errorf("scanning draft score: %w", err)
 					}
 					scores[criterionID] = value
+					draftScoreCount++
 				}
 				scoreRows.Close()
+				if err := scoreRows.Err(); err != nil {
+					return fmt.Errorf("iterating draft scores: %w", err)
+				}
+			} else {
+				patrolsWithoutDraft++
 			}
+			totalDraftScoresLoaded += draftScoreCount
 
 			// Create the submission
 			submissionID := uuid.New().String()
@@ -682,6 +725,7 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 					return fmt.Errorf("inserting submission score: %w", err)
 				}
 			}
+			totalSubmissionScoresWritten += len(scores)
 
 			// Copy per-user comments from draft to submission (BEFORE draft deletion cascades them)
 			if _, ok := draftsByPatrol[patrol.ID]; ok {
@@ -707,8 +751,23 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				Locked:      true,
 				SubmittedAt: time.Now(),
 			})
+			createdSubmissions++
+			span.AddEvent("finalise.patrol_submission_created", trace.WithAttributes(
+				attribute.String("patrol.id", patrol.ID),
+				attribute.Bool("patrol.had_draft", hadDraft),
+				attribute.Int("patrol.draft_scores_loaded_count", draftScoreCount),
+				attribute.Int("patrol.defaulted_scores_count", len(scores)-draftScoreCount),
+			))
 		}
 
+		span.SetAttributes(
+			attribute.Int("finalise.submissions_created_count", createdSubmissions),
+			attribute.Int("finalise.patrols_skipped_existing_count", skippedExisting),
+			attribute.Int("finalise.patrols_with_draft_count", patrolsWithDraft),
+			attribute.Int("finalise.patrols_without_draft_count", patrolsWithoutDraft),
+			attribute.Int("finalise.total_draft_scores_loaded_count", totalDraftScoresLoaded),
+			attribute.Int("finalise.total_submission_scores_written_count", totalSubmissionScoresWritten),
+		)
 		return nil
 	})
 

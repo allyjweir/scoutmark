@@ -37,9 +37,9 @@ Usage:
 
 Commands:
   create-user       Create a new user (interactive or with flags)
-  change-password   Change a user's password
-  rename-user       Rename a user
-  list-users        List all users
+	change-password   Change a user's password
+	rename-user       Rename a user or update their display name
+	list-users        List all users
   query             Execute an arbitrary PostgreSQL query
 	create-subcamp    Create a subcamp
 	update-subcamp    Update a subcamp name
@@ -338,13 +338,17 @@ func changePassword() error {
 func renameUser() error {
 	fs := flag.NewFlagSet("rename-user", flag.ExitOnError)
 	username := fs.String("username", "", "Current username (required)")
-	newUsername := fs.String("new-username", "", "New username (required)")
+	newUsername := fs.String("new-username", "", "New username")
+	displayName := fs.String("display-name", "", "New display name")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		return err
 	}
-	if *username == "" || *newUsername == "" {
-		return fmt.Errorf("required flags: -username, -new-username")
+	if *username == "" {
+		return fmt.Errorf("required flag: -username")
+	}
+	if *newUsername == "" && *displayName == "" {
+		return fmt.Errorf("provide at least one of: -new-username, -display-name")
 	}
 
 	db, err := connectDB()
@@ -353,12 +357,22 @@ func renameUser() error {
 	}
 	defer db.Close()
 
-	result, err := db.Exec("UPDATE users SET username = $1 WHERE username = $2", *newUsername, *username)
+	var result sql.Result
+	if *newUsername != "" && *displayName != "" {
+		result, err = db.Exec(
+			"UPDATE users SET username = $1, display_name = $2 WHERE username = $3",
+			*newUsername, *displayName, *username,
+		)
+	} else if *newUsername != "" {
+		result, err = db.Exec("UPDATE users SET username = $1 WHERE username = $2", *newUsername, *username)
+	} else {
+		result, err = db.Exec("UPDATE users SET display_name = $1 WHERE username = $2", *displayName, *username)
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("user %q already exists", *newUsername)
 		}
-		return fmt.Errorf("renaming user: %w", err)
+		return fmt.Errorf("updating user: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
@@ -368,7 +382,13 @@ func renameUser() error {
 		return fmt.Errorf("user %q not found", *username)
 	}
 
-	fmt.Printf("\n✓ User %q renamed to %q\n", *username, *newUsername)
+	if *newUsername != "" && *displayName != "" {
+		fmt.Printf("\n✓ User %q renamed to %q and display name updated\n", *username, *newUsername)
+	} else if *newUsername != "" {
+		fmt.Printf("\n✓ User %q renamed to %q\n", *username, *newUsername)
+	} else {
+		fmt.Printf("\n✓ Display name updated for user %q\n", *username)
+	}
 	return nil
 }
 

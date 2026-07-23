@@ -37,7 +37,8 @@ func NewReportHandler(db *database.DB, logoPNG []byte) *ReportHandler {
 	return &ReportHandler{db: db, logoPNG: logoPNG}
 }
 
-// GetReportCard generates a PDF score summary for a closed session.
+// GetReportCard generates a PDF score summary for a closed session or a
+// subcamp that has already finalised scoring.
 // GET /api/sessions/{session_id}/report-card
 func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -54,10 +55,18 @@ func (h *ReportHandler) GetReportCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only allow report generation for closed sessions
+	// Allow report generation once the whole session is closed, or as soon as
+	// the current user's assigned subcamp is fully finalised.
 	if session.ComputeStatus() != "CLOSED" {
-		writeError(w, r, http.StatusBadRequest, "report card is only available after the session has ended")
-		return
+		finalisedSessionIDs, err := h.db.GetUserFinalisedSessionIDs(ctx, user.ID, user.IsAdmin)
+		if err != nil {
+			writeError(w, r, http.StatusInternalServerError, "failed to check finalised state")
+			return
+		}
+		if !finalisedSessionIDs[sessionID] {
+			writeError(w, r, http.StatusBadRequest, "report card is available after your subcamp has finalised or once the session has ended")
+			return
+		}
 	}
 
 	// Fetch criteria for column headers

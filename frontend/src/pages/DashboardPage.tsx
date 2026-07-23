@@ -16,7 +16,9 @@ export const DashboardPage = () => {
   const [error, setError] = useState('');
 
   // Success flash from finalise navigation
-  const finalisedName = (location.state as { finalised?: string } | null)?.finalised;
+  const finalisedState = location.state as { finalised?: string; finalisedSessionId?: string } | null;
+  const finalisedName = finalisedState?.finalised;
+  const finalisedSessionId = finalisedState?.finalisedSessionId;
   const [showSuccess, setShowSuccess] = useState(!!finalisedName);
 
   // Clear the navigation state so it doesn't persist on refresh
@@ -162,6 +164,18 @@ export const DashboardPage = () => {
       {showSuccess && finalisedName && (
         <Flash variant="success" sx={{ mb: 3 }}>
           🎉 Scores for <strong>{finalisedName}</strong> submitted successfully!
+          {finalisedSessionId && (
+            <Button
+              as="a"
+              href={`/api/sessions/${finalisedSessionId}/report-card`}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="small"
+              sx={{ ml: 2 }}
+            >
+              🖨️ Printable Summary
+            </Button>
+          )}
         </Flash>
       )}
 

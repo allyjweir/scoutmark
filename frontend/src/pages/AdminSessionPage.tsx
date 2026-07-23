@@ -532,10 +532,11 @@ export const AdminSessionPage = () => {
             <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
               {Object.entries(patrolOptionsBySubcamp).map(([subcampId, options]) => {
                 const finalist = round2Finalists.find((item) => item.subcamp_id === subcampId);
+                const subcampName = options[0]?.subcamp ?? finalist?.subcamp_name ?? 'Unknown subcamp';
                 const locked = session.status === 'LOCKED' || session.status === 'CLOSED';
                 return (
                   <Box key={subcampId} display="flex" alignItems="center" sx={{ gap: 2 }}>
-                    <Text sx={{ minWidth: '120px', fontSize: 1, fontWeight: 'bold' }}>{options[0]?.subcamp}</Text>
+                    <Text sx={{ minWidth: '120px', fontSize: 1, fontWeight: 'bold' }}>{subcampName}</Text>
                     <Box sx={{ flex: 1 }}>
                       <select
                         value={finalist?.patrol_id ?? ''}

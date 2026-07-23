@@ -600,7 +600,7 @@ func createSession() error {
 	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
 	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining / Most Improved)")
 	subcampsCSV := fs.String("subcamps", "", "Comma-separated subcamp IDs to include (default: all subcamps)")
-	roundType := fs.String("round-type", "regular", `Session type: "regular" or "round2"`)
+	roundType := fs.String("round-type", "regular", `Session type: "regular" or "round2" (Round 2 enables Best Patrol)`)
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a scoring session

@@ -1426,7 +1426,7 @@ export const ScoringPage = () => {
                   )}
                   {session.round_type === 'round2' && !winningPatrol && (
                     <Text sx={{ color: 'attention.fg', textAlign: 'center' }}>
-                      No Camp Chief&apos;s Pendant winner was selected.
+                      No Camp Chief's Pendant winner was selected.
                     </Text>
                   )}
                 </Box>

@@ -128,7 +128,6 @@ func sessionResponse(s *database.SessionDetailRow) sessionJSON {
 		TemplateID:        s.TemplateID,
 		Name:              s.Name,
 		RoundType:         s.RoundType,
-		SourceSessionID:   s.SourceSessionID,
 		StartsAt:          s.StartsAt.UTC().Format(time.RFC3339),
 		EndsAt:            s.EndsAt.UTC().Format(time.RFC3339),
 		Status:            s.ComputeStatus(),

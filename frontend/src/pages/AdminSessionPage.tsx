@@ -59,12 +59,10 @@ export const AdminSessionPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [locking, setLocking] = useState(false);
-  const [creatingRound2, setCreatingRound2] = useState(false);
   const [round2Finalists, setRound2Finalists] = useState<Round2Finalist[]>([]);
   const [loadingFinalists, setLoadingFinalists] = useState(false);
-  const [sourcePatrols, setSourcePatrols] = useState<Patrol[]>([]);
+  const [sessionPatrols, setSessionPatrols] = useState<Patrol[]>([]);
   const [savingFinalistSubcampId, setSavingFinalistSubcampId] = useState<string | null>(null);
-  const [linkedRound2SessionId, setLinkedRound2SessionId] = useState<string | null>(null);
   const [loadingRound2Board, setLoadingRound2Board] = useState(false);
   const [round2SubmittedPatrolIds, setRound2SubmittedPatrolIds] = useState<Set<string>>(new Set());
   const [round2PatrolTotals, setRound2PatrolTotals] = useState<Record<string, number | null>>({});
@@ -243,20 +241,6 @@ export const AdminSessionPage = () => {
     }
   }, [sessionId, session, applyUsers]);
 
-  const handleEnsureRound2 = useCallback(async () => {
-    if (!sessionId) return;
-    setCreatingRound2(true);
-    setError('');
-    try {
-      const res = await api.ensureRound2(sessionId);
-      setLinkedRound2SessionId(res.session.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create round 2');
-    } finally {
-      setCreatingRound2(false);
-    }
-  }, [sessionId]);
-
   const handleSetFinalist = useCallback(async (subcampId: string, patrolId: string) => {
     if (!sessionId || !patrolId) return;
     setSavingFinalistSubcampId(subcampId);
@@ -275,7 +259,7 @@ export const AdminSessionPage = () => {
   useEffect(() => {
     if (!sessionId || session?.round_type !== 'round2') {
       setRound2Finalists([]);
-      setSourcePatrols([]);
+      setSessionPatrols([]);
       return;
     }
 
@@ -285,12 +269,10 @@ export const AdminSessionPage = () => {
       .catch(() => setRound2Finalists([]))
       .finally(() => setLoadingFinalists(false));
 
-    if (session.source_session_id) {
-      api.getSession(session.source_session_id)
-        .then(({ patrols }) => setSourcePatrols(patrols))
-        .catch(() => setSourcePatrols([]));
-    }
-  }, [sessionId, session?.round_type, session?.source_session_id]);
+    api.getRound2CandidatePatrols(sessionId)
+      .then(({ patrols }) => setSessionPatrols(patrols))
+      .catch(() => setSessionPatrols([]));
+  }, [sessionId, session?.round_type]);
 
   useEffect(() => {
     if (!sessionId || session?.round_type !== 'round2') {
@@ -371,13 +353,13 @@ export const AdminSessionPage = () => {
 
   const patrolOptionsBySubcamp = useMemo(() => {
     const grouped: Record<string, Patrol[]> = {};
-    for (const patrol of sourcePatrols) {
+    for (const patrol of sessionPatrols) {
       if (!patrol.subcamp_id) continue;
       grouped[patrol.subcamp_id] = grouped[patrol.subcamp_id] ?? [];
       grouped[patrol.subcamp_id].push(patrol);
     }
     return grouped;
-  }, [sourcePatrols]);
+  }, [sessionPatrols]);
 
   if (loading) {
     return (
@@ -538,50 +520,27 @@ export const AdminSessionPage = () => {
         </Box>
       </Box>
 
-      {/* Round 2 admin controls */}
-      {!isCampChiefView && session.round_type !== 'round2' && (
-        <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
-          <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2</Heading>
-          <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>
-            Create or open the linked camp chief final round for this session.
-          </Text>
-          <Box display="flex" alignItems="center" sx={{ gap: 2 }}>
-            <Button
-              onClick={handleEnsureRound2}
-              disabled={creatingRound2 || (session.status !== 'CLOSED' && session.status !== 'LOCKED')}
-            >
-              {creatingRound2 ? 'Working...' : 'Create / Open Round 2'}
-            </Button>
-            {linkedRound2SessionId && (
-              <Button onClick={() => navigate(`/admin/sessions/${linkedRound2SessionId}`)}>
-                Open Round 2 →
-              </Button>
-            )}
-          </Box>
-        </Box>
-      )}
-
       {session.round_type === 'round2' && (
         <Box p={3} borderBottomWidth={1} borderBottomStyle="solid" borderBottomColor="border.default">
           <Heading sx={{ fontSize: 2, mb: 2 }}>Round 2: Finalists by Subcamp</Heading>
           <Text sx={{ fontSize: 1, color: 'fg.muted', mb: 2, display: 'block' }}>
-            Finalists come from Round 1 results: one finalist patrol per subcamp.
+            Select one finalist patrol from each participating subcamp before scoring begins.
           </Text>
           {loadingFinalists ? (
             <Text sx={{ fontSize: 1, color: 'fg.muted' }}>Loading finalists...</Text>
           ) : (
             <Box display="flex" flexDirection="column" sx={{ gap: 2 }}>
-              {round2Finalists.map((finalist) => {
-                const options = patrolOptionsBySubcamp[finalist.subcamp_id] ?? [];
+              {Object.entries(patrolOptionsBySubcamp).map(([subcampId, options]) => {
+                const finalist = round2Finalists.find((item) => item.subcamp_id === subcampId);
                 const locked = session.status === 'LOCKED' || session.status === 'CLOSED';
                 return (
-                  <Box key={finalist.subcamp_id} display="flex" alignItems="center" sx={{ gap: 2 }}>
-                    <Text sx={{ minWidth: '120px', fontSize: 1, fontWeight: 'bold' }}>{finalist.subcamp_name}</Text>
+                  <Box key={subcampId} display="flex" alignItems="center" sx={{ gap: 2 }}>
+                    <Text sx={{ minWidth: '120px', fontSize: 1, fontWeight: 'bold' }}>{options[0]?.subcamp}</Text>
                     <Box sx={{ flex: 1 }}>
                       <select
-                        value={finalist.patrol_id}
-                        onChange={(e) => handleSetFinalist(finalist.subcamp_id, e.target.value)}
-                        disabled={locked || savingFinalistSubcampId === finalist.subcamp_id || options.length === 0}
+                        value={finalist?.patrol_id ?? ''}
+                        onChange={(e) => handleSetFinalist(subcampId, e.target.value)}
+                        disabled={locked || savingFinalistSubcampId === subcampId || options.length === 0}
                         style={{
                           width: '100%',
                           padding: '8px 12px',
@@ -591,6 +550,7 @@ export const AdminSessionPage = () => {
                           fontSize: '14px',
                         }}
                       >
+                        <option value="">Select finalist...</option>
                         {options.map((patrol) => (
                           <option key={patrol.patrol_id} value={patrol.patrol_id}>
                             {patrol.subcamp ? `${patrol.subcamp} - ${patrol.name}` : patrol.name}
@@ -598,12 +558,12 @@ export const AdminSessionPage = () => {
                         ))}
                       </select>
                     </Box>
-                    <Label variant="accent" size="small">{finalist.selection_source}</Label>
+                    {finalist && <Label variant="accent" size="small">{finalist.selection_source}</Label>}
                   </Box>
                 );
               })}
-              {round2Finalists.length === 0 && (
-                <Text sx={{ fontSize: 1, color: 'fg.muted' }}>No finalists configured yet.</Text>
+              {Object.keys(patrolOptionsBySubcamp).length === 0 && (
+                <Text sx={{ fontSize: 1, color: 'fg.muted' }}>No candidate patrols are available for this session.</Text>
               )}
             </Box>
           )}

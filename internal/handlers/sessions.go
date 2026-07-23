@@ -52,7 +52,6 @@ type sessionJSON struct {
 	TemplateID        string          `json:"template_id"`
 	Name              string          `json:"name"`
 	RoundType         string          `json:"round_type"`
-	SourceSessionID   *string         `json:"source_session_id,omitempty"`
 	WinnerPatrolName  *string         `json:"winner_patrol_name,omitempty"`
 	WinnerSubcampName *string         `json:"winner_subcamp_name,omitempty"`
 	StartsAt          string          `json:"starts_at"`
@@ -185,22 +184,6 @@ type round2FinalistJSON struct {
 	SelectionSource string `json:"selection_source"`
 }
 
-func (h *SessionHandler) maybeEnsureRound2(ctx context.Context, session *database.SessionDetailRow) {
-	if session == nil {
-		return
-	}
-	if session.RoundType != "regular" || !session.AwardBestPatrol {
-		return
-	}
-	status := session.ComputeStatus()
-	if status != "CLOSED" && status != "LOCKED" {
-		return
-	}
-	if _, err := h.db.EnsureRound2ForSourceSession(ctx, session.ID); err != nil {
-		tracing.RecordError(ctx, err)
-	}
-}
-
 func formatOptionalTime(t *time.Time) *string {
 	if t == nil {
 		return nil
@@ -226,10 +209,6 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not fetch sessions")
 		return
 	}
-	for i := range sessions {
-		h.maybeEnsureRound2(ctx, &sessions[i])
-	}
-
 	winnerBySessionID := map[string]*database.Round2WinnerRow{}
 	for _, s := range sessions {
 		if s.RoundType != "round2" {
@@ -268,7 +247,6 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			TemplateID:        s.TemplateID,
 			Name:              s.Name,
 			RoundType:         s.RoundType,
-			SourceSessionID:   s.SourceSessionID,
 			WinnerPatrolName:  winnerPatrolName,
 			WinnerSubcampName: winnerSubcampName,
 			StartsAt:          s.StartsAt.Format("2006-01-02T15:04:05Z"),
@@ -386,8 +364,6 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "session not found")
 		return
 	}
-	h.maybeEnsureRound2(ctx, session)
-
 	// Fetch criteria for the session's template
 	criteria, err := h.db.GetTemplateCriteria(ctx, session.TemplateID)
 	if err != nil {
@@ -436,7 +412,6 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		TemplateID:        session.TemplateID,
 		Name:              session.Name,
 		RoundType:         session.RoundType,
-		SourceSessionID:   session.SourceSessionID,
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),
@@ -526,10 +501,6 @@ func (h *SessionHandler) LockSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusInternalServerError, "could not lock session")
 		return
 	}
-	if _, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID); err != nil {
-		tracing.RecordError(ctx, err)
-	}
-
 	lockedSession, err := h.db.GetSession(ctx, sessionID)
 	if err != nil {
 		tracing.RecordError(ctx, err)
@@ -589,46 +560,6 @@ func (h *SessionHandler) UnlockSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// EnsureRound2 handles POST /api/admin/sessions/{session_id}/round2
-// Creates round 2 for a closed regular session if it does not already exist.
-func (h *SessionHandler) EnsureRound2(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	sessionID := r.PathValue("session_id")
-
-	round2, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID)
-	if err != nil {
-		tracing.RecordError(ctx, err)
-		writeError(w, r, http.StatusInternalServerError, "could not create round 2 session")
-		return
-	}
-	if round2 == nil {
-		writeError(w, r, http.StatusBadRequest, "round 2 not eligible yet or no finalists available")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"session": sessionJSON{
-			ID:                round2.ID,
-			EventID:           round2.EventID,
-			EventName:         round2.EventName,
-			TemplateID:        round2.TemplateID,
-			Name:              round2.Name,
-			RoundType:         round2.RoundType,
-			SourceSessionID:   round2.SourceSessionID,
-			StartsAt:          round2.StartsAt.Format("2006-01-02T15:04:05Z"),
-			EndsAt:            round2.EndsAt.Format("2006-01-02T15:04:05Z"),
-			Status:            round2.ComputeStatus(),
-			LockedAt:          formatOptionalTime(round2.LockedAt),
-			LockedBy:          round2.LockedBy,
-			LockedByName:      round2.LockedByName,
-			CreatedAt:         round2.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			PreviousSessionID: round2.PreviousSessionID,
-			AwardBestPatrol:   round2.AwardBestPatrol,
-			AwardMostImproved: round2.AwardMostImproved,
-		},
-	})
-}
-
 // GetRound2Finalists handles GET /api/admin/sessions/{session_id}/round2/finalists
 func (h *SessionHandler) GetRound2Finalists(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -662,6 +593,34 @@ func (h *SessionHandler) GetRound2Finalists(w http.ResponseWriter, r *http.Reque
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"finalists": result})
+}
+
+// GetRound2CandidatePatrols handles GET /api/admin/sessions/{session_id}/round2/candidates.
+func (h *SessionHandler) GetRound2CandidatePatrols(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	sessionID := r.PathValue("session_id")
+
+	session, err := h.db.GetSession(ctx, sessionID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "session not found")
+		return
+	}
+	if session.RoundType != "round2" {
+		writeError(w, r, http.StatusBadRequest, "session is not round 2")
+		return
+	}
+
+	patrols, err := h.db.GetRound2CandidatePatrols(ctx, sessionID)
+	if err != nil {
+		tracing.RecordError(ctx, err)
+		writeError(w, r, http.StatusInternalServerError, "could not fetch round 2 candidate patrols")
+		return
+	}
+
+	result := lo.Map(patrols, func(p database.UserPatrolRow, _ int) patrolJSON {
+		return patrolJSON{PatrolID: p.PatrolID, Name: p.Name, SortOrder: p.SortOrder, SubcampID: p.SubcampID, Subcamp: p.Subcamp}
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"patrols": result})
 }
 
 // SetRound2Finalist handles PUT /api/admin/sessions/{session_id}/round2/finalists/{subcamp_id}
@@ -1097,9 +1056,6 @@ func (h *SessionHandler) FinaliseSession(w http.ResponseWriter, r *http.Request)
 			tracing.RecordError(ctx, err)
 		} else {
 			autoLocked = true
-			if _, err := h.db.EnsureRound2ForSourceSession(ctx, sessionID); err != nil {
-				tracing.RecordError(ctx, err)
-			}
 		}
 	}
 
@@ -1408,7 +1364,6 @@ func (h *SessionHandler) GetSessionProgress(w http.ResponseWriter, r *http.Reque
 		EventName:         session.EventName,
 		Name:              session.Name,
 		RoundType:         session.RoundType,
-		SourceSessionID:   session.SourceSessionID,
 		StartsAt:          session.StartsAt.Format("2006-01-02T15:04:05Z"),
 		EndsAt:            session.EndsAt.Format("2006-01-02T15:04:05Z"),
 		Status:            session.ComputeStatus(),

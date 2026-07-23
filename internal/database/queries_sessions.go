@@ -81,7 +81,6 @@ type SessionDetailRow struct {
 	TemplateID        string
 	Name              string
 	RoundType         string
-	SourceSessionID   *string
 	StartsAt          time.Time
 	EndsAt            time.Time
 	LockedAt          *time.Time
@@ -100,13 +99,6 @@ func (s *SessionDetailRow) ComputeStatus() string {
 	}
 
 	now := time.Now()
-	if s.RoundType == "round2" {
-		if now.Before(s.StartsAt) {
-			return "UPCOMING"
-		}
-		return "ACTIVE"
-	}
-
 	switch {
 	case now.Before(s.StartsAt):
 		return "UPCOMING"
@@ -121,7 +113,7 @@ func (s *SessionDetailRow) ComputeStatus() string {
 func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDetailRow, error) {
 	rows, err := d.QueryContext(ctx,
 		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at,
-		        s.round_type, s.source_session_id,
+		        s.round_type,
 		        s.locked_at, s.locked_by, lu.display_name,
 		        s.created_at,
 		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
@@ -139,7 +131,7 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 	for rows.Next() {
 		var s SessionDetailRow
 		if err := rows.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt,
-			&s.RoundType, &s.SourceSessionID,
+			&s.RoundType,
 			&s.LockedAt, &s.LockedBy, &s.LockedByName,
 			&s.CreatedAt,
 			&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {
@@ -166,7 +158,7 @@ func (d *DB) ListSessions(ctx context.Context, statuses []string) ([]SessionDeta
 func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRow, error) {
 	row := d.QueryRowContext(ctx,
 		`SELECT s.id, s.event_id, e.name, s.template_id, s.name, s.starts_at, s.ends_at,
-		        s.round_type, s.source_session_id,
+		        s.round_type,
 		        s.locked_at, s.locked_by, lu.display_name,
 		        s.created_at,
 		        s.previous_session_id, s.award_best_patrol, s.award_most_improved
@@ -179,7 +171,7 @@ func (d *DB) GetSession(ctx context.Context, sessionID string) (*SessionDetailRo
 
 	s := &SessionDetailRow{}
 	if err := row.Scan(&s.ID, &s.EventID, &s.EventName, &s.TemplateID, &s.Name, &s.StartsAt, &s.EndsAt,
-		&s.RoundType, &s.SourceSessionID,
+		&s.RoundType,
 		&s.LockedAt, &s.LockedBy, &s.LockedByName,
 		&s.CreatedAt,
 		&s.PreviousSessionID, &s.AwardBestPatrol, &s.AwardMostImproved); err != nil {

@@ -190,14 +190,13 @@ export const AdminDashboardPage = () => {
     }
   };
 
-  const newestSessions = (status: Session['status']) => sessions
-    .filter((session) => session.status === status)
+  const newestSessions = (statuses: Session['status'][]) => sessions
+    .filter((session) => statuses.includes(session.status))
     .sort((first, second) => new Date(second.created_at).getTime() - new Date(first.created_at).getTime());
   const sessionGroups = [
-    { title: 'Open', sessions: newestSessions('ACTIVE') },
-    { title: 'Locked', sessions: newestSessions('LOCKED') },
-    { title: 'Closed', sessions: newestSessions('CLOSED') },
-    { title: 'Upcoming', sessions: newestSessions('UPCOMING') },
+    { title: 'Active', sessions: newestSessions(['ACTIVE']) },
+    { title: 'Closed / Locked', sessions: newestSessions(['CLOSED', 'LOCKED']) },
+    { title: 'Upcoming', sessions: newestSessions(['UPCOMING']) },
   ];
 
   if (loading) return <Box display="flex" justifyContent="center" minHeight="100vh" alignItems="center"><Spinner size="large" /></Box>;

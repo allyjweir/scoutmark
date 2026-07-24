@@ -591,7 +591,7 @@ func createSession() error {
 	fs := flag.NewFlagSet("create-session", flag.ExitOnError)
 
 	eventID := fs.String("event", "", "Event ID (required)")
-	templateID := fs.String("template", "", "Criteria template ID (required)")
+	templateID := fs.String("template", "", "Criteria template ID (required for regular sessions)")
 	name := fs.String("name", "", "Session name (required)")
 	startStr := fs.String("start", "", `Start time in RFC3339 or "now" (default: now)`)
 	durationStr := fs.String("duration", "3h", "Duration from start (e.g. 2h, 6h, 30m)")
@@ -600,7 +600,7 @@ func createSession() error {
 	awardMostImproved := fs.Bool("award-most-improved", false, "Enable Most Improved award")
 	previousSessionID := fs.String("previous-session", "", "ID of the previous session (for chaining / Most Improved)")
 	subcampsCSV := fs.String("subcamps", "", "Comma-separated subcamp IDs to include (default: all subcamps)")
-	roundType := fs.String("round-type", "regular", `Session type: "regular" or "round2" (Round 2 enables Best Patrol)`)
+	roundType := fs.String("round-type", "regular", `Session type: "regular" or "round2" (Round 2 uses its dedicated overall-score template)`)
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Create a scoring session
@@ -622,12 +622,15 @@ Flags:
 		return err
 	}
 
-	if *eventID == "" || *templateID == "" || *name == "" {
+	if *eventID == "" || *name == "" || (*roundType == "regular" && *templateID == "") {
 		fs.Usage()
-		return fmt.Errorf("required flags: -event, -template, -name")
+		return fmt.Errorf("required flags: -event, -name, and -template for regular sessions")
 	}
 	if *roundType != "regular" && *roundType != "round2" {
 		return fmt.Errorf("invalid round type %q; use \"regular\" or \"round2\"", *roundType)
+	}
+	if *roundType == "round2" {
+		*templateID = database.Round2TemplateID
 	}
 	bestPatrolEnabled := *awardBestPatrol || *roundType == "round2"
 

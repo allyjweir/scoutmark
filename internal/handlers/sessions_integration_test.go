@@ -212,8 +212,15 @@ func TestCreateRound2FromRegularSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getting created round 2: %v", err)
 	}
-	if created.EventID != "event" || created.TemplateID != "template" || !created.AwardBestPatrol || created.AwardMostImproved {
-		t.Fatalf("created round 2 settings were not copied correctly: %#v", created)
+	if created.EventID != "event" || created.TemplateID != database.Round2TemplateID || !created.AwardBestPatrol || created.AwardMostImproved {
+		t.Fatalf("created round 2 settings were not configured correctly: %#v", created)
+	}
+	criteria, err := db.GetTemplateCriteria(ctx, created.TemplateID)
+	if err != nil {
+		t.Fatalf("getting round 2 criteria: %v", err)
+	}
+	if len(criteria) != 1 || criteria[0].Title != "Overall Score" || criteria[0].MinValue != 1 || criteria[0].MaxValue != 10 {
+		t.Fatalf("round 2 criteria = %#v, want one Overall Score criterion from 1 to 10", criteria)
 	}
 	subcamps, err := db.ListSessionSubcamps(ctx, result.Session.ID)
 	if err != nil {

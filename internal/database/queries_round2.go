@@ -51,8 +51,10 @@ type Round2WinnerRow struct {
 	SubcampName string
 }
 
+const Round2TemplateID = "tpl-round2-scoring"
+
 // CreateRound2FromSession creates a standalone Round 2 session with the source
-// session's event, criteria template, and participating subcamps.
+// session's event and participating subcamps, using the dedicated Round 2 template.
 func (d *DB) CreateRound2FromSession(ctx context.Context, sourceSessionID string, startsAt, endsAt time.Time) (*SessionDetailRow, error) {
 	if !endsAt.After(startsAt) {
 		return nil, fmt.Errorf("round 2 end time must be after its start time")
@@ -60,12 +62,11 @@ func (d *DB) CreateRound2FromSession(ctx context.Context, sourceSessionID string
 
 	round2ID := uuid.NewString()
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
-		var eventID, templateID, sourceName, roundType string
+		var eventID, sourceName, roundType string
 		if err := tx.QueryRowContext(ctx,
-			`SELECT event_id, template_id, name, round_type
+			`SELECT event_id, name, round_type
 			 FROM sessions WHERE id = $1`,
-			sourceSessionID,
-		).Scan(&eventID, &templateID, &sourceName, &roundType); err != nil {
+			sourceSessionID).Scan(&eventID, &sourceName, &roundType); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("source session not found")
 			}
@@ -80,7 +81,7 @@ func (d *DB) CreateRound2FromSession(ctx context.Context, sourceSessionID string
 				id, event_id, template_id, name, starts_at, ends_at,
 				round_type, award_best_patrol, award_most_improved
 			) VALUES ($1, $2, $3, $4, $5, $6, 'round2', TRUE, FALSE)`,
-			round2ID, eventID, templateID, sourceName+" - Round 2", startsAt, endsAt,
+			round2ID, eventID, Round2TemplateID, sourceName+" - Round 2", startsAt, endsAt,
 		); err != nil {
 			return fmt.Errorf("creating round 2 session: %w", err)
 		}

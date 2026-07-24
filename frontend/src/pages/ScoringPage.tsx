@@ -859,6 +859,7 @@ export const ScoringPage = () => {
   const [showConfirmFinalise, setShowConfirmFinalise] = useState(false);
   const [showConnectionHelp, setShowConnectionHelp] = useState(false);
   const [copiedAnnouncement, setCopiedAnnouncement] = useState(false);
+  const [copiedAdminMessage, setCopiedAdminMessage] = useState(false);
 
   const incompletePatrols = useMemo(() => {
     if (!patrols.length || !criteria.length) return [];
@@ -913,6 +914,9 @@ export const ScoringPage = () => {
   const round2Announcement = bestPatrol
     ? `Camp Chief's Pendant Winners: ${bestPatrol.subcamp} ${bestPatrol.name}`
     : '';
+  const round2AdminMessage = bestPatrol && patrols.every((patrol) => patrolTotals[patrol.patrol_id] != null)
+    ? `${patrols.map((patrol) => `${patrol.subcamp} - ${patrol.name}: ${patrolTotals[patrol.patrol_id]}`).join('\n')}\n\nOverall winner: ${bestPatrol.subcamp} - ${bestPatrol.name}`
+    : '';
 
   const handleCopyRound2Announcement = useCallback(async () => {
     if (!round2Announcement) return;
@@ -924,6 +928,17 @@ export const ScoringPage = () => {
       setError('Could not copy announcement text');
     }
   }, [round2Announcement]);
+
+  const handleCopyRound2AdminMessage = useCallback(async () => {
+    if (!round2AdminMessage) return;
+    try {
+      await navigator.clipboard.writeText(round2AdminMessage);
+      setCopiedAdminMessage(true);
+      setTimeout(() => setCopiedAdminMessage(false), 1800);
+    } catch {
+      setError('Could not copy admin message');
+    }
+  }, [round2AdminMessage]);
 
   const websocketPill = useMemo(() => {
     if (wsStatus === 'connected') {
@@ -1450,6 +1465,28 @@ export const ScoringPage = () => {
                       </Box>
                       <Button size="small" onClick={handleCopyRound2Announcement}>
                         {copiedAnnouncement ? 'Copied ✓' : 'Copy for WhatsApp'}
+                      </Button>
+                    </Box>
+                  )}
+                  {session.round_type === 'round2' && round2AdminMessage && (
+                    <Box
+                      p={3}
+                      borderWidth={1}
+                      borderStyle="solid"
+                      borderColor="border.default"
+                      borderRadius={2}
+                      bg="canvas.default"
+                    >
+                      <Text sx={{ fontSize: 0, color: 'fg.muted', display: 'block', mb: 1 }}>
+                        Admin message
+                      </Text>
+                      <Box p={2} mb={2} borderRadius={2} bg="canvas.subtle">
+                        <Text sx={{ whiteSpace: 'pre-wrap', display: 'block' }}>
+                          {round2AdminMessage}
+                        </Text>
+                      </Box>
+                      <Button size="small" onClick={handleCopyRound2AdminMessage}>
+                        {copiedAdminMessage ? 'Copied ✓' : 'Copy admin message'}
                       </Button>
                     </Box>
                   )}

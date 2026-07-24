@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/allyjweir/scoutmark/internal/tracing"
 	"github.com/google/uuid"
 	"github.com/samber/lo"
 )
@@ -19,6 +23,7 @@ type DraftRow struct {
 	PatrolID  string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	IsLegacy  bool
 }
 
 // DraftScoreRow represents a single score within a draft, with attribution.
@@ -31,29 +36,77 @@ type DraftScoreRow struct {
 	LastEditedAt time.Time
 }
 
-// GetDraft fetches a shared draft by (session, patrol).
+// GetDraft fetches an in-progress score record by (session, patrol).
+// Canonically this is an unlocked submission; legacy drafts are still read as fallback.
 func (d *DB) GetDraft(ctx context.Context, sessionID, patrolID string) (*DraftRow, error) {
+	// Prefer canonical unlocked submission-based draft.
 	row := d.QueryRowContext(ctx,
-		`SELECT id, session_id, patrol_id, created_at, updated_at
-		 FROM drafts
-		 WHERE session_id = $1 AND patrol_id = $2`,
+		`SELECT id, session_id, patrol_id, submitted_at, updated_at
+		 FROM submissions
+		 WHERE session_id = $1 AND patrol_id = $2 AND locked = FALSE`,
 		sessionID, patrolID,
 	)
 
 	dr := &DraftRow{}
 	err := row.Scan(&dr.ID, &dr.SessionID, &dr.PatrolID, &dr.CreatedAt, &dr.UpdatedAt)
-	if err == sql.ErrNoRows {
-		return nil, nil
+	switch {
+	case err == nil:
+		return dr, nil
+	case err != sql.ErrNoRows:
+		return nil, fmt.Errorf("scanning draft submission: %w", err)
 	}
-	if err != nil {
+
+	// Fallback for legacy draft rows during incremental migration.
+	row = d.QueryRowContext(ctx,
+		`SELECT id, session_id, patrol_id, created_at, updated_at
+		 FROM drafts
+		 WHERE session_id = $1 AND patrol_id = $2`,
+		sessionID, patrolID,
+	)
+	if err := row.Scan(&dr.ID, &dr.SessionID, &dr.PatrolID, &dr.CreatedAt, &dr.UpdatedAt); err == sql.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
 		return nil, fmt.Errorf("scanning draft: %w", err)
 	}
+	dr.IsLegacy = true
 	return dr, nil
 }
 
 // GetDraftScores returns all scores for a draft, including attribution.
 func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRow, error) {
-	rows, err := d.QueryContext(ctx,
+	var (
+		rows *sql.Rows
+		err  error
+	)
+
+	// Try canonical submission scores first (for unlocked submission-backed drafts).
+	rows, err = d.QueryContext(ctx,
+		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value, ss.scored_by, s.updated_at
+		 FROM submission_scores ss
+		 JOIN submissions s ON s.id = ss.submission_id
+		 WHERE ss.submission_id = $1`,
+		draftID,
+	)
+	if err == nil {
+		defer rows.Close()
+		var scores []DraftScoreRow
+		for rows.Next() {
+			var s DraftScoreRow
+			if err := rows.Scan(&s.ID, &s.DraftID, &s.CriterionID, &s.Value, &s.LastEditedBy, &s.LastEditedAt); err != nil {
+				return nil, fmt.Errorf("scanning draft submission score: %w", err)
+			}
+			scores = append(scores, s)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(scores) > 0 {
+			return scores, nil
+		}
+		// If there are no submission scores for this ID, it may be a legacy draft ID.
+	}
+
+	rows, err = d.QueryContext(ctx,
 		`SELECT id, draft_id, criterion_id, value, last_edited_by, last_edited_at
 		 FROM draft_scores WHERE draft_id = $1`,
 		draftID,
@@ -74,36 +127,77 @@ func (d *DB) GetDraftScores(ctx context.Context, draftID string) ([]DraftScoreRo
 	return scores, rows.Err()
 }
 
-// SaveDraft upserts a shared draft and its scores. Creates the draft if it doesn't exist,
-// then upserts each score with attribution.
+// SaveDraft upserts in-progress scores in the canonical submissions tables.
+// It keeps backward compatibility by converting legacy draft rows when present.
 func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, scores map[string]int) (*DraftRow, error) {
 	var draft *DraftRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
-		// Upsert the shared draft record (no user_id column)
-		var draftID string
+		// Ensure a submission row exists; unlocked means "draft/in progress".
+		var submissionID string
+		var locked bool
 		row := tx.QueryRowContext(ctx,
-			"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
+			"SELECT id, locked FROM submissions WHERE session_id = $1 AND patrol_id = $2",
 			sessionID, patrolID,
 		)
-		err := row.Scan(&draftID)
+		err := row.Scan(&submissionID, &locked)
 		if err == sql.ErrNoRows {
-			draftID = uuid.New().String()
+			submissionID = uuid.New().String()
 			_, err = tx.ExecContext(ctx,
-				"INSERT INTO drafts (id, session_id, patrol_id) VALUES ($1, $2, $3)",
-				draftID, sessionID, patrolID,
+				"INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked, submitted_at, updated_at) VALUES ($1, $2, $3, $4, FALSE, NOW(), NOW())",
+				submissionID, userID, sessionID, patrolID,
 			)
 			if err != nil {
-				return fmt.Errorf("inserting draft: %w", err)
+				return fmt.Errorf("inserting draft submission: %w", err)
 			}
 		} else if err != nil {
-			return fmt.Errorf("checking existing draft: %w", err)
+			return fmt.Errorf("checking existing submission: %w", err)
 		} else {
-			_, err = tx.ExecContext(ctx,
-				"UPDATE drafts SET updated_at = NOW() WHERE id = $1", draftID,
+			if locked {
+				return fmt.Errorf("scores already submitted for this patrol")
+			}
+			result, err := tx.ExecContext(ctx,
+				"UPDATE submissions SET submitted_by = $2, updated_at = NOW() WHERE id = $1 AND locked = FALSE", submissionID, userID,
 			)
 			if err != nil {
-				return fmt.Errorf("updating draft timestamp: %w", err)
+				return fmt.Errorf("updating draft submission: %w", err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("checking draft submission update: %w", err)
+			}
+			if affected == 0 {
+				return fmt.Errorf("scores already submitted for this patrol")
+			}
+		}
+
+		// Legacy fallback: if no submission_scores yet, copy any existing draft_scores once.
+		var existingSubmissionScores int
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM submission_scores WHERE submission_id = $1", submissionID).Scan(&existingSubmissionScores); err != nil {
+			return fmt.Errorf("counting submission scores: %w", err)
+		}
+		if existingSubmissionScores == 0 {
+			var legacyDraftID string
+			if err := tx.QueryRowContext(ctx,
+				"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
+				sessionID, patrolID,
+			).Scan(&legacyDraftID); err == nil {
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+					 SELECT ds.id, $1, ds.criterion_id, ds.value, ds.last_edited_by
+					 FROM draft_scores ds
+					 WHERE ds.draft_id = $2
+					   AND NOT EXISTS (
+					     SELECT 1 FROM submission_scores ss
+					     WHERE ss.submission_id = $1 AND ss.criterion_id = ds.criterion_id
+					   )`,
+					submissionID, legacyDraftID,
+				)
+				if err != nil {
+					return fmt.Errorf("backfilling legacy draft scores: %w", err)
+				}
+			} else if err != sql.ErrNoRows {
+				return fmt.Errorf("checking legacy draft: %w", err)
 			}
 		}
 
@@ -111,12 +205,12 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 		for criterionID, value := range scores {
 			scoreID := uuid.New().String()
 			_, err := tx.ExecContext(ctx,
-				`INSERT INTO draft_scores (id, draft_id, criterion_id, value, last_edited_by, last_edited_at)
-				 VALUES ($1, $2, $3, $4, $5, NOW())
-				 ON CONFLICT (draft_id, criterion_id) DO UPDATE
+				`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+				 VALUES ($1, $2, $3, $4, $5)
+				 ON CONFLICT (submission_id, criterion_id) DO UPDATE
 				   SET value = EXCLUDED.value,
-				       last_edited_by = EXCLUDED.last_edited_by, last_edited_at = NOW()`,
-				scoreID, draftID, criterionID, value, userID,
+				       scored_by = EXCLUDED.scored_by`,
+				scoreID, submissionID, criterionID, value, userID,
 			)
 			if err != nil {
 				return fmt.Errorf("upserting draft score for criterion %s: %w", criterionID, err)
@@ -124,7 +218,7 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 		}
 
 		draft = &DraftRow{
-			ID:        draftID,
+			ID:        submissionID,
 			SessionID: sessionID,
 			PatrolID:  patrolID,
 			UpdatedAt: time.Now(),
@@ -135,9 +229,33 @@ func (d *DB) SaveDraft(ctx context.Context, userID, sessionID, patrolID string, 
 	return draft, err
 }
 
-// DeleteDraft removes a shared draft and its scores (cascade).
+// DeleteDraft removes in-progress score state without deleting finalised submissions.
 func (d *DB) DeleteDraft(ctx context.Context, sessionID, patrolID string) error {
-	_, err := d.ExecContext(ctx,
+	var err error
+	_, err = d.ExecContext(ctx,
+		"DELETE FROM submission_comments WHERE submission_id IN (SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2 AND locked = FALSE)",
+		sessionID, patrolID,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = d.ExecContext(ctx,
+		"DELETE FROM submission_scores WHERE submission_id IN (SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2 AND locked = FALSE)",
+		sessionID, patrolID,
+	)
+	if err != nil {
+		return err
+	}
+	_, err = d.ExecContext(ctx,
+		"DELETE FROM submissions WHERE session_id = $1 AND patrol_id = $2 AND locked = FALSE",
+		sessionID, patrolID,
+	)
+	if err == nil {
+		return nil
+	}
+
+	// Legacy fallback.
+	_, err = d.ExecContext(ctx,
 		"DELETE FROM drafts WHERE session_id = $1 AND patrol_id = $2",
 		sessionID, patrolID,
 	)
@@ -211,7 +329,7 @@ func (d *DB) GetPatrolHistory(ctx context.Context, subcampID *string, isAdmin bo
 		        sb.id, se.id, se.name, se.starts_at, sb.submitted_at,
 		        ss.criterion_id, c.title, c.min_value, c.max_value, c.sort_order, ss.value
 		 FROM patrols p
-		 LEFT JOIN submissions sb ON sb.patrol_id = p.id
+		 LEFT JOIN submissions sb ON sb.patrol_id = p.id AND sb.locked = TRUE
 		 LEFT JOIN sessions se ON se.id = sb.session_id
 		 LEFT JOIN submission_scores ss ON ss.submission_id = sb.id
 		 LEFT JOIN criteria c ON c.id = ss.criterion_id
@@ -245,7 +363,7 @@ func (d *DB) GetPatrolHistory(ctx context.Context, subcampID *string, isAdmin bo
 		 FROM submission_comments sc
 		 JOIN submissions sb ON sb.id = sc.submission_id
 		 JOIN patrols p ON p.id = sb.patrol_id
-		 WHERE `+scope+` AND sc.comment != ''
+		 WHERE `+scope+` AND sb.locked = TRUE AND sc.comment != ''
 		 ORDER BY sc.created_at ASC`,
 		args...,
 	)
@@ -269,30 +387,37 @@ func (d *DB) GetPatrolHistory(ctx context.Context, subcampID *string, isAdmin bo
 	return history, comments, nil
 }
 
-// CreateSubmission creates a new submission from scores and deletes the shared draft.
+// CreateSubmission locks a patrol's scores as finalised.
 func (d *DB) CreateSubmission(ctx context.Context, submittedBy, sessionID, patrolID string, scores map[string]int) (*SubmissionRow, error) {
 	var submission *SubmissionRow
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
-		submissionID := uuid.New().String()
-
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked)
-			 VALUES ($1, $2, $3, $4, TRUE)
-			 ON CONFLICT (session_id, patrol_id) DO UPDATE SET locked = TRUE, submitted_at = NOW(), submitted_by = $2`,
-			submissionID, submittedBy, sessionID, patrolID,
-		)
-		if err != nil {
-			return fmt.Errorf("inserting submission: %w", err)
-		}
-
-		// If it was a duplicate key update, get the real ID
-		row := tx.QueryRowContext(ctx,
-			"SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2",
-			sessionID, patrolID,
-		)
-		if err := row.Scan(&submissionID); err != nil {
-			return fmt.Errorf("getting submission ID: %w", err)
+		var submissionID string
+		var err error
+		row := tx.QueryRowContext(ctx, "SELECT id FROM submissions WHERE session_id = $1 AND patrol_id = $2", sessionID, patrolID)
+		switch err := row.Scan(&submissionID); err {
+		case nil:
+			_, err = tx.ExecContext(ctx,
+				`UPDATE submissions
+				 SET locked = TRUE, submitted_at = NOW(), submitted_by = $2, updated_at = NOW()
+				 WHERE id = $1`,
+				submissionID, submittedBy,
+			)
+			if err != nil {
+				return fmt.Errorf("updating submission: %w", err)
+			}
+		case sql.ErrNoRows:
+			submissionID = uuid.New().String()
+			_, err = tx.ExecContext(ctx,
+				`INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked)
+				 VALUES ($1, $2, $3, $4, TRUE)`,
+				submissionID, submittedBy, sessionID, patrolID,
+			)
+			if err != nil {
+				return fmt.Errorf("inserting submission: %w", err)
+			}
+		default:
+			return fmt.Errorf("checking submission: %w", err)
 		}
 
 		// Clear old scores if re-submitting
@@ -301,44 +426,14 @@ func (d *DB) CreateSubmission(ctx context.Context, submittedBy, sessionID, patro
 			return fmt.Errorf("clearing old submission scores: %w", err)
 		}
 
-		// Look up attribution data from the shared draft
-		var draftID string
-		draftRow := tx.QueryRowContext(ctx,
-			"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
-			sessionID, patrolID,
-		)
-		hasDraft := draftRow.Scan(&draftID) == nil
-
-		scoredByMap := make(map[string]*string)
-		if hasDraft {
-			attrRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, last_edited_by FROM draft_scores WHERE draft_id = $1",
-				draftID,
-			)
-			if err == nil {
-				for attrRows.Next() {
-					var criterionID string
-					var editedBy *string
-					if err := attrRows.Scan(&criterionID, &editedBy); err == nil {
-						scoredByMap[criterionID] = editedBy
-					}
-				}
-				attrRows.Close()
-			}
-		}
-
 		// Insert new scores
 		scoreRows := lo.MapToSlice(scores, func(criterionID string, value int) SubmissionScoreRow {
-			scoredBy := scoredByMap[criterionID]
-			if scoredBy == nil {
-				scoredBy = &submittedBy
-			}
 			return SubmissionScoreRow{
 				ID:           uuid.New().String(),
 				SubmissionID: submissionID,
 				CriterionID:  criterionID,
 				Value:        value,
-				ScoredBy:     scoredBy,
+				ScoredBy:     &submittedBy,
 			}
 		})
 
@@ -350,27 +445,6 @@ func (d *DB) CreateSubmission(ctx context.Context, submittedBy, sessionID, patro
 			if err != nil {
 				return fmt.Errorf("inserting submission score: %w", err)
 			}
-		}
-
-		// Copy per-user comments from draft to submission (before draft deletion cascades them)
-		if hasDraft {
-			// Clear old submission comments if re-submitting
-			_, err = tx.ExecContext(ctx, "DELETE FROM submission_comments WHERE submission_id = $1", submissionID)
-			if err != nil {
-				return fmt.Errorf("clearing old submission comments: %w", err)
-			}
-			if err := d.CopyDraftCommentsToSubmission(ctx, tx, sessionID, patrolID, submissionID); err != nil {
-				return fmt.Errorf("copying per-user comments: %w", err)
-			}
-		}
-
-		// Delete the shared draft
-		_, err = tx.ExecContext(ctx,
-			"DELETE FROM drafts WHERE session_id = $1 AND patrol_id = $2",
-			sessionID, patrolID,
-		)
-		if err != nil {
-			return fmt.Errorf("deleting draft: %w", err)
 		}
 
 		submission = &SubmissionRow{
@@ -396,7 +470,7 @@ func (d *DB) GetSubmissionsForPatrols(ctx context.Context, sessionID string, pat
 	query := `SELECT s.id, s.submitted_by, s.session_id, s.patrol_id, p.name, s.locked, s.submitted_at
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
-		 WHERE s.session_id = $1 AND s.patrol_id = ANY($2::text[])
+		 WHERE s.session_id = $1 AND s.patrol_id = ANY($2::text[]) AND s.locked = TRUE
 		 ORDER BY s.submitted_at ASC`
 
 	rows, err := d.QueryContext(ctx, query, sessionID, fmt.Sprintf("{%s}", joinIDs(patrolIDs)))
@@ -467,7 +541,7 @@ func (d *DB) UpdateSubmissionScores(ctx context.Context, sessionID, patrolID, ed
 
 // UnlockSubmission sets locked=false on a submission (admin only).
 func (d *DB) UnlockSubmission(ctx context.Context, submissionID string) (*SubmissionRow, error) {
-	_, err := d.ExecContext(ctx, "UPDATE submissions SET locked = FALSE WHERE id = $1", submissionID)
+	_, err := d.ExecContext(ctx, "UPDATE submissions SET locked = FALSE, updated_at = NOW() WHERE id = $1", submissionID)
 	if err != nil {
 		return nil, fmt.Errorf("unlocking submission: %w", err)
 	}
@@ -493,7 +567,7 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 		`SELECT s.id, s.submitted_by, s.session_id, s.patrol_id, p.name, s.locked, s.submitted_at
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
-		 WHERE s.session_id = $1
+		 WHERE s.session_id = $1 AND s.locked = TRUE
 		 ORDER BY s.submitted_at ASC`,
 		sessionID,
 	)
@@ -517,6 +591,13 @@ func (d *DB) ListAllSubmissionsForSession(ctx context.Context, sessionID string)
 // Missing criteria are filled with zeros.
 func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID string) ([]SubmissionRow, error) {
 	var submissions []SubmissionRow
+	ctx, span := tracing.Tracer().Start(ctx, "db.finalise_session_subcamp")
+	defer span.End()
+	span.SetAttributes(
+		attribute.String("user.id", userID),
+		attribute.String("session.id", sessionID),
+		attribute.String("subcamp.requested_id", subcampID),
+	)
 
 	err := d.InTx(ctx, func(tx *sql.Tx) error {
 		resolvedSubcampID := subcampID
@@ -527,8 +608,8 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				return fmt.Errorf("looking up user subcamp: %w", err)
 			}
 		}
+		span.SetAttributes(attribute.String("subcamp.resolved_id", resolvedSubcampID))
 
-		// Ensure the target subcamp participates in this session.
 		var inSessionCount int
 		if err := tx.QueryRowContext(ctx,
 			"SELECT COUNT(*) FROM session_subcamps WHERE session_id = $1 AND subcamp_id = $2",
@@ -540,17 +621,11 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			return fmt.Errorf("subcamp is not part of this session")
 		}
 
-		// Look up the session's template to get the full criteria list
 		var templateID string
-		if err := tx.QueryRowContext(ctx,
-			"SELECT template_id FROM sessions WHERE id = $1", sessionID,
-		).Scan(&templateID); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT template_id FROM sessions WHERE id = $1", sessionID).Scan(&templateID); err != nil {
 			return fmt.Errorf("looking up session template: %w", err)
 		}
-
-		critRows, err := tx.QueryContext(ctx,
-			"SELECT id FROM criteria WHERE template_id = $1", templateID,
-		)
+		critRows, err := tx.QueryContext(ctx, "SELECT id FROM criteria WHERE template_id = $1", templateID)
 		if err != nil {
 			return fmt.Errorf("querying criteria: %w", err)
 		}
@@ -564,8 +639,10 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			criterionIDs = append(criterionIDs, id)
 		}
 		critRows.Close()
+		if err := critRows.Err(); err != nil {
+			return fmt.Errorf("iterating criteria: %w", err)
+		}
 
-		// Get all patrols for this subcamp that are in-session
 		patrolRows, err := tx.QueryContext(ctx,
 			`SELECT p.id, p.name
 			 FROM patrols p
@@ -585,116 +662,86 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 			ID   string
 			Name string
 		}
-		var userPatrols []patrolInfo
+		var patrols []patrolInfo
 		for patrolRows.Next() {
 			var p patrolInfo
 			if err := patrolRows.Scan(&p.ID, &p.Name); err != nil {
 				patrolRows.Close()
 				return fmt.Errorf("scanning patrol: %w", err)
 			}
-			userPatrols = append(userPatrols, p)
+			patrols = append(patrols, p)
 		}
 		patrolRows.Close()
-
-		// Fetch all shared drafts for this session
-		draftRows, err := tx.QueryContext(ctx,
-			"SELECT id, patrol_id FROM drafts WHERE session_id = $1",
-			sessionID,
-		)
-		if err != nil {
-			return fmt.Errorf("querying drafts: %w", err)
-		}
-		type draftInfo struct {
-			ID       string
-			PatrolID string
-		}
-		draftsByPatrol := make(map[string]draftInfo)
-		for draftRows.Next() {
-			var di draftInfo
-			if err := draftRows.Scan(&di.ID, &di.PatrolID); err != nil {
-				draftRows.Close()
-				return fmt.Errorf("scanning draft: %w", err)
-			}
-			draftsByPatrol[di.PatrolID] = di
-		}
-		draftRows.Close()
-		if err := draftRows.Err(); err != nil {
-			return err
+		if err := patrolRows.Err(); err != nil {
+			return fmt.Errorf("iterating patrols: %w", err)
 		}
 
-		// Process every patrol in the target subcamp
-		for _, patrol := range userPatrols {
-			// Skip patrols that already have a submission
-			var existingCount int
-			if err := tx.QueryRowContext(ctx,
-				"SELECT COUNT(*) FROM submissions WHERE session_id = $1 AND patrol_id = $2",
+		createdOrLocked := 0
+		for _, patrol := range patrols {
+			var submissionID string
+			var locked bool
+			err := tx.QueryRowContext(ctx,
+				"SELECT id, locked FROM submissions WHERE session_id = $1 AND patrol_id = $2",
 				sessionID, patrol.ID,
-			).Scan(&existingCount); err != nil {
-				return fmt.Errorf("checking existing submission: %w", err)
-			}
-			if existingCount > 0 {
-				continue
-			}
-
-			// Start with zeros for all criteria
-			scores := make(map[string]int, len(criterionIDs))
-			for _, cid := range criterionIDs {
-				scores[cid] = 0
-			}
-
-			// Overlay draft scores if a shared draft exists
-			if draft, ok := draftsByPatrol[patrol.ID]; ok {
-				scoreRows, err := tx.QueryContext(ctx,
-					"SELECT criterion_id, value FROM draft_scores WHERE draft_id = $1",
-					draft.ID,
+			).Scan(&submissionID, &locked)
+			switch err {
+			case nil:
+				if locked {
+					continue
+				}
+				_, err = tx.ExecContext(ctx,
+					"UPDATE submissions SET locked = TRUE, submitted_by = $2, submitted_at = NOW(), updated_at = NOW() WHERE id = $1",
+					submissionID, userID,
 				)
 				if err != nil {
-					return fmt.Errorf("querying draft scores: %w", err)
+					return fmt.Errorf("locking submission for patrol %s: %w", patrol.ID, err)
 				}
-				for scoreRows.Next() {
-					var criterionID string
-					var value int
-					if err := scoreRows.Scan(&criterionID, &value); err != nil {
-						scoreRows.Close()
-						return fmt.Errorf("scanning draft score: %w", err)
-					}
-					scores[criterionID] = value
+			case sql.ErrNoRows:
+				submissionID = uuid.New().String()
+				_, err = tx.ExecContext(ctx,
+					"INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked) VALUES ($1, $2, $3, $4, TRUE)",
+					submissionID, userID, sessionID, patrol.ID,
+				)
+				if err != nil {
+					return fmt.Errorf("inserting submission for patrol %s: %w", patrol.ID, err)
 				}
-				scoreRows.Close()
+			default:
+				return fmt.Errorf("checking submission for patrol %s: %w", patrol.ID, err)
 			}
 
-			// Create the submission
-			submissionID := uuid.New().String()
-			_, err = tx.ExecContext(ctx,
-				"INSERT INTO submissions (id, submitted_by, session_id, patrol_id, locked) VALUES ($1, $2, $3, $4, TRUE)",
-				submissionID, userID, sessionID, patrol.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("inserting submission for patrol %s: %w", patrol.ID, err)
+			var legacyDraftID string
+			if err := tx.QueryRowContext(ctx,
+				"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
+				sessionID, patrol.ID,
+			).Scan(&legacyDraftID); err == nil {
+				_, err = tx.ExecContext(ctx,
+					`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+					 SELECT ds.id, $1, ds.criterion_id, ds.value, ds.last_edited_by
+					 FROM draft_scores ds
+					 WHERE ds.draft_id = $2
+					   AND NOT EXISTS (
+					     SELECT 1 FROM submission_scores ss
+					     WHERE ss.submission_id = $1 AND ss.criterion_id = ds.criterion_id
+					   )`,
+					submissionID, legacyDraftID,
+				)
+				if err != nil {
+					return fmt.Errorf("copying legacy draft scores for patrol %s: %w", patrol.ID, err)
+				}
+			} else if err != sql.ErrNoRows {
+				return fmt.Errorf("checking legacy draft for patrol %s: %w", patrol.ID, err)
 			}
 
-			for criterionID, value := range scores {
+			// Ensure all criteria have values, defaulting missing ones to zero.
+			for _, criterionID := range criterionIDs {
 				_, err := tx.ExecContext(ctx,
-					"INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by) VALUES ($1, $2, $3, $4, $5)",
-					uuid.New().String(), submissionID, criterionID, value, userID,
+					`INSERT INTO submission_scores (id, submission_id, criterion_id, value, scored_by)
+					 VALUES ($1, $2, $3, 0, $4)
+					 ON CONFLICT (submission_id, criterion_id) DO NOTHING`,
+					uuid.New().String(), submissionID, criterionID, userID,
 				)
 				if err != nil {
-					return fmt.Errorf("inserting submission score: %w", err)
-				}
-			}
-
-			// Copy per-user comments from draft to submission (BEFORE draft deletion cascades them)
-			if _, ok := draftsByPatrol[patrol.ID]; ok {
-				if err := d.CopyDraftCommentsToSubmission(ctx, tx, sessionID, patrol.ID, submissionID); err != nil {
-					return fmt.Errorf("copying per-user comments for patrol %s: %w", patrol.ID, err)
-				}
-			}
-
-			// Delete the shared draft (cascades to draft_comments)
-			if _, ok := draftsByPatrol[patrol.ID]; ok {
-				_, err = tx.ExecContext(ctx, "DELETE FROM drafts WHERE id = $1", draftsByPatrol[patrol.ID].ID)
-				if err != nil {
-					return fmt.Errorf("deleting draft: %w", err)
+					return fmt.Errorf("ensuring submission score: %w", err)
 				}
 			}
 
@@ -707,8 +754,13 @@ func (d *DB) FinaliseSession(ctx context.Context, userID, sessionID, subcampID s
 				Locked:      true,
 				SubmittedAt: time.Now(),
 			})
+			createdOrLocked++
+			span.AddEvent("finalise.patrol_submission_created", trace.WithAttributes(
+				attribute.String("patrol.id", patrol.ID),
+			))
 		}
 
+		span.SetAttributes(attribute.Int("finalise.submissions_created_count", createdOrLocked))
 		return nil
 	})
 
@@ -724,10 +776,9 @@ func (d *DB) ReviseSession(ctx context.Context, userID, sessionID string) error 
 	return d.ReviseSessionSubcamp(ctx, userID, sessionID, subcampID)
 }
 
-// ReviseSessionSubcamp converts all submissions for a subcamp's patrols back into shared drafts.
+// ReviseSessionSubcamp reopens finalised submissions for a subcamp by unlocking them.
 func (d *DB) ReviseSessionSubcamp(ctx context.Context, userID, sessionID, subcampID string) error {
 	return d.InTx(ctx, func(tx *sql.Tx) error {
-		// Get patrols in the subcamp that are included in this session.
 		patrolRows, err := tx.QueryContext(ctx,
 			`SELECT p.id
 			 FROM patrols p
@@ -756,40 +807,6 @@ func (d *DB) ReviseSessionSubcamp(ctx context.Context, userID, sessionID, subcam
 			return nil
 		}
 
-		// Fetch submissions for these patrols
-		subRows, err := tx.QueryContext(ctx,
-			fmt.Sprintf(
-				"SELECT id, patrol_id FROM submissions WHERE session_id = $1 AND patrol_id IN (%s)",
-				placeholders(len(patrolIDs), 2),
-			),
-			append([]interface{}{sessionID}, toInterfaceSlice(patrolIDs)...)...,
-		)
-		if err != nil {
-			return fmt.Errorf("querying submissions: %w", err)
-		}
-
-		type subInfo struct {
-			ID       string
-			PatrolID string
-		}
-		var subs []subInfo
-		for subRows.Next() {
-			var s subInfo
-			if err := subRows.Scan(&s.ID, &s.PatrolID); err != nil {
-				subRows.Close()
-				return fmt.Errorf("scanning submission: %w", err)
-			}
-			subs = append(subs, s)
-		}
-		subRows.Close()
-		if err := subRows.Err(); err != nil {
-			return err
-		}
-
-		if len(subs) == 0 {
-			return fmt.Errorf("no submissions to revise")
-		}
-
 		// Delete award selections when revising
 		_, err = tx.ExecContext(ctx,
 			"DELETE FROM session_awards WHERE user_id = $1 AND session_id = $2",
@@ -799,103 +816,12 @@ func (d *DB) ReviseSessionSubcamp(ctx context.Context, userID, sessionID, subcam
 			return fmt.Errorf("deleting awards during revise: %w", err)
 		}
 
-		for _, sub := range subs {
-			// Load submission scores with attribution
-			scoreRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, value, scored_by FROM submission_scores WHERE submission_id = $1",
-				sub.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("querying submission scores: %w", err)
-			}
-
-			type scoreWithAttr struct {
-				Value    int
-				ScoredBy *string
-			}
-			scores := make(map[string]scoreWithAttr)
-			for scoreRows.Next() {
-				var criterionID string
-				var s scoreWithAttr
-				if err := scoreRows.Scan(&criterionID, &s.Value, &s.ScoredBy); err != nil {
-					scoreRows.Close()
-					return fmt.Errorf("scanning submission score: %w", err)
-				}
-				scores[criterionID] = s
-			}
-			scoreRows.Close()
-
-			// Create a shared draft (or update if one exists)
-			var draftID string
-			row := tx.QueryRowContext(ctx,
-				"SELECT id FROM drafts WHERE session_id = $1 AND patrol_id = $2",
-				sessionID, sub.PatrolID,
-			)
-			err = row.Scan(&draftID)
-			if err == sql.ErrNoRows {
-				draftID = uuid.New().String()
-				_, err = tx.ExecContext(ctx,
-					"INSERT INTO drafts (id, session_id, patrol_id) VALUES ($1, $2, $3)",
-					draftID, sessionID, sub.PatrolID,
-				)
-				if err != nil {
-					return fmt.Errorf("inserting draft for patrol %s: %w", sub.PatrolID, err)
-				}
-			} else if err != nil {
-				return fmt.Errorf("checking existing draft: %w", err)
-			}
-
-			// Upsert draft scores, preserving attribution
-			for criterionID, sc := range scores {
-				scoreID := uuid.New().String()
-				_, err := tx.ExecContext(ctx,
-					`INSERT INTO draft_scores (id, draft_id, criterion_id, value, last_edited_by, last_edited_at)
-					 VALUES ($1, $2, $3, $4, $5, NOW())
-					 ON CONFLICT (draft_id, criterion_id) DO UPDATE
-					   SET value = EXCLUDED.value,
-					       last_edited_by = EXCLUDED.last_edited_by, last_edited_at = NOW()`,
-					scoreID, draftID, criterionID, sc.Value, sc.ScoredBy,
-				)
-				if err != nil {
-					return fmt.Errorf("upserting draft score: %w", err)
-				}
-			}
-
-			// Copy submission_comments back to draft_comments
-			commentRows, err := tx.QueryContext(ctx,
-				"SELECT criterion_id, user_id, display_name, comment, created_at FROM submission_comments WHERE submission_id = $1 AND comment != ''",
-				sub.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("querying submission comments for revise: %w", err)
-			}
-			for commentRows.Next() {
-				var criterionID, commentUserID, displayName, commentText string
-				var createdAt time.Time
-				if err := commentRows.Scan(&criterionID, &commentUserID, &displayName, &commentText, &createdAt); err != nil {
-					commentRows.Close()
-					return fmt.Errorf("scanning submission comment for revise: %w", err)
-				}
-				commentID := uuid.New().String()
-				_, err := tx.ExecContext(ctx,
-					`INSERT INTO draft_comments (id, draft_id, criterion_id, user_id, display_name, comment, created_at, updated_at)
-					 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-					 ON CONFLICT (draft_id, criterion_id, user_id) DO UPDATE
-					   SET comment = EXCLUDED.comment, display_name = EXCLUDED.display_name, updated_at = NOW()`,
-					commentID, draftID, criterionID, commentUserID, displayName, commentText, createdAt,
-				)
-				if err != nil {
-					commentRows.Close()
-					return fmt.Errorf("inserting draft comment during revise: %w", err)
-				}
-			}
-			commentRows.Close()
-
-			// Delete the submission (cascade deletes submission_scores and submission_comments)
-			_, err = tx.ExecContext(ctx, "DELETE FROM submissions WHERE id = $1", sub.ID)
-			if err != nil {
-				return fmt.Errorf("deleting submission: %w", err)
-			}
+		_, err = tx.ExecContext(ctx,
+			fmt.Sprintf("UPDATE submissions SET locked = FALSE, updated_at = NOW() WHERE session_id = $1 AND patrol_id IN (%s)", placeholders(len(patrolIDs), 2)),
+			append([]interface{}{sessionID}, toInterfaceSlice(patrolIDs)...)...,
+		)
+		if err != nil {
+			return fmt.Errorf("unlocking submissions for revise: %w", err)
 		}
 
 		return nil
@@ -941,7 +867,7 @@ func (d *DB) GetSubmissionScoresByPatrol(ctx context.Context, sessionID, patrolI
 		`SELECT ss.id, ss.submission_id, ss.criterion_id, ss.value, ss.scored_by
 		 FROM submission_scores ss
 		 JOIN submissions s ON s.id = ss.submission_id
-		 WHERE s.session_id = $1 AND s.patrol_id = $2`,
+		 WHERE s.session_id = $1 AND s.patrol_id = $2 AND s.locked = TRUE`,
 		sessionID, patrolID,
 	)
 	if err != nil {
@@ -1052,7 +978,7 @@ func (d *DB) GetPreviousSessionTotals(ctx context.Context, previousSessionID str
 		 FROM submissions s
 		 JOIN patrols p ON p.id = s.patrol_id
 		 LEFT JOIN submission_scores ss ON ss.submission_id = s.id
-		 WHERE s.session_id = $1 AND s.patrol_id IN (%s)
+		 WHERE s.session_id = $1 AND s.patrol_id IN (%s) AND s.locked = TRUE
 		 GROUP BY s.patrol_id, p.name
 		 ORDER BY p.name`,
 		placeholders(len(patrolIDs), 2),
@@ -1120,7 +1046,7 @@ func (d *DB) GetAdminUserSubmissions(ctx context.Context, userID, sessionID stri
 		 JOIN submission_scores ss ON ss.submission_id = s.id
 		 JOIN criteria c ON c.id = ss.criterion_id
 		 JOIN users u ON u.id = $1 AND u.subcamp_id = p.subcamp_id
-		 WHERE s.session_id = $2
+		 WHERE s.session_id = $2 AND s.locked = TRUE
 		 ORDER BY p.sort_order, p.name, c.sort_order`,
 		userID, sessionID,
 	)
@@ -1181,7 +1107,7 @@ func (d *DB) GetAllSessionComments(ctx context.Context, sessionID string) ([]Ses
 		 JOIN patrols p ON p.id = s.patrol_id
 		 JOIN criteria c ON c.id = sc.criterion_id
 		 LEFT JOIN submission_scores ss ON ss.submission_id = s.id AND ss.criterion_id = sc.criterion_id
-		 WHERE s.session_id = $1 AND sc.comment != ''
+		 WHERE s.session_id = $1 AND s.locked = TRUE AND sc.comment != ''
 		 ORDER BY p.name, c.sort_order, sc.display_name`,
 		sessionID,
 	)
@@ -1229,7 +1155,7 @@ func (d *DB) GetReportCardData(ctx context.Context, userID, sessionID string) ([
 		     WHERE ssc.session_id = $2 AND ssc.subcamp_id = u.subcamp_id
 		   ))
 		 )
-		 JOIN submissions s ON s.session_id = $2 AND s.patrol_id = p.id
+		 JOIN submissions s ON s.session_id = $2 AND s.patrol_id = p.id AND s.locked = TRUE
 		 JOIN submission_scores ss ON ss.submission_id = s.id
 		 WHERE u.id = $1
 		 ORDER BY p.sort_order ASC, ss.criterion_id ASC`,

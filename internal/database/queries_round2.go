@@ -148,7 +148,7 @@ func (d *DB) IsSessionFullySubmitted(ctx context.Context, sessionID string) (boo
 		     NOT EXISTS (SELECT 1 FROM session_patrols spx WHERE spx.session_id = ss.session_id)
 		     OR EXISTS (SELECT 1 FROM session_patrols sp WHERE sp.session_id = ss.session_id AND sp.patrol_id = p.id)
 		   )
-		 LEFT JOIN submissions sub ON sub.session_id = ss.session_id AND sub.patrol_id = p.id
+		 LEFT JOIN submissions sub ON sub.session_id = ss.session_id AND sub.patrol_id = p.id AND sub.locked = TRUE
 		 WHERE ss.session_id = $1`,
 		sessionID,
 	)

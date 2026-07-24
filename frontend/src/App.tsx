@@ -170,7 +170,7 @@ const AppRoutes = () => (
 );
 
 export const App = () => (
-  <ThemeProvider colorMode="auto">
+  <ThemeProvider colorMode="day">
     <BaseStyles>
       <BrowserRouter>
         <AuthProvider>
